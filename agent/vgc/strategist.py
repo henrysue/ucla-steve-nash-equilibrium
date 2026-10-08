@@ -35,7 +35,7 @@ from altruagent import DecisionContext, GameState, LegalAction, WithReasoning
 from altruagent.console import print_line
 
 from . import actions as act
-from . import decisions, meta, nash, speed
+from . import decisions, meta, nash, speed, typeprofile
 from .opponent import (
     CATEGORIES,
     RISK_BUDGET,
@@ -403,7 +403,34 @@ class VGCDraftStrategist:
                 "normal damage roll with no critical hit. It is a hint for building the matrix, "
                 "not an instruction and not a substitute for the live observation."
             )
+        # Deterministic type profile of everything the opponent has revealed:
+        # shared weaknesses to click, their STAB coverage, what they resist.
+        profile = typeprofile.opponent_profile(self._opponent_type_map(observation))
+        if profile is not None:
+            reference["reference_opponent_type_profile"] = profile
         return reference
+
+    def _opponent_type_map(self, observation: dict) -> dict:
+        """species -> types for every opponent Pokemon revealed this match.
+
+        Live observation typing wins where present (it reflects any Tera the
+        server has shown); the format table fills in revealed back-line mons
+        the observation did not type. Only revealed species are included —
+        never a guess at an unseen bench slot.
+        """
+        resolved: dict[str, list[str]] = {}
+        for entry in observation.get("opponent_active_pokemon") or []:
+            if isinstance(entry, dict):
+                name = entry.get("species") or entry.get("name")
+                types = entry.get("types")
+                if isinstance(name, str) and name and isinstance(types, list) and types:
+                    resolved[name] = [t for t in types if isinstance(t, str)]
+        for name in self._opponent_species_seen(observation):
+            if name not in resolved:
+                table_types = self._meta.species_types(name)
+                if table_types:
+                    resolved[name] = table_types
+        return resolved
 
     def _opponent_species_seen(self, observation: dict) -> list[str]:
         """Every opponent species the observation reveals: actives first, then

@@ -1251,3 +1251,31 @@ def test_summarize_match_is_safe_without_a_log_dir():
     agent = VGCDraftStrategist(None, log=lambda _l: None, rng=random.Random(1), clock=lambda: 0.0)
     summary = agent.summarize_match()
     assert summary["decisions"] == 0 and summary["outcome"] is None
+
+
+# -- opponent type profile ----------------------------------------------------
+
+
+def test_battle_prompt_carries_the_opponent_type_profile():
+    provider = FakeProvider(_doubles_answer())
+    _agent(provider).choose_action(_state(_doubles_action(), observation=BATTLE_OBSERVATION), POKEMON)
+    profile = provider.prompt().get("reference_opponent_type_profile")
+    assert profile is not None
+    assert profile["revealed_count"] >= 1
+    assert isinstance(profile["shared_weaknesses"], list)
+    assert isinstance(profile["their_stab_coverage"], list)
+
+
+def test_type_profile_prefers_live_observation_types_over_the_table():
+    """A Tera'd active shown as a new type must drive the profile, not the CSV."""
+    observation = {
+        "is_doubles": True, "turn": 2,
+        "active_pokemon": [{"species": "incineroar", "types": ["FIRE", "DARK"]}],
+        "opponent_active_pokemon": [{"species": "fluttermane", "types": ["WATER"], "hp_fraction": 1.0}],
+        "available_moves": [[], []],
+    }
+    provider = FakeProvider(_doubles_answer())
+    _agent(provider).choose_action(_state(_doubles_action(), observation=observation), POKEMON)
+    profile = provider.prompt()["reference_opponent_type_profile"]
+    # Flutter Mane is Ghost/Fairy in the table; shown Tera Water here.
+    assert profile["their_stab_coverage"] == ["Water"]
