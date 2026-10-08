@@ -34,6 +34,7 @@ Three rules govern how the table is used:
 from __future__ import annotations
 
 import csv
+import json
 import os
 import re
 from functools import lru_cache
@@ -41,6 +42,19 @@ from pathlib import Path
 
 DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 DEFAULT_CSV = DATA_DIR / "vgc_2025_reg_i_draft_doubles.csv"
+DEFAULT_ARCHETYPES = DATA_DIR / "vgc_2025_reg_i_archetypes.json"
+
+# How many archetypes a single turn's prompt may carry. The reference goes
+# into a battle prompt on a 55 s clock, so the matcher returns at most this
+# many — the closest matches — and never the whole file. Keeping the prompt
+# small is a speed requirement, not a nicety: a bigger prompt is a slower
+# model call and a slower turn.
+MAX_ARCHETYPES_SHOWN = 2
+# A restricted-core hit is worth more than a signal-member hit: in a
+# dual-restricted format the restricted pair is what names the archetype.
+_CORE_WEIGHT = 2
+_SIGNAL_WEIGHT = 1
+_MIN_ARCHETYPE_SCORE = 2  # one restricted core, or two signal members
 
 # Short keys, because the real headers are long and these go into prompts
 # under a clock. Each maps to candidate column names, most current first; a
@@ -122,12 +136,15 @@ def _resolve(fields: dict[str, tuple[str, ...]], available: list[str]) -> dict[s
 class MetaTable:
     """Indexed access to the reference table."""
 
-    def __init__(self, rows: list[dict]) -> None:
+    def __init__(self, rows: list[dict], archetypes: list[dict] | None = None) -> None:
         columns = list(rows[0].keys()) if rows else []
         self._draft = _resolve(_DRAFT_FIELDS, columns)
         self._battle = _resolve(_BATTLE_FIELDS, columns)
         self._name = self._draft.get(SPECIES, "Pokemon")
         self._base = self._draft.get(BASE_SPECIES)
+        # Team-level archetypes are optional prior knowledge: a missing or
+        # malformed file simply means no archetype notes, never an error.
+        self._archetypes = [a for a in (archetypes or []) if isinstance(a, dict) and a.get("name")]
 
         self._rows: dict[str, dict] = {}
         self._by_base: dict[str, dict] = {}
@@ -168,6 +185,21 @@ class MetaTable:
             return None
         try:
             return int(self._value(row, DRAFT_POINTS))
+        except ValueError:
+            return None
+
+    def base_speed(self, species: str | None) -> int | None:
+        """Base Speed stat from the table, or ``None`` when unlisted/blank.
+
+        Base Speed only: the agent cannot see the opponent's EVs, nature,
+        item or boosts, so this is a prior for turn-order reasoning, never a
+        final answer. ``speed.py`` labels it as such.
+        """
+        row = self.row(species)
+        if row is None:
+            return None
+        try:
+            return int(self._value(row, "speed"))
         except ValueError:
             return None
 
@@ -283,6 +315,76 @@ class MetaTable:
                 links[name] = partners
         return links
 
+    # -- team-level archetypes ------------------------------------------------
+
+    def _species_match(self, wanted: list[str], seen: list[str]) -> list[str]:
+        """Which ``wanted`` species are present in ``seen``, matched by EXACT
+        form, not base species.
+
+        Deliberately stricter than ``names_mentioned``: an archetype is
+        defined by a *specific* restricted (Calyrex-Shadow is a different
+        archetype from Calyrex-Ice; Urshifu-Rapid-Strike from
+        Urshifu-Single-Strike), so collapsing forms to their base would
+        surface the wrong archetype — worse than surfacing none. ``seen`` is
+        normalized to Showdown ids once; each ``wanted`` must match one of
+        those ids exactly.
+        """
+        seen_ids = {species_id(name) for name in seen if isinstance(name, str)}
+        return [name for name in wanted if isinstance(name, str) and species_id(name) in seen_ids]
+
+    def archetype_notes(self, opponent_species: list[str]) -> list[dict]:
+        """Team archetypes the opponent's revealed Pokémon match (prior knowledge).
+
+        Scores each archetype by how much of its restricted core and signal
+        members are present among ``opponent_species``, keeps those at or
+        above ``_MIN_ARCHETYPE_SCORE`` (one restricted core hit, or two
+        signal hits), and returns at most ``MAX_ARCHETYPES_SHOWN`` of them,
+        best first. Each returned note is compact and carries the
+        crit-independent counterplay — the structural answers that do not
+        depend on a critical hit or a high roll — plus its provenance.
+
+        Returns ``[]`` when nothing matches or no archetype file was loaded,
+        so the caller shows nothing rather than guessing.
+        """
+        seen = [name for name in dict.fromkeys(opponent_species) if isinstance(name, str) and name]
+        if not seen or not self._archetypes:
+            return []
+
+        scored: list[tuple[int, int, dict]] = []
+        for index, archetype in enumerate(self._archetypes):
+            cores = [c for c in archetype.get("restricted_core") or [] if isinstance(c, str)]
+            signals = [s for s in archetype.get("signal_members") or [] if isinstance(s, str)]
+            core_hits = self._species_match(cores, seen)
+            signal_hits = self._species_match(signals, seen)
+            score = _CORE_WEIGHT * len(core_hits) + _SIGNAL_WEIGHT * len(signal_hits)
+            if score >= _MIN_ARCHETYPE_SCORE:
+                # Negative index as a stable tiebreak so file order (which is
+                # Worlds placing order) decides ties, deterministically.
+                scored.append((score, -index, _archetype_brief(archetype, core_hits, signal_hits)))
+
+        scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        return [brief for _, _, brief in scored[:MAX_ARCHETYPES_SHOWN]]
+
+
+def _archetype_brief(archetype: dict, core_hits: list[str], signal_hits: list[str]) -> dict:
+    """A prompt-sized view of a matched archetype, counterplay included."""
+    counters = [
+        {"line": c.get("line", ""), "why": c.get("why", "")}
+        for c in archetype.get("counterplay") or []
+        if isinstance(c, dict) and c.get("crit_independent") is True and c.get("line")
+    ]
+    brief = {
+        "name": archetype.get("name", ""),
+        "matched_restricteds": core_hits,
+        "game_plan": archetype.get("game_plan", ""),
+        "decisive_wincon": archetype.get("decisive_wincon", ""),
+        "crit_independent_counterplay": counters,
+        "source": archetype.get("source", ""),
+    }
+    if signal_hits:
+        brief["matched_support"] = signal_hits
+    return brief
+
 
 @lru_cache(maxsize=1)
 def table() -> MetaTable:
@@ -293,6 +395,7 @@ def table() -> MetaTable:
     unreadable table yields an empty one rather than an error: the agent
     plays without the reference, it just plays less informed.
     """
+    archetypes = _load_archetypes()
     for path in _candidate_paths():
         try:
             with path.open(encoding="utf-8-sig", newline="") as handle:
@@ -300,8 +403,28 @@ def table() -> MetaTable:
         except (OSError, csv.Error, UnicodeDecodeError):
             continue
         if rows:
-            return MetaTable(rows)
-    return MetaTable([])
+            return MetaTable(rows, archetypes)
+    return MetaTable([], archetypes)
+
+
+def _load_archetypes() -> list[dict]:
+    """Load the optional team-archetype file (``VGC_ARCHETYPES_CSV`` overrides).
+
+    Archetypes are a bonus layer on top of the per-Pokémon table. A missing,
+    unreadable, or malformed file yields an empty list and the agent plays
+    without archetype notes — exactly as it does without the CSV.
+    """
+    override = os.environ.get("VGC_ARCHETYPES_JSON")
+    path = Path(override) if override else DEFAULT_ARCHETYPES
+    if not path.exists():
+        return []
+    try:
+        with path.open(encoding="utf-8-sig") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError, UnicodeDecodeError):
+        return []
+    archetypes = data.get("archetypes") if isinstance(data, dict) else data
+    return archetypes if isinstance(archetypes, list) else []
 
 
 def _candidate_paths() -> list[Path]:

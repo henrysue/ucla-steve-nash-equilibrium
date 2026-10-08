@@ -1208,3 +1208,46 @@ def test_a_timeout_retries_at_lower_effort():
     assert order.index(second["effort"]) == max(0, order.index(first["effort"]) - 1)
     assert second["n"] == first["n"]  # no "invalid answer" nudge for a timeout
     assert decision.action["type"] == "select_lineup"
+
+
+# -- end-of-match summary (offline analysis) ----------------------------------
+
+
+def test_summarize_match_records_opponent_archetype_and_counts(tmp_path):
+    """The summary is the skimmable layer for no-time-pressure review."""
+    agent = VGCDraftStrategist(
+        FakeProvider(_doubles_answer()), log=lambda _l: None, rng=random.Random(1),
+        clock=lambda: 0.0, log_dir=str(tmp_path),
+    )
+    agent.choose_action(_state(_doubles_action(), observation=BATTLE_OBSERVATION), POKEMON)
+    summary = agent.summarize_match(note="unit")
+
+    assert summary["decisions"] == 1
+    # BATTLE_OBSERVATION's opponents are Landorus-Therian + Amoonguss.
+    assert any("landorus" in s.lower() for s in summary["opponent_species"])
+    assert summary["outcome"] is None  # no final_result -> never guessed
+    files = [p.name for p in tmp_path.iterdir()]
+    assert any(f.endswith(".summary.json") for f in files)
+    md = next(iter(tmp_path.glob("*.md"))).read_text(encoding="utf-8")
+    assert "Match summary" in md
+
+
+def test_summarize_match_reads_the_outcome_from_final_result_only(tmp_path):
+    agent = VGCDraftStrategist(
+        FakeProvider(_doubles_answer()), log=lambda _l: None, rng=random.Random(1),
+        clock=lambda: 0.0, log_dir=str(tmp_path),
+    )
+    agent.choose_action(_state(_doubles_action(), observation=BATTLE_OBSERVATION), POKEMON)
+    terminal = _state(_doubles_action(), observation=BATTLE_OBSERVATION)
+    terminal.final_result = {"winner_agent_id": "me"}
+    terminal.is_terminal = True
+    with pytest.raises(act.TemplateError):
+        agent.choose_action(terminal, POKEMON)  # terminal auto-summarizes, then refuses
+    summary_file = next(iter(tmp_path.glob("*.summary.json")))
+    assert json.loads(summary_file.read_text(encoding="utf-8"))["outcome"] == "win"
+
+
+def test_summarize_match_is_safe_without_a_log_dir():
+    agent = VGCDraftStrategist(None, log=lambda _l: None, rng=random.Random(1), clock=lambda: 0.0)
+    summary = agent.summarize_match()
+    assert summary["decisions"] == 0 and summary["outcome"] is None

@@ -18,6 +18,7 @@ result against the server's own numbers before anything is sent.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from altruagent import GameState, LegalAction
@@ -38,6 +39,11 @@ SPEED_CONTROL = frozenset({
 })
 REDIRECTION = frozenset({"followme", "ragepowder", "spotlight"})
 SPREAD_MOVES_HITTING_ALL = frozenset({"earthquake", "surf", "bulldoze", "discharge", "lavaplume", "sludgewave", "explosion", "selfdestruct"})
+# Fake Out: priority +3, flinches, but ONLY usable the first turn a Pokemon
+# is on the field. The heuristic rewards it when that condition is visible
+# (turn one, or an explicit per-active flag), never otherwise.
+FAKE_OUT = "fakeout"
+STAB_MULTIPLIER = 1.5
 
 
 class TemplateError(ValueError):
@@ -299,28 +305,172 @@ def _species_types(actives: object) -> dict[str, list[str]]:
 # -- deterministic fallback ---------------------------------------------------
 
 
-def heuristic_doubles(slots: list[Slot], state: GameState) -> dict:
+def heuristic_doubles(slots: list[Slot], state: GameState, *, base_speed=None) -> dict:
     """A legal, type-aware turn with no model call.
 
     Used when the clock runs out or the model never answers. Per slot it
     takes the highest-scoring damaging move at the best legal opponent
     (never an immunity, never our own side unless nothing else is legal),
     falling back to a status/protection move, then a switch, then pass.
+
+    Beyond raw type-and-power scoring it accounts for the things a weak
+    fallback would otherwise get punished on, but ONLY from data the
+    observation actually shows: same-type-attack bonus, Fake Out's turn-one
+    value, not re-using Protect when the field says it would fail, and (when
+    ``base_speed`` is supplied) preferring a move from the faster Pokemon to
+    finish a weakened foe. Every one of these degrades to the old behaviour
+    when its data is absent, so it is never worse than before.
     """
     observation = _observation(state)
     foes = _species_types(observation.get("opponent_active_pokemon"))
+    allies = _species_types(observation.get("active_pokemon"))
     hp = _hp_fractions(observation.get("opponent_active_pokemon"))
+    context = _HeuristicContext(
+        observation=observation,
+        foes=foes,
+        allies=allies,
+        hp=hp,
+        base_speed=base_speed,
+    )
 
-    slot_0 = _heuristic_slot(slots[0], observation, foes, hp, taken=None)
+    slot_0 = _heuristic_slot(slots[0], context, taken=None)
     taken = slot_0.get("species") if slot_0["type"] == "switch" else None
-    slot_1 = _heuristic_slot(slots[1], observation, foes, hp, taken=taken)
+    slot_1 = _heuristic_slot(slots[1], context, taken=taken)
     return build_doubles(slots, {
         "slot_0": {"option": slot_0.pop("_option"), "target": slot_0.get("target")},
         "slot_1": {"option": slot_1.pop("_option"), "target": slot_1.get("target")},
     })
 
 
-def _heuristic_slot(slot: Slot, observation: dict, foes: dict, hp: dict, *, taken: str | None) -> dict:
+@dataclass(frozen=True)
+class _HeuristicContext:
+    """Everything the per-slot heuristic reads, bundled so new signals do not
+    grow every function's argument list."""
+
+    observation: dict
+    foes: dict
+    allies: dict
+    hp: dict
+    base_speed: object  # callable species -> int | None, or None
+
+    def active_entry(self, slot_number: int) -> dict:
+        actives = self.observation.get("active_pokemon")
+        if isinstance(actives, list) and 0 <= slot_number < len(actives) and isinstance(actives[slot_number], dict):
+            return actives[slot_number]
+        return {}
+
+    def our_species(self, slot_number: int) -> str:
+        entry = self.active_entry(slot_number)
+        name = entry.get("species") or entry.get("name")
+        return name if isinstance(name, str) else ""
+
+    def our_types(self, slot_number: int) -> list[str]:
+        return self.allies.get(self.our_species(slot_number), [])
+
+    def can_fake_out(self, slot_number: int) -> bool:
+        """Fake Out works only the first turn a Pokemon is on the field.
+
+        True when the observation unambiguously shows that: it is turn one,
+        or the active carries an explicit first-turn/just-switched flag.
+        Absent that evidence we assume Fake Out is NOT usable, so we never
+        over-reward a move that would fail.
+        """
+        if _number(self.observation.get("turn")) == 1.0:
+            return True
+        entry = self.active_entry(slot_number)
+        for key in ("can_fake_out", "first_turn_active", "just_switched", "switched_in_this_turn"):
+            if _truthy(entry.get(key)):
+                return True
+        return False
+
+    def protect_would_fail(self, slot_number: int) -> bool:
+        """True only when the field shows this slot already protected last
+        turn (so another protection move is likely to fail). Conservative:
+        with no such signal we do not suppress Protect."""
+        entry = self.active_entry(slot_number)
+        for key in ("protect_used_last_turn", "used_protect_last_turn", "protect_blocked"):
+            if _truthy(entry.get(key)):
+                return True
+        counter = _number(entry.get("protect_counter") or entry.get("stall_counter"))
+        if counter is not None and counter >= 1:
+            return True
+        last = entry.get("last_move") or entry.get("last_move_used")
+        return isinstance(last, str) and re.sub(r"[^a-z0-9]", "", last.lower()) in PROTECTION
+
+
+def guaranteed_action(state: GameState) -> dict:
+    """A legal payload for the current decision that CANNOT raise.
+
+    The floor beneath every other fallback. ``heuristic_doubles`` and
+    ``build_lineup`` apply judgment and so can reject a malformed template
+    with ``TemplateError``/``InvalidAnswer``; this one applies none. It reads
+    the server's own first legal option per decision and returns it verbatim,
+    so there is always *some* legal move to send rather than an escaping
+    exception that forfeits the match (hard rule #1).
+
+    Preference order, each strictly more defensive than the last:
+
+    1. a ``doubles_turn`` built from each slot's first non-pass option
+       (first move, else first switch, else pass), with that move's first
+       listed target;
+    2. a ``select_lineup`` built from the first four distinct roster species;
+    3. the pass payload, which every doubles template permits.
+    """
+    universal_floor = {"type": "doubles_turn", "slot_0": dict(PASS), "slot_1": dict(PASS)}
+    try:
+        action = state.legal_actions[0] if state.legal_actions else None
+        template = action.input.get("action") if action is not None and isinstance(action.input, dict) else None
+        kind = template.get("type") if isinstance(template, dict) else None
+        if kind == "doubles_turn":
+            return _guaranteed_doubles(parse_doubles(action))
+        if kind == "select_lineup":
+            roster = parse_lineup(action)
+            return build_lineup(roster, roster[:4], roster[:2])
+    except Exception:  # noqa: BLE001 - this function's whole contract is "never raise"
+        return universal_floor  # a torn template falls through to the floor
+    return universal_floor
+
+
+def _guaranteed_doubles(slots: list[Slot]) -> dict:
+    """First non-pass option per slot, no scoring, no type reasoning."""
+
+    def pick(slot: Slot, taken: str | None) -> dict:
+        for option in slot.options:
+            if option.get("type") == "move":
+                targets = [t for t in option.get("targets") or [] if isinstance(t, int) and not isinstance(t, bool)]
+                move = {"type": "move", "move_id": option.get("move_id")}
+                if targets:
+                    move["target"] = targets[0]
+                return move
+        for option in slot.options:
+            if option.get("type") == "switch" and option.get("species") != taken:
+                return {"type": "switch", "species": option.get("species")}
+        return dict(PASS)
+
+    slot_0 = pick(slots[0], taken=None)
+    taken = slot_0.get("species") if slot_0["type"] == "switch" else None
+    slot_1 = pick(slots[1], taken=taken)
+    return {"type": "doubles_turn", "slot_0": slot_0, "slot_1": slot_1}
+
+
+def _heuristic_slot(slot: Slot, context: _HeuristicContext, *, taken: str | None) -> dict:
+    """Pick one slot's fallback action, with an explicit ANTI-PANIC-SWITCH rule.
+
+    "Panic switching" is a documented failure mode of tactical agents (see
+    PokeLLMon, arXiv:2402.01118): when a scary opponent is in front, an agent
+    bleeds tempo by switching a healthy, capable Pokemon out instead of just
+    attacking. This heuristic must never do that. The invariant enforced
+    here is simple and testable:
+
+        a VOLUNTARY switch is chosen ONLY when no move can usefully act
+        (every move scores 0 because it is immune, hits only our own side,
+        or is an unusable Fake Out), AND the slot is not forced to move.
+
+    A ``force_switch`` slot (a fainted Pokemon's replacement) is the one case
+    where switching is mandatory, and the server only offers switch options
+    there anyway. Ordering: a positive-scoring move beats every switch; only
+    if nothing scores do we switch; a zero-scoring move still beats a pass.
+    """
     kinds = {option["type"] for option in slot.options}
     if kinds == {"pass"}:
         return {"type": "pass", "_option": _index_of(slot, lambda o: o["type"] == "pass")}
@@ -329,15 +479,23 @@ def _heuristic_slot(slot: Slot, observation: dict, foes: dict, hp: dict, *, take
     for index, option in enumerate(slot.options):
         if option["type"] != "move":
             continue
-        score, target = _score_move(option, slot.number, observation, foes, hp)
+        score, target = _score_move(option, slot.number, context)
         if best is None or score > best[0]:
             best = (score, index, target)
+
+    # Anti-panic-switch: a move that can actually do something (score > 0)
+    # always beats switching a healthy mon out. This is the whole guard.
     if best is not None and best[0] > 0:
         return {"type": "move", "target": best[2], "_option": best[1]}
 
+    # No move scores. Switching is now legitimate repositioning, not panic:
+    # either we are forced out, or every move we have is useless here.
     for index, option in enumerate(slot.options):
         if option["type"] == "switch" and option.get("species") != taken:
             return {"type": "switch", "species": option.get("species"), "_option": index}
+
+    # Nothing scored and no distinct switch: a zero-scoring move (e.g. the
+    # only move is resisted but not immune) still beats passing the turn.
     if best is not None:
         return {"type": "move", "target": best[2], "_option": best[1]}
     if "pass" in kinds:
@@ -345,18 +503,19 @@ def _heuristic_slot(slot: Slot, observation: dict, foes: dict, hp: dict, *, take
     raise TemplateError(f"doubles_turn slot {slot.number} has no move, distinct switch, or pass: {slot.options!r}")
 
 
-def _score_move(option: dict, slot_number: int, observation: dict, foes: dict, hp: dict) -> tuple[float, int | None]:
+def _score_move(option: dict, slot_number: int, context: _HeuristicContext) -> tuple[float, int | None]:
     """Rough expected damage, and the target that maximizes it."""
-    details = _move_details(option, slot_number, observation)
+    details = _move_details(option, slot_number, context.observation)
     move_id = str(option.get("move_id") or "").lower()
     power = _number(option.get("base_power", details.get("base_power"))) or 0.0
     accuracy = _number(option.get("accuracy", details.get("accuracy")))
     accuracy = 1.0 if accuracy is None else (accuracy / 100.0 if accuracy > 1.0 else accuracy)
     move_type = _move_type(option, details)
+    stab = STAB_MULTIPLIER if (move_type and move_type.upper() in {t.upper() for t in context.our_types(slot_number)}) else 1.0
 
     entries = _target_entries(option)
     if not entries:  # a field or self move: valued below any real attack
-        return (_support_value(move_id), None)
+        return (_support_value(move_id, slot_number, context), None)
 
     best: tuple[float, int | None] | None = None
     for entry in entries:
@@ -364,32 +523,69 @@ def _score_move(option: dict, slot_number: int, observation: dict, foes: dict, h
         if not isinstance(target, int) or isinstance(target, bool):
             continue
         side = entry.get("side") or ("opponent" if target > 0 else "ally" if target < 0 else "none")
-        multiplier = effectiveness(move_type, foes.get(entry.get("species") or "")) if side == "opponent" else 1.0
+        foe_species = entry.get("species") or ""
+        # Resolve the defender's types. The server names the species on each
+        # opponent target entry; if it is ever omitted and there is exactly
+        # one opponent active, that one is unambiguously the target, so we can
+        # still see an immunity. With two unnamed foes we do NOT guess — a
+        # wrong inference would be a new mistake — and fall back to neutral.
+        foe_types = context.foes.get(foe_species)
+        if foe_types is None and side == "opponent" and not foe_species and len(context.foes) == 1:
+            foe_species, foe_types = next(iter(context.foes.items()))
+        multiplier = effectiveness(move_type, foe_types) if side == "opponent" else 1.0
         if power <= 0:
-            score = _support_value(move_id) if side != "ally" else 0.0
+            # Fake Out is a 40-BP move but its real value is turn-one
+            # priority + flinch; score it as support when it cannot connect
+            # for damage reasons and only when it is actually usable.
+            score = _support_value(move_id, slot_number, context) if side != "ally" else 0.0
         elif side == "ally" or side == "self":
             score = 0.0  # never the heuristic's choice while anything else scores
         elif multiplier == 0.0:
             score = 0.0  # immune: strictly dominated (3.2)
+        elif move_id == FAKE_OUT and not context.can_fake_out(slot_number):
+            score = 0.0  # Fake Out off turn one simply fails: never choose it
         else:
-            score = power * accuracy * multiplier
+            score = power * accuracy * multiplier * stab
             if move_id in SPREAD_MOVES_HITTING_ALL:
                 score *= 0.75  # spread reduction
+            foe_hp = context.hp.get(foe_species, 1.0)
             # Chip a weakened foe out rather than spread damage around.
-            score *= 1.0 + 0.5 * (1.0 - hp.get(entry.get("species") or "", 1.0))
+            score *= 1.0 + 0.5 * (1.0 - foe_hp)
+            # Fake Out: guaranteed first (priority +3) and flinches, so on the
+            # turn it is usable it is worth more than its tiny base power. The
+            # bonus is additive and only applied when truly usable.
+            if move_id == FAKE_OUT and context.can_fake_out(slot_number):
+                score += 60.0
+            # If we can confirm we outspeed this foe, a move that could finish
+            # it is slightly preferred (we KO before it acts). Base-speed
+            # prior only; never acts on a tie or unknown.
+            elif context.base_speed is not None and foe_hp <= 0.35:
+                from . import speed as _speed
+                faster = _speed.faster_than(context.observation, context.base_speed,
+                                            context.our_species(slot_number), str(foe_species))
+                if faster is True:
+                    score *= 1.1
         if best is None or score > best[0]:
             best = (score, target)
     return best or (0.0, None)
 
 
-def _support_value(move_id: str) -> float:
-    """Where a non-damaging move sits against raw damage scores."""
+def _support_value(move_id: str, slot_number: int, context: _HeuristicContext) -> float:
+    """Where a non-damaging (or priority-utility) move sits against damage.
+
+    Fake Out is ranked above everything else on the turn it is usable (free
+    flinch + chip), and ignored otherwise. A protection move is dropped to
+    the floor when the field shows it would fail (consecutive-use), so the
+    fallback does not waste a turn re-Protecting.
+    """
+    if move_id == FAKE_OUT:
+        return 95.0 if context.can_fake_out(slot_number) else 0.0
     if move_id in SPEED_CONTROL:
         return 45.0
     if move_id in REDIRECTION:
         return 35.0
     if move_id in PROTECTION:
-        return 25.0
+        return 1.0 if context.protect_would_fail(slot_number) else 25.0
     return 15.0
 
 
@@ -427,6 +623,17 @@ def _number(value: object) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     return float(value)
+
+
+def _truthy(value: object) -> bool:
+    """A per-active flag counts as set when truthy or a positive count."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value > 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "yes", "1", "on", "active"}
+    return False
 
 
 def _index_of(slot: Slot, predicate) -> int:
