@@ -307,7 +307,9 @@ class VGCDraftStrategist:
         # even the type-aware heuristic cannot read this template, drop to
         # the guaranteed-legal floor rather than losing the whole turn.
         try:
-            fallback = act.heuristic_doubles(slots, state, base_speed=self._meta.base_speed)
+            fallback = act.heuristic_doubles(
+                slots, state, base_speed=self._meta.base_speed, species_types=self._meta.species_types
+            )
         except Exception as exc:  # noqa: BLE001
             self._log(f"[vgc] heuristic fallback unavailable, using a guaranteed-legal move [{type(exc).__name__}]: {exc}")
             fallback = act.guaranteed_action(state)

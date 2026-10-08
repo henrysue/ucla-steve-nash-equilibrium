@@ -305,7 +305,7 @@ def _species_types(actives: object) -> dict[str, list[str]]:
 # -- deterministic fallback ---------------------------------------------------
 
 
-def heuristic_doubles(slots: list[Slot], state: GameState, *, base_speed=None) -> dict:
+def heuristic_doubles(slots: list[Slot], state: GameState, *, base_speed=None, species_types=None) -> dict:
     """A legal, type-aware turn with no model call.
 
     Used when the clock runs out or the model never answers. Per slot it
@@ -331,6 +331,7 @@ def heuristic_doubles(slots: list[Slot], state: GameState, *, base_speed=None) -
         allies=allies,
         hp=hp,
         base_speed=base_speed,
+        species_types=species_types,
     )
 
     slot_0 = _heuristic_slot(slots[0], context, taken=None)
@@ -352,6 +353,7 @@ class _HeuristicContext:
     allies: dict
     hp: dict
     base_speed: object  # callable species -> int | None, or None
+    species_types: object = None  # callable species -> list[str], or None
 
     def active_entry(self, slot_number: int) -> dict:
         actives = self.observation.get("active_pokemon")
@@ -382,6 +384,40 @@ class _HeuristicContext:
             if _truthy(entry.get(key)):
                 return True
         return False
+
+    def have_super_effective_attack(self, slot: Slot) -> bool:
+        """True if any legal damaging move hits a foe super-effectively (>1x).
+
+        When we out-type the foe offensively we are winning the exchange, so
+        the proactive-pivot heuristic must stand down and let us attack.
+        """
+        for option in slot.options:
+            if option.get("type") != "move":
+                continue
+            details = _move_details(option, slot.number, self.observation)
+            if (_number(option.get("base_power", details.get("base_power"))) or 0.0) <= 0:
+                continue
+            move_type = _move_type(option, details)
+            for entry in _target_entries(option):
+                if (entry.get("side") or ("opponent" if (entry.get("target") or 0) > 0 else "")) != "opponent":
+                    continue
+                species = entry.get("species") or ""
+                types = self.foes.get(species)
+                if types is None and not species and len(self.foes) == 1:
+                    types = next(iter(self.foes.values()))
+                if types and effectiveness(move_type, types) > 1.0:
+                    return True
+        return False
+
+    def worst_incoming(self, defender_types: list[str]) -> float:
+        """The worst (max) type multiplier any opponent active's STAB type
+        lands on ``defender_types`` — a proxy for how threatened that Pokemon
+        is, since we cannot see the foe's actual moves, only its types."""
+        worst = 0.0
+        for types in self.foes.values():
+            for atk in types or []:
+                worst = max(worst, effectiveness(atk, defender_types))
+        return worst
 
     def protect_would_fail(self, slot_number: int) -> bool:
         """True only when the field shows this slot already protected last
@@ -483,8 +519,23 @@ def _heuristic_slot(slot: Slot, context: _HeuristicContext, *, taken: str | None
         if best is None or score > best[0]:
             best = (score, index, target)
 
-    # Anti-panic-switch: a move that can actually do something (score > 0)
-    # always beats switching a healthy mon out. This is the whole guard.
+    # Anti-panic-switch, part 1: if we can hit the foe SUPER-EFFECTIVELY we
+    # are winning this exchange — always attack, never pivot away from it.
+    if best is not None and best[0] > 0 and context.have_super_effective_attack(slot):
+        return {"type": "move", "target": best[2], "_option": best[1]}
+
+    # Proactive defensive pivot: we are NOT winning the exchange (no super-
+    # effective attack), our active is in a clearly losing TYPE matchup (the
+    # foe threatens us >=2x), and a benched Pokemon is a CLEAR defensive
+    # improvement (resists or is immune to that threat). Only then is a
+    # switch better than attacking into a bad matchup. This is bounded on
+    # purpose — see _proactive_switch — so it cannot become panic switching.
+    pivot = _proactive_switch(slot, context, taken=taken)
+    if pivot is not None:
+        return pivot
+
+    # Anti-panic-switch, part 2: with no clearly-better pivot, a move that can
+    # do anything (score > 0) still beats switching a healthy mon out.
     if best is not None and best[0] > 0:
         return {"type": "move", "target": best[2], "_option": best[1]}
 
@@ -501,6 +552,63 @@ def _heuristic_slot(slot: Slot, context: _HeuristicContext, *, taken: str | None
     if "pass" in kinds:
         return {"type": "pass", "_option": _index_of(slot, lambda o: o["type"] == "pass")}
     raise TemplateError(f"doubles_turn slot {slot.number} has no move, distinct switch, or pass: {slot.options!r}")
+
+
+# A benched Pokemon is only worth pivoting to if it takes meaningfully less
+# from the threat than our active does. One full type step (e.g. 2x -> 1x, or
+# 1x -> 0.5x) is the minimum improvement; this keeps the pivot decisive, not
+# marginal, which is what separates it from panic switching.
+_LOSING_MATCHUP = 2.0        # foe threatens our active at >= 2x
+_PIVOT_IMPROVEMENT = 0.5     # bench must take <= (our worst) * this (one step better)
+
+
+def _proactive_switch(slot: Slot, context: _HeuristicContext, *, taken: str | None) -> dict | None:
+    """A bounded defensive pivot, or ``None`` when one is not clearly warranted.
+
+    Chosen ONLY when every one of these holds, so it can never become panic
+    switching:
+
+    1. we have no super-effective attack (checked by the caller);
+    2. our active is in a clearly losing type matchup — some opponent active's
+       STAB type hits us at >= 2x;
+    3. the slot is not forced, and real switch options exist;
+    4. a benched Pokemon takes at least one full type step LESS from that
+       threat (resists or is immune where we are weak);
+    5. we can actually look up the types involved (``species_types`` supplied
+       and both our active's and the candidate's types are known).
+
+    If any of these is missing we return ``None`` and the caller falls back to
+    attacking — never a speculative switch on incomplete information.
+    """
+    lookup = context.species_types
+    if lookup is None:
+        return None
+    our_types = context.our_types(slot.number)
+    if not our_types:
+        return None
+
+    our_risk = context.worst_incoming(our_types)
+    if our_risk < _LOSING_MATCHUP:
+        return None  # not actually a losing matchup; stand and fight
+
+    best_switch: tuple[float, int, str] | None = None
+    for index, option in enumerate(slot.options):
+        if option.get("type") != "switch":
+            continue
+        species = option.get("species")
+        if not isinstance(species, str) or not species or species == taken:
+            continue
+        bench_types = [t for t in lookup(species) or [] if isinstance(t, str)]
+        if not bench_types:
+            continue  # unknown types: do not pivot blind
+        bench_risk = context.worst_incoming(bench_types)
+        # Require a clear, at-least-one-step improvement over our active.
+        if bench_risk <= our_risk * _PIVOT_IMPROVEMENT and (best_switch is None or bench_risk < best_switch[0]):
+            best_switch = (bench_risk, index, species)
+
+    if best_switch is None:
+        return None
+    return {"type": "switch", "species": best_switch[2], "_option": best_switch[1]}
 
 
 def _score_move(option: dict, slot_number: int, context: _HeuristicContext) -> tuple[float, int | None]:

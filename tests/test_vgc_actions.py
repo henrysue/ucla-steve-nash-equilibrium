@@ -444,6 +444,100 @@ def test_an_immune_target_without_a_named_species_is_still_seen_with_one_foe():
     assert act.heuristic_doubles(slots, _state(observation))["slot_0"]["type"] == "switch"
 
 
+# -- proactive defensive pivot ------------------------------------------------
+
+_BENCH_TYPES = {
+    "ferrothorn": ["GRASS", "STEEL"], "rotomwash": ["ELECTRIC", "WATER"],
+    "charizard": ["FIRE", "FLYING"], "amoonguss": ["GRASS", "POISON"],
+    "incineroar": ["FIRE", "DARK"],
+}
+
+
+def _bench_types(species):
+    import re as _re
+    return _BENCH_TYPES.get(_re.sub(r"[^a-z0-9]", "", (species or "").lower()), [])
+
+
+def _pivot_payload(slot0, observation):
+    slots = act.parse_doubles(_action(_template(slot0)))
+    return act.heuristic_doubles(
+        slots, _state(observation), base_speed=None, species_types=_bench_types
+    )["slot_0"]
+
+
+def test_pivots_out_of_a_losing_type_matchup_to_a_resist():
+    """Ferrothorn (Grass/Steel) is 4x weak to Fire; pivot to Rotom-Wash (0.5x)."""
+    obs = _observation(
+        [{"id": "gyroball", "type": "STEEL", "base_power": 80, "accuracy": 1.0}],
+        foes=[{"species": "charizard", "types": ["FIRE", "FLYING"], "hp_fraction": 1.0}],
+        allies=[{"species": "ferrothorn", "types": ["GRASS", "STEEL"]}],
+    )
+    payload = _pivot_payload(
+        [_move("gyroball", [1], [{"target": 1, "side": "opponent", "species": "charizard"}]),
+         {"type": "switch", "species": "rotomwash"}],
+        obs,
+    )
+    assert payload == {"type": "switch", "species": "rotomwash"}
+
+
+def test_does_not_pivot_when_a_super_effective_attack_is_available():
+    """Anti-panic: with a Rock move (4x into Charizard) we attack, never pivot."""
+    obs = _observation(
+        [{"id": "rockslide", "type": "ROCK", "base_power": 75, "accuracy": 0.9}],
+        foes=[{"species": "charizard", "types": ["FIRE", "FLYING"], "hp_fraction": 1.0}],
+        allies=[{"species": "ferrothorn", "types": ["GRASS", "STEEL"]}],
+    )
+    payload = _pivot_payload(
+        [_move("rockslide", [1], [{"target": 1, "side": "opponent", "species": "charizard"}]),
+         {"type": "switch", "species": "rotomwash"}],
+        obs,
+    )
+    assert payload["type"] == "move"
+
+
+def test_does_not_pivot_when_the_bench_is_no_safer():
+    """Incineroar is 2x weak to Water; a bench that is also 2x weak is no pivot."""
+    obs = _observation(
+        [{"id": "knockoff", "type": "DARK", "base_power": 65, "accuracy": 1.0}],
+        foes=[{"species": "rotomwash", "types": ["ELECTRIC", "WATER"], "hp_fraction": 1.0}],
+        allies=[{"species": "incineroar", "types": ["FIRE", "DARK"]}],
+    )
+    payload = _pivot_payload(
+        [_move("knockoff", [1], [{"target": 1, "side": "opponent", "species": "rotomwash"}]),
+         {"type": "switch", "species": "charizard"}],
+        obs,
+    )
+    assert payload["type"] == "move"
+
+
+def test_does_not_pivot_in_a_neutral_matchup():
+    obs = _observation(
+        [{"id": "knockoff", "type": "DARK", "base_power": 65, "accuracy": 1.0}],
+        foes=[GRASS_FOE],
+        allies=[{"species": "incineroar", "types": ["FIRE", "DARK"]}],
+    )
+    payload = _pivot_payload(
+        [_move("knockoff", [1], [{"target": 1, "side": "opponent", "species": "amoonguss"}]),
+         {"type": "switch", "species": "rotomwash"}],
+        obs,
+    )
+    assert payload["type"] == "move"
+
+
+def test_does_not_pivot_without_a_types_lookup():
+    """Back-compat: no species_types callable -> never a blind pivot."""
+    slots = act.parse_doubles(_action(_template(
+        [_move("gyroball", [1], [{"target": 1, "side": "opponent", "species": "charizard"}]),
+         {"type": "switch", "species": "rotomwash"}]
+    )))
+    obs = _observation(
+        [{"id": "gyroball", "type": "STEEL", "base_power": 80, "accuracy": 1.0}],
+        foes=[{"species": "charizard", "types": ["FIRE", "FLYING"], "hp_fraction": 1.0}],
+        allies=[{"species": "ferrothorn", "types": ["GRASS", "STEEL"]}],
+    )
+    assert act.heuristic_doubles(slots, _state(obs))["slot_0"]["type"] == "move"
+
+
 # -- describing options to the model -------------------------------------------------------
 
 
@@ -607,6 +701,13 @@ def test_a_blank_draft_points_cell_is_none_not_zero():
     table = meta.table()
     assert table.row("landorustherian") is not None
     assert table.draft_points("landorustherian") is None
+
+
+def test_species_types_reads_both_types_and_is_empty_when_unlisted():
+    table = meta.table()
+    assert [t.upper() for t in table.species_types("Incineroar")] == ["FIRE", "DARK"]
+    assert table.species_types("Rillaboom") and "GRASS" in [t.upper() for t in table.species_types("Rillaboom")]
+    assert table.species_types("NotARealSpecies") == []
 
 
 def test_restricted_legendaries_are_flagged():

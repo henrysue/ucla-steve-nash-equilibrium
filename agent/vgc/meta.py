@@ -203,6 +203,19 @@ class MetaTable:
         except ValueError:
             return None
 
+    def species_types(self, species: str | None) -> list[str]:
+        """Primary (+ secondary) type for a species, from the table.
+
+        Returns ``[]`` for an unlisted species, so callers that reason about
+        a benched Pokemon's defensive matchup (which the server does not type
+        on a switch option) can look it up here. Prior knowledge: the live
+        observation is authoritative where it supplies types.
+        """
+        row = self.row(species)
+        if row is None:
+            return []
+        return [t for t in (self._value(row, "type1"), self._value(row, "type2")) if t and t.lower() != "none"]
+
     def is_restricted(self, species: str | None) -> bool:
         """Whether this is a restricted legendary under the loaded format."""
         row = self.row(species)
