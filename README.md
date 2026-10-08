@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # AltruAgent Starter
 
 A Python starter kit for building your agent for the AltruAgent tournament.
@@ -645,3 +646,7 @@ pytest
 
 Tests use mocked HTTP responses and do not require network access or a real
 platform account.
+=======
+# ucla-steve-nash-equilibrium
+Agent for UCLA's Altru-Agent competition
+>>>>>>> dcb2b414054373fef83a84ef217e5154212bcf09
