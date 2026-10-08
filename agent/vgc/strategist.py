@@ -35,7 +35,7 @@ from altruagent import DecisionContext, GameState, LegalAction, WithReasoning
 from altruagent.console import print_line
 
 from . import actions as act
-from . import decisions, meta, nash
+from . import decisions, meta, nash, speed, typeprofile
 from .opponent import (
     CATEGORIES,
     RISK_BUDGET,
@@ -100,6 +100,12 @@ class VGCDraftStrategist:
         self._last_attempts = 0
         self._last_seconds = 0.0
         self._last_reasoning: str | None = None
+        # Tracked for the end-of-match summary: the opponent species we have
+        # seen and the archetype they matched, so the offline review knows
+        # what we faced without re-reading every turn.
+        self._opponent_seen: list[str] = []
+        self._opponent_archetype: str | None = None
+        self._agent_id: str | None = None
 
         # Said once, at startup, where it can be acted on — the per-turn
         # note is a public reasoning_summary and has to stay short.
@@ -127,20 +133,47 @@ class VGCDraftStrategist:
                 "no way to write. See GAMES.md, or run with --agent examples.llm_agent, which "
                 "plays all three games."
             )
+        self._agent_id = str(getattr(context, "agent_id", "") or "") or self._agent_id
+        if getattr(state, "is_terminal", False):
+            # The runner normally stops asking once a match ends, but if a
+            # terminal state ever reaches us, emit the summary now (with the
+            # real outcome from final_result) rather than relying on it.
+            self.summarize_match(state)
+            raise act.TemplateError("choose_action was called on a terminal state")
         if not state.legal_actions:
             raise act.TemplateError("choose_action was called with no legal actions")
         self._matchlog.name_match(context.session_id, context.seat_position, context.game_type)
         first = state.legal_actions[0]
-        if first.action_id == "select_lineup":
-            return self._team_preview(first, state, context)
-        if first.action_id == "doubles_turn":
-            return self._doubles_turn(first, state, context)
         if first.action_id == "submit_team":
             raise act.TemplateError(
                 "submit_team (build-your-own-team modes) needs a full 6-Pokémon team; this "
                 "strategist plays pokemon_vgc_doubles_draft."
             )
-        return self._draft_pick(state, context)
+
+        # Hard rule #1: a failure anywhere below must cost estimate quality,
+        # never a legal move. The deliberation path prepares its own
+        # heuristic fallback and plays it on a timeout or an unusable answer,
+        # but the preparation itself — and the Nash/cheese arithmetic — can
+        # still raise on a malformed template or a degenerate matrix, and an
+        # exception escaping choose_action forfeits the whole match. This
+        # guard is the floor beneath every other fallback: on any unexpected
+        # failure it commits to a guaranteed-legal move instead of raising.
+        try:
+            if first.action_id == "select_lineup":
+                return self._team_preview(first, state, context)
+            if first.action_id == "doubles_turn":
+                return self._doubles_turn(first, state, context)
+            return self._draft_pick(state, context)
+        except act.TemplateError:
+            # The server offered something this agent cannot read at all;
+            # that is a genuine misconfiguration, not a per-turn hiccup, and
+            # the runner's own message is clearer than any move we could
+            # invent. Let it surface.
+            raise
+        except Exception as exc:  # noqa: BLE001 - deliberately broad; see above
+            label = type(exc).__name__
+            self._log(f"[vgc] decision failed before a move was chosen [{label}]: {exc}")
+            return self._last_resort(state, exc)
 
     # -- draft ----------------------------------------------------------------
 
@@ -219,8 +252,15 @@ class VGCDraftStrategist:
             for entry in observation.get("opponent_roster") or []
             if isinstance(entry, dict) and (entry.get("species") or entry.get("name"))
         ]
-        bring = self._best_four(roster)
-        fallback = act.build_lineup(roster, bring, bring[:2])
+        # Prepare the fallback bring first (hard rule #1). A torn roster that
+        # defeats the value heuristic drops to the first four distinct
+        # species, which is still a legal lineup.
+        try:
+            bring = self._best_four(roster)
+            fallback = act.build_lineup(roster, bring, bring[:2])
+        except Exception as exc:  # noqa: BLE001
+            self._log(f"[vgc] lineup fallback unavailable, using a guaranteed-legal lineup [{type(exc).__name__}]: {exc}")
+            fallback = act.guaranteed_action(state)
 
         if self._provider is None:
             return self._fallback(
@@ -229,7 +269,7 @@ class VGCDraftStrategist:
             )
 
         decision = decisions.lineup_decision(roster, observation.get("opponent_roster"))
-        decision = _with_prompt(decision, {
+        preview_reference = {
             "your_restricted_legendaries": self._meta.restricted_in(roster),
             "opponent_restricted_legendaries": self._meta.restricted_in(opponent),
             "reference_your_roster": self._meta.briefs(roster, battle=True),
@@ -238,11 +278,16 @@ class VGCDraftStrategist:
             "reference_partners": self._meta.partner_notes(roster),
             "reference_table_note": (
                 "The reference_* fields are prior knowledge from a format table: roles, named "
-                "counters, partners and the Worlds Top 8 teams each appeared on. Useful for "
-                "judging matchups, but the rosters and the server's own data are authoritative "
-                "about this match."
+                "counters, partners, the Worlds Top 8 teams each appeared on, and — when the "
+                "opponent's roster matches one — a known team archetype with its structural, "
+                "crit-independent counterplay. Useful for judging matchups, but the rosters and "
+                "the server's own data are authoritative about this match."
             ),
-        })
+        }
+        archetypes = self._meta.archetype_notes(opponent)
+        if archetypes:
+            preview_reference["reference_opponent_archetypes"] = archetypes
+        decision = _with_prompt(decision, preview_reference)
 
         return self._matrix_decision(
             decision, state, context, TEAM_PREVIEW_SECONDS,
@@ -257,7 +302,17 @@ class VGCDraftStrategist:
     def _doubles_turn(self, action: LegalAction, state: GameState, context: DecisionContext):
         self._turn += 1
         slots = act.parse_doubles(action)
-        fallback = act.heuristic_doubles(slots, state)
+        # Prepare the most logical move FIRST, with no deliberation, so a
+        # slow or broken model costs analysis quality and never a turn. If
+        # even the type-aware heuristic cannot read this template, drop to
+        # the guaranteed-legal floor rather than losing the whole turn.
+        try:
+            fallback = act.heuristic_doubles(
+                slots, state, base_speed=self._meta.base_speed, species_types=self._meta.species_types
+            )
+        except Exception as exc:  # noqa: BLE001
+            self._log(f"[vgc] heuristic fallback unavailable, using a guaranteed-legal move [{type(exc).__name__}]: {exc}")
+            fallback = act.guaranteed_action(state)
 
         if self._provider is None:
             return self._fallback(
@@ -325,7 +380,111 @@ class VGCDraftStrategist:
         matchups = self._meta.matchup_notes(ours, theirs)
         if any(matchups.values()):
             reference["reference_matchups"] = matchups
+        # Deterministic base-speed turn-order prior (speed.py). Computed once
+        # here so the model does not re-derive it every turn; labelled as a
+        # base-speed prior so unseen items/boosts are the model's job, not
+        # ours.
+        order = speed.turn_order(observation, self._meta.base_speed)
+        if order is not None:
+            reference["reference_speed_order"] = order
+        # Remember what we faced, for the end-of-match summary.
+        self._remember_opponent(self._opponent_species_seen(observation))
+        # Team-level archetype read from everything the opponent has shown so
+        # far (actives plus any revealed back line), not just this turn's
+        # actives, so a core is still recognized after it rotates out.
+        archetypes = self._meta.archetype_notes(self._opponent_species_seen(observation))
+        if archetypes:
+            reference["reference_opponent_archetypes"] = archetypes
+            self._opponent_archetype = archetypes[0].get("name") or self._opponent_archetype
+            reference["reference_archetype_note"] = (
+                "Prior knowledge: the opponent's revealed Pokémon match this known Reg I "
+                "archetype. crit_independent_counterplay lists STRUCTURAL answers (type, "
+                "immunity, redirection, protection, speed control, weather) that work on a "
+                "normal damage roll with no critical hit. It is a hint for building the matrix, "
+                "not an instruction and not a substitute for the live observation."
+            )
+        # Deterministic type profile of everything the opponent has revealed:
+        # shared weaknesses to click, their STAB coverage, what they resist.
+        profile = typeprofile.opponent_profile(self._opponent_type_map(observation))
+        if profile is not None:
+            reference["reference_opponent_type_profile"] = profile
         return reference
+
+    def _opponent_type_map(self, observation: dict) -> dict:
+        """species -> types for every opponent Pokemon revealed this match.
+
+        Live observation typing wins where present (it reflects any Tera the
+        server has shown); the format table fills in revealed back-line mons
+        the observation did not type. Only revealed species are included —
+        never a guess at an unseen bench slot.
+        """
+        resolved: dict[str, list[str]] = {}
+        for entry in observation.get("opponent_active_pokemon") or []:
+            if isinstance(entry, dict):
+                name = entry.get("species") or entry.get("name")
+                types = entry.get("types")
+                if isinstance(name, str) and name and isinstance(types, list) and types:
+                    resolved[name] = [t for t in types if isinstance(t, str)]
+        for name in self._opponent_species_seen(observation):
+            if name not in resolved:
+                table_types = self._meta.species_types(name)
+                if table_types:
+                    resolved[name] = table_types
+        return resolved
+
+    def _opponent_species_seen(self, observation: dict) -> list[str]:
+        """Every opponent species the observation reveals: actives first, then
+        any named back-line entries, de-duplicated in that order."""
+        seen = list(_active_species(observation.get("opponent_active_pokemon")))
+        for entry in observation.get("opponent_roster") or []:
+            if isinstance(entry, dict):
+                name = entry.get("species") or entry.get("name")
+                if isinstance(name, str) and name:
+                    seen.append(name)
+        return list(dict.fromkeys(seen))
+
+    def _remember_opponent(self, species: list[str]) -> None:
+        """Accumulate the opponent species we have seen, in first-seen order."""
+        for name in species:
+            if name and name not in self._opponent_seen:
+                self._opponent_seen.append(name)
+
+    def summarize_match(self, state: GameState | None = None, *, note: str | None = None) -> dict:
+        """Write the end-of-match summary for offline, no-time-pressure review.
+
+        Public so a runner hook, a test, or a script can call it when a match
+        ends. The outcome is read ONLY from ``state.final_result`` when that
+        is present (``winner_agent_id`` compared to our seat); it is never
+        guessed, so an unknown outcome is recorded as ``None`` rather than a
+        made-up win or loss. Returns the summary dict and also writes it to
+        the match log's ``.summary.json`` / markdown footer when a log dir is
+        configured.
+        """
+        outcome = self._outcome_from(state)
+        return self._matchlog.summarize(
+            outcome=outcome,
+            opponent=self._opponent_seen,
+            archetype=self._opponent_archetype,
+            note=note,
+        )
+
+    def _outcome_from(self, state: GameState | None) -> str | None:
+        """win/loss/None from the server's final_result, never guessed."""
+        if state is None:
+            return None
+        final = getattr(state, "final_result", None)
+        if not isinstance(final, dict):
+            return None
+        winner = final.get("winner_agent_id")
+        if winner is None:
+            # Some games report a per-player numeric return instead.
+            returns = getattr(state, "returns", None)
+            if isinstance(returns, dict):
+                mine = returns.get(str(getattr(self, "_agent_id", "")) or "")
+                if isinstance(mine, (int, float)) and not isinstance(mine, bool):
+                    return "win" if mine > 0 else "loss" if mine < 0 else "draw"
+            return None
+        return "win" if str(winner) == str(self._agent_id or "") else "loss"
 
     def _memory(self) -> dict:
         """What this match has taught us, for the model's own reasoning."""
@@ -523,6 +682,27 @@ class VGCDraftStrategist:
     def _fallback(self, payload: Any, reason: str, *, turn: str, phase: object, kind: str):
         return self._record(
             payload, reason, turn=turn, phase=phase, kind=kind, fallback_reason=reason
+        )
+
+    def _last_resort(self, state: GameState, exc: Exception):
+        """Play a guaranteed-legal move after an unexpected failure.
+
+        Reached only when a phase handler raised past its own heuristic
+        fallback — a torn template the heuristic could not read, or a bug in
+        the deliberation code. ``act.guaranteed_action`` is written not to
+        raise, but it is wrapped anyway: the one promise this method makes is
+        that it returns a payload rather than letting the match forfeit.
+        """
+        reason = f"Recovered from an unexpected {type(exc).__name__} with a guaranteed-legal move: {exc}"
+        try:
+            payload = act.guaranteed_action(state)
+        except Exception as inner:  # noqa: BLE001  # pragma: no cover - guaranteed_action is written not to raise
+            payload = {"type": "doubles_turn", "slot_0": dict(act.PASS), "slot_1": dict(act.PASS)}
+            reason = f"{reason} (even the guaranteed action raised {type(inner).__name__}: {inner})"
+        kind = "doubles_turn" if isinstance(payload, dict) and payload.get("type") == "doubles_turn" else "select_lineup"
+        return self._record(
+            payload, reason, turn=f"Turn {self._turn}" if kind == "doubles_turn" else "Team Preview",
+            phase=state.phase, kind=kind, fallback_reason=reason,
         )
 
 

@@ -284,9 +284,21 @@ class MatchLog:
         self._stem: Path | None = None
         self._disabled = False
         self.decisions = 0
+        # A compact, append-only record of each decision, kept so the match
+        # can be summarized at the end without re-reading the JSONL. One small
+        # dict per turn; this is cheap and never touched on the hot path
+        # beyond an append.
+        self._trail: list[dict] = []
+        self._identity: dict = {}
+        self._summarized = False
 
     def name_match(self, session_id: object, seat: object, game_type: object) -> None:
         """Fix this match's file names. Safe to call every turn; acts once."""
+        self._identity = {
+            "session_id": str(session_id or ""),
+            "seat": seat,
+            "game_type": str(game_type or ""),
+        }
         if self._directory is None or self._stem is not None:
             return
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
@@ -295,6 +307,7 @@ class MatchLog:
 
     def write(self, decision: Decision) -> None:
         self.decisions += 1
+        self._trail.append(_trail_entry(decision))
         rendered = decision.render()
         for line in rendered.splitlines():
             self._log(f"[vgc] {line}")
@@ -311,9 +324,101 @@ class MatchLog:
             self._disabled = True
             self._log(f"[vgc] match log disabled, could not write {self._stem}: {exc}")
 
+    def summarize(self, *, outcome: str | None = None, opponent: list | None = None,
+                  archetype: str | None = None, note: str | None = None) -> dict:
+        """Emit a compact end-of-match summary for offline, no-time-pressure review.
+
+        The per-turn log already holds every move and its reasoning; this adds
+        the skimmable layer on top — what we faced, how each turn resolved
+        (EQUILIBRIUM / EXPLOIT / FALLBACK), how many fallbacks we were forced
+        into, and the outcome when it is known — so a human can spot mistakes
+        and decide which archetype/counterplay to PRELOAD into the playbook.
+
+        Safe to call more than once (acts once) and when logging is disabled
+        (it still returns the summary dict and logs a one-line digest).
+        ``outcome`` is only recorded when the caller actually knows it; it is
+        never guessed.
+        """
+        fallbacks = sum(1 for e in self._trail if e["result"] == "FALLBACK")
+        exploits = sum(1 for e in self._trail if e["result"] == "EXPLOIT")
+        summary = {
+            "match": self._identity,
+            "outcome": outcome,  # "win" / "loss" / None (unknown)
+            "opponent_species": list(opponent) if opponent else [],
+            "opponent_archetype": archetype,
+            "decisions": len(self._trail),
+            "fallbacks": fallbacks,
+            "exploits": exploits,
+            "turns": self._trail,
+            "note": note,
+        }
+        digest = (
+            f"match summary: {len(self._trail)} decisions, {fallbacks} fallback(s), "
+            f"{exploits} exploit(s)"
+            + (f", outcome={outcome}" if outcome else "")
+            + (f", vs {archetype}" if archetype else "")
+        )
+        if not self._summarized:
+            self._log(f"[vgc] {digest}")
+            self._summarized = True
+        if self._stem is None or self._disabled:
+            return summary
+        try:
+            self._stem.parent.mkdir(parents=True, exist_ok=True)
+            with self._stem.with_suffix(".md").open("a", encoding="utf-8") as handle:
+                handle.write(_render_summary(summary) + "\n")
+            with self._stem.with_suffix(".summary.json").open("w", encoding="utf-8") as handle:
+                handle.write(json.dumps(summary, ensure_ascii=False, default=str, indent=2) + "\n")
+        except OSError as exc:
+            self._disabled = True
+            self._log(f"[vgc] match summary not written to {self._stem}: {exc}")
+        return summary
+
     @property
     def path(self) -> Path | None:
         return self._stem.with_suffix(".md") if self._stem else None
+
+
+def _trail_entry(decision: Decision) -> dict:
+    """One compact row for the match summary, drawn from a Decision."""
+    if decision.fallback_reason:
+        result = "FALLBACK"
+    elif decision.analysis is not None:
+        result = decision.analysis.recommendation  # "EQUILIBRIUM" or "EXPLOIT"
+    else:
+        result = "-"
+    game_value = None
+    if decision.analysis is not None:
+        game_value = round(decision.analysis.equilibrium.value, 3)
+    return {
+        "turn": decision.turn,
+        "kind": decision.kind,
+        "result": result,
+        "game_value": game_value,
+        "seconds": round(decision.seconds, 2),
+        "summary": decision.public_summary or "",
+        "fallback_reason": decision.fallback_reason,
+    }
+
+
+def _render_summary(summary: dict) -> str:
+    lines = [
+        "## Match summary",
+        "",
+        f"- Outcome: **{summary['outcome'] or 'unknown'}**"
+        + (f" | vs archetype: {summary['opponent_archetype']}" if summary.get("opponent_archetype") else ""),
+        f"- Opponent: {', '.join(summary['opponent_species']) or '(not recorded)'}",
+        f"- Decisions: {summary['decisions']} | Fallbacks: {summary['fallbacks']} | Exploits: {summary['exploits']}",
+    ]
+    if summary.get("note"):
+        lines.append(f"- Note: {summary['note']}")
+    lines += ["", "| Turn | Kind | Result | Game value | s | Public summary |",
+              "|---|---|---|---|---|---|"]
+    for e in summary["turns"]:
+        gv = "" if e["game_value"] is None else f"{e['game_value']:.3f}"
+        text = (e["summary"] or e.get("fallback_reason") or "").replace("|", "/")
+        lines.append(f"| {e['turn']} | {e['kind']} | {e['result']} | {gv} | {e['seconds']:.1f} | {text} |")
+    return "\n".join(lines)
 
 
 def _slug(text: str) -> str:

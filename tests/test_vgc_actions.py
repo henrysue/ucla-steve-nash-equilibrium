@@ -84,6 +84,106 @@ def test_type_effectiveness(move_type, defender, expected):
     assert effectiveness(move_type, defender) == pytest.approx(expected)
 
 
+# -- the whole chart, checked against an independent reference ----------------
+#
+# The chart is the foundation under every damage estimate and every piece of
+# counterplay the agent gives, so a single transposed or mistyped entry would
+# quietly hand the opponent an advantage on many turns. These tests verify all
+# 18x18 ordered (attacker, defender) pairs against a reference encoded in a
+# DIFFERENT SHAPE than agent/vgc/typechart.py: per ATTACKING type, the lists of
+# defenders it is super-effective / not-very-effective / no-effect INTO.
+# A copy error in the source cannot be mirrored here, and transposition
+# (confusing attacker with defender) is caught by the directionality tests
+# below. Source: canonical Pokemon type chart, Generation 6 onward.
+
+_GEN6_TYPES = (
+    "NORMAL", "FIRE", "WATER", "ELECTRIC", "GRASS", "ICE", "FIGHTING", "POISON",
+    "GROUND", "FLYING", "PSYCHIC", "BUG", "ROCK", "GHOST", "DRAGON", "DARK",
+    "STEEL", "FAIRY",
+)
+
+# attacker -> (super_effective_into, not_very_effective_into, no_effect_into)
+_GEN6_REF = {
+    "NORMAL":   ([], ["ROCK", "STEEL"], ["GHOST"]),
+    "FIRE":     (["GRASS", "ICE", "BUG", "STEEL"], ["FIRE", "WATER", "ROCK", "DRAGON"], []),
+    "WATER":    (["FIRE", "GROUND", "ROCK"], ["WATER", "GRASS", "DRAGON"], []),
+    "ELECTRIC": (["WATER", "FLYING"], ["ELECTRIC", "GRASS", "DRAGON"], ["GROUND"]),
+    "GRASS":    (["WATER", "GROUND", "ROCK"],
+                 ["FIRE", "GRASS", "POISON", "FLYING", "BUG", "DRAGON", "STEEL"], []),
+    "ICE":      (["GRASS", "GROUND", "FLYING", "DRAGON"], ["FIRE", "WATER", "ICE", "STEEL"], []),
+    "FIGHTING": (["NORMAL", "ICE", "ROCK", "DARK", "STEEL"],
+                 ["POISON", "FLYING", "PSYCHIC", "BUG", "FAIRY"], ["GHOST"]),
+    "POISON":   (["GRASS", "FAIRY"], ["POISON", "GROUND", "ROCK", "GHOST"], ["STEEL"]),
+    "GROUND":   (["FIRE", "ELECTRIC", "POISON", "ROCK", "STEEL"], ["GRASS", "BUG"], ["FLYING"]),
+    "FLYING":   (["GRASS", "FIGHTING", "BUG"], ["ELECTRIC", "ROCK", "STEEL"], []),
+    "PSYCHIC":  (["FIGHTING", "POISON"], ["PSYCHIC", "STEEL"], ["DARK"]),
+    "BUG":      (["GRASS", "PSYCHIC", "DARK"],
+                 ["FIRE", "FIGHTING", "POISON", "FLYING", "GHOST", "STEEL", "FAIRY"], []),
+    "ROCK":     (["FIRE", "ICE", "FLYING", "BUG"], ["FIGHTING", "GROUND", "STEEL"], []),
+    "GHOST":    (["PSYCHIC", "GHOST"], ["DARK"], ["NORMAL"]),
+    "DRAGON":   (["DRAGON"], ["STEEL"], ["FAIRY"]),
+    "DARK":     (["PSYCHIC", "GHOST"], ["FIGHTING", "DARK", "FAIRY"], []),
+    "STEEL":    (["ICE", "ROCK", "FAIRY"], ["FIRE", "WATER", "ELECTRIC", "STEEL"], []),
+    "FAIRY":    (["FIGHTING", "DRAGON", "DARK"], ["FIRE", "POISON", "STEEL"], []),
+}
+
+
+def _ref_mult(attacker, defender):
+    se, nve, no = _GEN6_REF[attacker]
+    if defender in no:
+        return 0.0
+    if defender in se:
+        return 2.0
+    if defender in nve:
+        return 0.5
+    return 1.0
+
+
+def test_reference_chart_is_internally_consistent():
+    """Guard the guard: no defender may appear in two relation lists."""
+    for attacker, (se, nve, no) in _GEN6_REF.items():
+        combined = se + nve + no
+        assert len(combined) == len(set(combined)), f"{attacker} lists overlap"
+    assert set(_GEN6_REF) == set(_GEN6_TYPES)
+
+
+@pytest.mark.parametrize("attacker", _GEN6_TYPES)
+@pytest.mark.parametrize("defender", _GEN6_TYPES)
+def test_every_ordered_pair_matches_the_canonical_chart(attacker, defender):
+    """All 324 (attacker -> defender) single-type matchups, value and direction."""
+    assert effectiveness(attacker, [defender]) == pytest.approx(_ref_mult(attacker, defender))
+
+
+@pytest.mark.parametrize(
+    "attacker,defender,atk_into_def,def_into_atk",
+    [
+        # Pairs where attacker->defender and defender->attacker DIFFER: the
+        # whole point of a directional chart. If the table were transposed,
+        # these would be swapped.
+        ("WATER", "FIRE", 2.0, 0.5),
+        ("GRASS", "WATER", 2.0, 0.5),
+        ("FIGHTING", "ROCK", 2.0, 0.5),
+        ("GROUND", "FLYING", 0.0, 1.0),   # Ground cannot touch Flying; Flying is neutral into Ground
+        ("ELECTRIC", "GROUND", 0.0, 2.0), # Electric cannot touch Ground; Ground is SE into Electric
+        ("FAIRY", "DRAGON", 2.0, 0.0),    # Fairy wrecks Dragon; Dragon cannot touch Fairy
+        ("PSYCHIC", "DARK", 0.0, 2.0),    # Psychic cannot touch Dark; Dark is SE into Psychic
+        ("STEEL", "FAIRY", 2.0, 0.5),
+        ("FIRE", "STEEL", 2.0, 0.5),
+    ],
+)
+def test_effectiveness_is_directional(attacker, defender, atk_into_def, def_into_atk):
+    """attacker->defender must not equal defender->attacker for asymmetric pairs."""
+    assert effectiveness(attacker, [defender]) == pytest.approx(atk_into_def)
+    assert effectiveness(defender, [attacker]) == pytest.approx(def_into_atk)
+    assert atk_into_def != def_into_atk  # these pairs are chosen to be asymmetric
+
+
+def test_ghost_normal_mutual_immunity_is_the_one_symmetric_zero():
+    """Ghost<->Normal is the rare pair that is 0x in BOTH directions."""
+    assert effectiveness("GHOST", ["NORMAL"]) == 0.0
+    assert effectiveness("NORMAL", ["GHOST"]) == 0.0
+
+
 def test_effectiveness_is_case_insensitive():
     assert effectiveness("fire", ["grass"]) == 2.0
 
@@ -210,6 +310,232 @@ def test_a_move_with_no_targets_omits_the_target_key():
     observation = _observation([{"id": "tailwind", "type": "FLYING", "base_power": 0, "accuracy": 1.0}])
     payload = act.heuristic_doubles(slots, _state(observation))
     assert payload["slot_0"] == {"type": "move", "move_id": "tailwind"}
+
+
+# -- fallback upgrades: Fake Out, consecutive Protect, STAB --------------------
+
+
+def _obs_turn(moves_slot_0, foes, *, turn, allies=None, slot0_extra=None):
+    active = allies or [{"species": "incineroar", "types": ["FIRE", "DARK"]}]
+    if slot0_extra:
+        active = [{**active[0], **slot0_extra}] + list(active[1:])
+    return {
+        "is_doubles": True, "turn": turn, "available_moves": [moves_slot_0, []],
+        "active_pokemon": active, "opponent_active_pokemon": foes,
+    }
+
+
+def test_fake_out_is_taken_on_turn_one_over_an_equally_weak_move():
+    slots = act.parse_doubles(_action(_template([
+        _move("fakeout", [1], [{"target": 1, "side": "opponent", "species": "amoonguss"}]),
+        _move("scratch", [1], [{"target": 1, "side": "opponent", "species": "amoonguss"}]),
+    ])))
+    obs = _obs_turn(
+        [{"id": "fakeout", "type": "NORMAL", "base_power": 40, "accuracy": 1.0, "priority": 3},
+         {"id": "scratch", "type": "NORMAL", "base_power": 40, "accuracy": 1.0}],
+        foes=[GRASS_FOE], turn=1,
+    )
+    assert act.heuristic_doubles(slots, _state(obs))["slot_0"]["move_id"] == "fakeout"
+
+
+def test_fake_out_is_dropped_after_turn_one():
+    """Off the first turn Fake Out fails, so it must never be chosen."""
+    slots = act.parse_doubles(_action(_template([
+        _move("fakeout", [1], [{"target": 1, "side": "opponent", "species": "amoonguss"}]),
+        _move("scratch", [1], [{"target": 1, "side": "opponent", "species": "amoonguss"}]),
+    ])))
+    obs = _obs_turn(
+        [{"id": "fakeout", "type": "NORMAL", "base_power": 40, "accuracy": 1.0, "priority": 3},
+         {"id": "scratch", "type": "NORMAL", "base_power": 40, "accuracy": 1.0}],
+        foes=[GRASS_FOE], turn=6,
+    )
+    assert act.heuristic_doubles(slots, _state(obs))["slot_0"]["move_id"] == "scratch"
+
+
+def test_fake_out_does_not_override_a_super_effective_nuke():
+    slots = act.parse_doubles(_action(_template([
+        _move("fakeout", [1], [{"target": 1, "side": "opponent", "species": "amoonguss"}]),
+        _move("flareblitz", [1], [{"target": 1, "side": "opponent", "species": "amoonguss"}]),
+    ])))
+    obs = _obs_turn(
+        [{"id": "fakeout", "type": "NORMAL", "base_power": 40, "accuracy": 1.0, "priority": 3},
+         {"id": "flareblitz", "type": "FIRE", "base_power": 120, "accuracy": 1.0}],
+        foes=[GRASS_FOE], turn=1,  # Fire is 2x into Grass/Poison
+    )
+    assert act.heuristic_doubles(slots, _state(obs))["slot_0"]["move_id"] == "flareblitz"
+
+
+def test_protect_is_suppressed_when_the_field_shows_it_would_fail():
+    slots = act.parse_doubles(_action(_template([
+        _move("protect", []),
+        _move("knockoff", [1], [{"target": 1, "side": "opponent", "species": "amoonguss"}]),
+    ])))
+    obs = _obs_turn(
+        [{"id": "protect", "type": "NORMAL", "base_power": 0, "accuracy": 1.0},
+         {"id": "knockoff", "type": "DARK", "base_power": 65, "accuracy": 1.0}],
+        foes=[GRASS_FOE], turn=4, slot0_extra={"protect_used_last_turn": True},
+    )
+    assert act.heuristic_doubles(slots, _state(obs))["slot_0"]["move_id"] == "knockoff"
+
+
+def test_protect_is_kept_when_nothing_signals_it_would_fail():
+    """With only a Protect available and no consecutive-use signal, keep it."""
+    slots = act.parse_doubles(_action(_template([_move("protect", [])])))
+    obs = _obs_turn([{"id": "protect", "type": "NORMAL", "base_power": 0, "accuracy": 1.0}],
+                    foes=[GRASS_FOE], turn=4)
+    assert act.heuristic_doubles(slots, _state(obs))["slot_0"]["move_id"] == "protect"
+
+
+def test_stab_breaks_a_tie_toward_the_same_type_move():
+    """Two equal-power moves; the one matching the user's type wins on STAB."""
+    slots = act.parse_doubles(_action(_template([
+        _move("flamethrower", [1], [{"target": 1, "side": "opponent", "species": "healthy"}]),
+        _move("surf", [1], [{"target": 1, "side": "opponent", "species": "healthy"}]),
+    ])))
+    # Incineroar is FIRE/DARK: Flamethrower gets STAB, Surf does not; both
+    # neutral into a Normal target, so STAB decides.
+    obs = _obs_turn(
+        [{"id": "flamethrower", "type": "FIRE", "base_power": 90, "accuracy": 1.0},
+         {"id": "surf", "type": "WATER", "base_power": 90, "accuracy": 1.0}],
+        foes=[{"species": "healthy", "types": ["NORMAL"], "hp_fraction": 1.0}], turn=3,
+    )
+    assert act.heuristic_doubles(slots, _state(obs))["slot_0"]["move_id"] == "flamethrower"
+
+
+# -- anti-panic-switch guard --------------------------------------------------
+
+
+def test_does_not_panic_switch_when_a_usable_attack_exists():
+    """A healthy mon with a usable move must attack, not switch out."""
+    slots = act.parse_doubles(_action(_template([
+        _move("flareblitz", [1], [{"target": 1, "side": "opponent", "species": "amoonguss"}]),
+        {"type": "switch", "species": "rillaboom"},
+    ])))
+    observation = _observation(
+        [{"id": "flareblitz", "type": "FIRE", "base_power": 120, "accuracy": 1.0}], foes=[GRASS_FOE]
+    )
+    assert act.heuristic_doubles(slots, _state(observation))["slot_0"]["type"] == "move"
+
+
+def test_switches_only_when_every_move_is_useless():
+    """When the sole move is immune, switching is repositioning, not panic."""
+    slots = act.parse_doubles(_action(_template([
+        _move("earthquake", [1], [{"target": 1, "side": "opponent", "species": "tornadus"}]),
+        {"type": "switch", "species": "rillaboom"},
+    ])))
+    observation = _observation(
+        [{"id": "earthquake", "type": "GROUND", "base_power": 100, "accuracy": 1.0}],
+        foes=[{"species": "tornadus", "types": ["FLYING"], "hp_fraction": 1.0}],
+    )
+    assert act.heuristic_doubles(slots, _state(observation))["slot_0"]["type"] == "switch"
+
+
+def test_an_immune_target_without_a_named_species_is_still_seen_with_one_foe():
+    """Robustness: if the server omits the species on the entry and there is a
+    single opponent active, the immunity is still detected (no wrong guess)."""
+    slots = act.parse_doubles(_action(_template([
+        _move("earthquake", [1]),  # bare targets, no species on the entry
+        {"type": "switch", "species": "rillaboom"},
+    ])))
+    observation = _observation(
+        [{"id": "earthquake", "type": "GROUND", "base_power": 100, "accuracy": 1.0}],
+        foes=[{"species": "tornadus", "types": ["FLYING"], "hp_fraction": 1.0}],
+    )
+    assert act.heuristic_doubles(slots, _state(observation))["slot_0"]["type"] == "switch"
+
+
+# -- proactive defensive pivot ------------------------------------------------
+
+_BENCH_TYPES = {
+    "ferrothorn": ["GRASS", "STEEL"], "rotomwash": ["ELECTRIC", "WATER"],
+    "charizard": ["FIRE", "FLYING"], "amoonguss": ["GRASS", "POISON"],
+    "incineroar": ["FIRE", "DARK"],
+}
+
+
+def _bench_types(species):
+    import re as _re
+    return _BENCH_TYPES.get(_re.sub(r"[^a-z0-9]", "", (species or "").lower()), [])
+
+
+def _pivot_payload(slot0, observation):
+    slots = act.parse_doubles(_action(_template(slot0)))
+    return act.heuristic_doubles(
+        slots, _state(observation), base_speed=None, species_types=_bench_types
+    )["slot_0"]
+
+
+def test_pivots_out_of_a_losing_type_matchup_to_a_resist():
+    """Ferrothorn (Grass/Steel) is 4x weak to Fire; pivot to Rotom-Wash (0.5x)."""
+    obs = _observation(
+        [{"id": "gyroball", "type": "STEEL", "base_power": 80, "accuracy": 1.0}],
+        foes=[{"species": "charizard", "types": ["FIRE", "FLYING"], "hp_fraction": 1.0}],
+        allies=[{"species": "ferrothorn", "types": ["GRASS", "STEEL"]}],
+    )
+    payload = _pivot_payload(
+        [_move("gyroball", [1], [{"target": 1, "side": "opponent", "species": "charizard"}]),
+         {"type": "switch", "species": "rotomwash"}],
+        obs,
+    )
+    assert payload == {"type": "switch", "species": "rotomwash"}
+
+
+def test_does_not_pivot_when_a_super_effective_attack_is_available():
+    """Anti-panic: with a Rock move (4x into Charizard) we attack, never pivot."""
+    obs = _observation(
+        [{"id": "rockslide", "type": "ROCK", "base_power": 75, "accuracy": 0.9}],
+        foes=[{"species": "charizard", "types": ["FIRE", "FLYING"], "hp_fraction": 1.0}],
+        allies=[{"species": "ferrothorn", "types": ["GRASS", "STEEL"]}],
+    )
+    payload = _pivot_payload(
+        [_move("rockslide", [1], [{"target": 1, "side": "opponent", "species": "charizard"}]),
+         {"type": "switch", "species": "rotomwash"}],
+        obs,
+    )
+    assert payload["type"] == "move"
+
+
+def test_does_not_pivot_when_the_bench_is_no_safer():
+    """Incineroar is 2x weak to Water; a bench that is also 2x weak is no pivot."""
+    obs = _observation(
+        [{"id": "knockoff", "type": "DARK", "base_power": 65, "accuracy": 1.0}],
+        foes=[{"species": "rotomwash", "types": ["ELECTRIC", "WATER"], "hp_fraction": 1.0}],
+        allies=[{"species": "incineroar", "types": ["FIRE", "DARK"]}],
+    )
+    payload = _pivot_payload(
+        [_move("knockoff", [1], [{"target": 1, "side": "opponent", "species": "rotomwash"}]),
+         {"type": "switch", "species": "charizard"}],
+        obs,
+    )
+    assert payload["type"] == "move"
+
+
+def test_does_not_pivot_in_a_neutral_matchup():
+    obs = _observation(
+        [{"id": "knockoff", "type": "DARK", "base_power": 65, "accuracy": 1.0}],
+        foes=[GRASS_FOE],
+        allies=[{"species": "incineroar", "types": ["FIRE", "DARK"]}],
+    )
+    payload = _pivot_payload(
+        [_move("knockoff", [1], [{"target": 1, "side": "opponent", "species": "amoonguss"}]),
+         {"type": "switch", "species": "rotomwash"}],
+        obs,
+    )
+    assert payload["type"] == "move"
+
+
+def test_does_not_pivot_without_a_types_lookup():
+    """Back-compat: no species_types callable -> never a blind pivot."""
+    slots = act.parse_doubles(_action(_template(
+        [_move("gyroball", [1], [{"target": 1, "side": "opponent", "species": "charizard"}]),
+         {"type": "switch", "species": "rotomwash"}]
+    )))
+    obs = _observation(
+        [{"id": "gyroball", "type": "STEEL", "base_power": 80, "accuracy": 1.0}],
+        foes=[{"species": "charizard", "types": ["FIRE", "FLYING"], "hp_fraction": 1.0}],
+        allies=[{"species": "ferrothorn", "types": ["GRASS", "STEEL"]}],
+    )
+    assert act.heuristic_doubles(slots, _state(obs))["slot_0"]["type"] == "move"
 
 
 # -- describing options to the model -------------------------------------------------------
@@ -375,6 +701,13 @@ def test_a_blank_draft_points_cell_is_none_not_zero():
     table = meta.table()
     assert table.row("landorustherian") is not None
     assert table.draft_points("landorustherian") is None
+
+
+def test_species_types_reads_both_types_and_is_empty_when_unlisted():
+    table = meta.table()
+    assert [t.upper() for t in table.species_types("Incineroar")] == ["FIRE", "DARK"]
+    assert table.species_types("Rillaboom") and "GRASS" in [t.upper() for t in table.species_types("Rillaboom")]
+    assert table.species_types("NotARealSpecies") == []
 
 
 def test_restricted_legendaries_are_flagged():
