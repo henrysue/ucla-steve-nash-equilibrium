@@ -6,7 +6,7 @@ PLAN.md (decisions in commander.py / brain.py). Every
 choices the rules then carry out, within their limits.
 
 - ``posture``: ``attack`` (go now), ``hold`` (keep massing), or ``default``;
-- ``attack_route``: ``center`` / ``left`` / ``right`` / ``auto`` (from 5:00);
+- ``attack_route``: ``center`` / ``left`` / ``right`` / ``auto`` (from 10:00, or sooner when decisively ahead);
 - ``expand``: ``now`` / ``wait`` / ``auto``;
 - ``army_target``: the cell the main army attacks (used only with a known
   enemy near it, and not while finishing a razed enemy);
@@ -80,7 +80,8 @@ retreat, not before 3:00 without a war factory, and only when our army at least 
 "hold" keeps massing: ignored when we clearly outnumber them or are behind at the end. Use them \
 for judgment the numbers miss (their army is out of position, a counter-push is coming), not to \
 second-guess the obvious. Keep a posture 30+ seconds: flip-flopping marches the army out and back.
-- attack_route: "center", "left" or "right" for the next attack, from 5:00 on. Flank around a \
+- attack_route: "center", "left" or "right" for the next attack, from 10:00 on (sooner only when decisively ahead: \
+engaged early, a flank leaves our base open). Flank around a \
 defended or crowded middle; go straight when the raid squad is drawing their army away.
 - expand: "now" to start an expansion earlier, "wait" if the site or the map is contested. The \
 engine expands on its own (natural first) and also when broke while trading even.

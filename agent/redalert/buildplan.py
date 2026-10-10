@@ -664,11 +664,19 @@ def grow_spot(view: View, bearing, item: str, near=None, skip_types=(), side_wei
         anchors = [b.cell for b in view.buildings if b.cell is not None and not b.wreck]
         origin = (sum(c[0] for c in anchors) / len(anchors), sum(c[1] for c in anchors) / len(anchors))
 
+    def ahead(spot):
+        return (spot[0] + (nw - 1) / 2 - origin[0]) * ux + (spot[1] + (nh - 1) / 2 - origin[1]) * uy
+
     def score(spot):
         ox, oy = spot[0] + (nw - 1) / 2 - origin[0], spot[1] + (nh - 1) / 2 - origin[1]
         return -(ox * ux + oy * uy - side_weight * abs(oy * ux - ox * uy))
 
-    return _pick(view, item, spots, score)
+    # Only the half of the base facing the bearing, when it has a spot: units
+    # standing in front (the massing army) must not push a building behind
+    # the base (match 08560d9b: the first flame tower went up at the back).
+    # Units on the chosen spot are cleared off it (executor._keep_clear).
+    front = [s for s in spots if ahead(s) > 0]
+    return _pick(view, item, front or spots, score)
 
 
 def _beside_ore(view: View, ore, item: str, near=None) -> tuple[int, int] | None:

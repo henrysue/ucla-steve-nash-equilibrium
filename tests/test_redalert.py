@@ -2319,14 +2319,16 @@ def test_an_expansion_refinery_lands_beside_its_ore_at_the_expansion():
 # -- early game: no flanking, watch their base for an early push ---------------------------------
 
 
-def test_no_flanking_before_five_minutes():
+def test_no_flanking_before_ten_minutes_unless_decisively_ahead():
     agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
     center_threat = [{"id": 50 + i, "type": "1tnk", "x": 22, "y": 22, "hp": 100} for i in range(3)]
     their_base = [{"id": 80, "type": "proc", "x": 40, "y": 40, "hp": 100}]
-    early = _view(_t=200.0, visible_enemies=center_threat, visible_enemy_buildings=their_base)
-    late = _view(_t=400.0, visible_enemies=center_threat, visible_enemy_buildings=their_base)
-    assert agent._pick_route(early, None) is None
-    assert agent._pick_route(late, None) is not None                       # guarded middle: flank later
+    at = lambda t, **kw: _view(_t=t, _r=1200.0 - t, visible_enemies=center_threat,  # noqa: E731
+                               visible_enemy_buildings=their_base, **kw)
+    assert agent._pick_route(at(400.0), None) is None                      # engaged early, hold the middle
+    assert agent._pick_route(at(620.0), None) is not None                  # guarded middle: flank later
+    ahead = at(400.0, military={"kills_cost": 9000, "deaths_cost": 2000})
+    assert agent._pick_route(ahead, None) is not None                      # decisively ahead: flank now
 
 
 def test_an_early_push_is_spotted_and_we_hold_at_home():
@@ -3476,3 +3478,12 @@ def test_a_spot_the_engine_moved_a_building_from_is_not_offered_again():
     failed = dataclasses.replace(v, failed_cells=frozenset(buildplan._cells("powr", bad)))
     assert bad not in buildplan.legal_spots(failed, "powr")
     assert len(buildplan.legal_spots(failed, "powr")) > 0
+
+
+def test_massed_units_in_front_do_not_push_the_turret_behind_the_base():
+    # match 08560d9b: the army massing in front made every front spot "in the way"
+    blds = [{"id": 10, "type": "fact", "x": 20, "y": 20}, {"id": 11, "type": "powr", "x": 24, "y": 20}]
+    army = [{"id": 100 + i, "type": "e1", "x": 23 + i % 6, "y": 23 + i // 6, "hp": 100} for i in range(30)]
+    v = _view(base_center=[21, 21], buildings=blds, units=army)           # enemy spawn [40, 40]: south-east
+    x, y = buildplan.placement_cell(v, "ftur")
+    assert (x - 21) + (y - 21) > 0, (x, y)                                # the enemy-facing half

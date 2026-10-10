@@ -344,8 +344,8 @@ class RedAlertAgent:
         known enemies, rotating on ties."""
         target = getattr(advice, "army_target", None) or executor._attack_target(view)
         route = getattr(advice, "attack_route", "auto")
-        if view.game_seconds < C.FLANK_AFTER_SECONDS:
-            return None   # early: straight down the middle, keeping map control
+        if view.game_seconds < C.FLANK_AFTER_SECONDS and not (brain._dominant(view) or brain._overwhelming(view)):
+            return None   # early: straight down the middle, between them and our base
         if route in ("left", "right"):
             return executor.flank_waypoint(view, target, -1 if route == "left" else 1)
         if route == "center":
