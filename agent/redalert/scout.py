@@ -120,7 +120,18 @@ def early_push_warning(view: View) -> bool:
             and view.enemy_army_value >= C.EARLY_PUSH_RATIO * view.army_value)
 
 
+_STAGE: list = [None, None]   # [view, massing point]: computed once per view
+
+
 def choke_cell(view: View) -> tuple[int, int] | None:
+    if _STAGE[0] is view:
+        return _STAGE[1]
+    stage = _massing_point(view)
+    _STAGE[0], _STAGE[1] = view, stage
+    return stage
+
+
+def _massing_point(view: View) -> tuple[int, int] | None:
     """Where the army masses, new units rally and the army regroups:
     ``STAGE_FORWARD_CELLS`` in front of the base toward the enemy (never past
     ``STAGE_FRACTION`` of the way): ready to attack, between them and us.

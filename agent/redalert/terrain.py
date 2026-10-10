@@ -24,8 +24,8 @@ def walk_distances(view: View, sources, max_steps: int) -> dict[tuple[int, int],
     srcs = tuple(sorted(set(sources)))
     key = (id(view.blocked_cells), view.bounds, srcs, max_steps)
     hit = _CACHE.get(key)
-    if hit is not None:
-        return hit
+    if hit is not None and hit[0] is view.blocked_cells:   # the same set, not a reused id
+        return hit[1]
     blocked = view.blocked_cells
     if view.bounds is not None:
         bx, by, bw, bh = view.bounds
@@ -47,7 +47,7 @@ def walk_distances(view: View, sources, max_steps: int) -> dict[tuple[int, int],
             queue.append(nxt)
     if len(_CACHE) >= _CACHE_MAX:
         _CACHE.clear()
-    _CACHE[key] = dist
+    _CACHE[key] = (view.blocked_cells, dist)
     return dist
 
 

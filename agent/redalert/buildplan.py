@@ -385,7 +385,7 @@ def _cells(item: str, cell) -> list[tuple[int, int]]:
     return [(x, y) for x in range(x0, x1 + 1) for y in range(y0, y1 + 1)]
 
 
-_TERRAIN_CACHE: dict[tuple[int, int], frozenset] = {}
+_TERRAIN_CACHE: dict[tuple, tuple] = {}
 
 
 def _no_build(view: View) -> frozenset:
@@ -394,11 +394,13 @@ def _no_build(view: View) -> frozenset:
     building there and silently drops it next to the main yard instead
     (matches 768b2cbd, b7fcbd4e: expansion refineries ended up at home)."""
     key = (id(view.ore_cells), id(view.blocked_cells), id(view.unbuildable_cells))
-    cells = _TERRAIN_CACHE.get(key)
-    if cells is None:
-        cells = frozenset(view.ore_cells) | view.blocked_cells | view.unbuildable_cells
-        _TERRAIN_CACHE.clear()
-        _TERRAIN_CACHE[key] = cells
+    hit = _TERRAIN_CACHE.get(key)
+    sources = (view.ore_cells, view.blocked_cells, view.unbuildable_cells)
+    if hit is not None and all(a is b for a, b in zip(hit[0], sources)):   # the same objects, not reused ids
+        return hit[1]
+    cells = frozenset(view.ore_cells) | view.blocked_cells | view.unbuildable_cells
+    _TERRAIN_CACHE.clear()
+    _TERRAIN_CACHE[key] = (sources, cells)
     return cells
 
 
@@ -436,7 +438,18 @@ def _clashes(item: str, cell, view: View) -> bool:
     return False
 
 
+_LANES: list = [None, None]   # [view, lanes]: one view's lanes (computed once per view)
+
+
 def _lanes(view: View) -> frozenset:
+    if _LANES[0] is view:
+        return _LANES[1]
+    lanes = _compute_lanes(view)
+    _LANES[0], _LANES[1] = view, lanes
+    return lanes
+
+
+def _compute_lanes(view: View) -> frozenset:
     """Cells kept free of buildings so units can move:
 
     - a corridor ``LANE_WIDTH_CELLS`` wide from the base out toward the
@@ -478,92 +491,106 @@ def _in_bounds(view: View, item: str, cell) -> bool:
     return bx <= x0 and by <= y0 and x1 <= bx + bw - 1 and y1 <= by + bh - 1
 
 
+_SPOTS: dict = {}
+
+
+def legal_spots(view: View, item: str, near=None, skip_types=()) -> list[tuple[int, int]]:
+    """Every top-left cell where ``item`` may go — the one source of placement
+    candidates. A spot sits exactly ``BUILDING_GAP_CELLS`` free cells
+    (Chebyshev) from one of our buildings that extends the buildable area
+    (not a turret; within ``EXPAND_REFINERY_RADIUS_CELLS`` of ``near`` when
+    given, to grow one particular base), inside the map, on buildable ground,
+    off the lanes and the massing area, touching no other building
+    (:func:`_clashes`). OpenRA's rule as the placement audit measured it
+    (matches fd507a58, c2fec761): such spots are placed exactly as asked.
+    Cached per view."""
+    nw, nh = _footprint(item)
+    key = (id(view), nw, nh, near, tuple(skip_types))
+    hit = _SPOTS.get(key)
+    if hit is not None and hit[0] is view:     # the same view object, not a reused id
+        return hit[1]
+    anchors = [(b.type, b.cell) for b in view.buildings
+               if b.cell is not None and not b.wreck and b.type not in skip_types and b.type not in _NO_AREA]
+    if near is not None:
+        anchors = [b for b in anchors if dist2(b[1], near) <= C.EXPAND_REFINERY_RADIUS_CELLS ** 2]
+    gap = C.BUILDING_GAP_CELLS
+    found: set = set()
+    for kind, cell in anchors:
+        x0, y0, x1, y1 = _rect(kind, cell)
+        for sx in range(x0 - nw - gap, x1 + gap + 2):
+            for sy in range(y0 - nh - gap, y1 + gap + 2):
+                if max(x0 - (sx + nw - 1), sx - x1, y0 - (sy + nh - 1), sy - y1) - 1 == gap:
+                    found.add((sx, sy))
+    spots = sorted(s for s in found if _in_bounds(view, item, s) and not _clashes(item, s, view))
+    if len(_SPOTS) > 64:
+        _SPOTS.clear()
+    _SPOTS[key] = (view, spots)                # holding the view keeps its id from being reused
+    return spots
+
+
+def _pick(view: View, item: str, spots, score) -> tuple[int, int] | None:
+    """The best spot by ``score`` (lower is better; a tuple ranks tiers
+    first), a spot no unit stands on beating one with units on it within the
+    same first tier. ``None`` when there is none."""
+    if not spots:
+        return None
+    occupied = _occupied(view)
+
+    def rank(spot):
+        s = score(spot)
+        tier, rest = (s[0], s[1:]) if isinstance(s, tuple) else (0, (s,))
+        return (tier, any(c in occupied for c in _cells(item, spot))) + rest
+
+    return min(spots, key=rank)
+
+
 def grow_spot(view: View, bearing, item: str, near=None, skip_types=()) -> tuple[int, int] | None:
-    """Top-left cell for ``item`` exactly one free cell from one of our
-    buildings (inside OpenRA's placement reach, so the engine uses it), as far
-    along ``bearing`` (a unit vector) as possible without drifting far to the
-    side. Every candidate is legal by construction: stepping out along a
-    diagonal and rounding put spots two cells out, past the reach, and the
-    engine moved them home (match c2fec761: 14 of 26 placements). ``near``
-    grows one particular base (an expansion). A spot no unit stands on wins.
-    ``None`` (engine default) when nothing fits."""
-    ours = [(b.type, b.cell) for b in view.buildings
-            if b.cell is not None and not b.wreck and b.type not in skip_types and b.type not in _NO_AREA]
-    if near is not None:   # grow one particular base (an expansion), not the whole footprint
-        ours = [b for b in ours if dist2(b[1], near) <= C.EXPAND_REFINERY_RADIUS_CELLS ** 2]
-    if not ours or bearing is None:
+    """A legal spot (:func:`legal_spots`) as far along ``bearing`` (a unit
+    vector) as possible without drifting far to the side: the base grows in
+    the wanted direction building by building. ``None`` (engine default)
+    when nothing fits."""
+    if bearing is None:
+        return None
+    spots = legal_spots(view, item, near, skip_types)
+    if not spots:
         return None
     ux, uy = bearing
     nw, nh = _footprint(item)
     origin = near or view.base_center
     if origin is None:
-        origin = (sum(c[0] for _, c in ours) / len(ours), sum(c[1] for _, c in ours) / len(ours))
-    gap = C.BUILDING_GAP_CELLS
-    scored: dict = {}
-    for kind, cell in ours:
-        x0, y0, x1, y1 = _rect(kind, cell)
-        for sx in range(x0 - nw - gap, x1 + gap + 2):
-            for sy in range(y0 - nh - gap, y1 + gap + 2):
-                # exactly ``gap`` free cells from this building (Chebyshev)
-                if max(x0 - (sx + nw - 1), sx - x1, y0 - (sy + nh - 1), sy - y1) - 1 != gap:
-                    continue
-                ox, oy = sx + (nw - 1) / 2 - origin[0], sy + (nh - 1) / 2 - origin[1]
-                scored[(sx, sy)] = -(ox * ux + oy * uy - 0.5 * abs(oy * ux - ox * uy))
-    occupied = _occupied(view)
-    fallback = None
-    for spot in sorted(scored, key=scored.get):
-        if not _in_bounds(view, item, spot) or _clashes(item, spot, view):
-            continue
-        if not any(c in occupied for c in _cells(item, spot)):
-            return spot
-        fallback = fallback or spot
-    return fallback
+        anchors = [b.cell for b in view.buildings if b.cell is not None and not b.wreck]
+        origin = (sum(c[0] for c in anchors) / len(anchors), sum(c[1] for c in anchors) / len(anchors))
+
+    def score(spot):
+        ox, oy = spot[0] + (nw - 1) / 2 - origin[0], spot[1] + (nh - 1) / 2 - origin[1]
+        return -(ox * ux + oy * uy - 0.5 * abs(oy * ux - ox * uy))
+
+    return _pick(view, item, spots, score)
 
 
 def _beside_ore(view: View, ore, item: str, near=None, avoid: frozenset = frozenset()) -> tuple[int, int] | None:
-    """A refinery spot next to ``ore`` that is still within reach of the base
-    (one free cell from some building of ours) and whose trucks can WALK to
-    that field's ore in ``REFINERY_ORE_WALK_STEPS`` — not across a cliff.
-    Nearest to the ore wins; with no walkable spot, the nearest spot anyway
-    (better a refinery than none). ``near``: only beside buildings within
-    ``EXPAND_REFINERY_RADIUS_CELLS`` of it (one expansion's; a spot beside the
-    main base put the expansion's refinery at home — match 0561274e: three
-    expansions, all eight refineries at home). ``avoid``: cells no footprint
-    may cover (where the engine moved a refinery before)."""
+    """A legal refinery spot (:func:`legal_spots`) nearest ``ore`` whose
+    trucks can WALK to that field's ore in ``REFINERY_ORE_WALK_STEPS`` — not
+    across a cliff; with no walkable spot, the nearest spot anyway (better a
+    refinery than none). ``near``: only beside one expansion's buildings (a
+    spot beside the main base put the expansion's refinery at home — match
+    0561274e). ``avoid``: cells no footprint may cover (where the engine moved
+    a refinery before)."""
     from .terrain import field_cells, steps_from_rect, walk_distances
 
     if ore is None:
         return None
     field = field_cells(view, ore, C.EXPAND_CLUSTER_CELLS * 1.5) or [ore]
     walk = walk_distances(view, field, C.REFINERY_ORE_WALK_STEPS + 2)
-    # Turrets don't extend the buildable area: a spot beside only a turret is
-    # moved home (placement audit, fd507a58).
-    ours = [(b.type, b.cell) for b in view.buildings
-            if b.cell is not None and not b.wreck and b.type not in _NO_AREA]
-    if near is not None:
-        ours = [b for b in ours if dist2(b[1], near) <= C.EXPAND_REFINERY_RADIUS_CELLS ** 2]
     nw, nh = _footprint(item)
-    occupied = _occupied(view)
-    best = fallback = None
-    for kind, cell in ours:
-        x0, y0, x1, y1 = _rect(kind, cell)
-        # Top-left cells whose footprint sits one free cell from this building.
-        for sx in range(x0 - nw - 1, x1 + 3):
-            for sy in range(y0 - nh - 1, y1 + 3):
-                spot = (sx, sy)
-                if not _in_bounds(view, item, spot) or _clashes(item, spot, view):
-                    continue
-                if avoid and any(c in avoid for c in _cells(item, spot)):
-                    continue
-                # A spot no unit stands on beats a nearer one with units on it.
-                d = (any(c in occupied for c in _cells(item, spot)),
-                     dist2((sx + (nw - 1) / 2, sy + (nh - 1) / 2), ore))
-                if fallback is None or d < fallback[0]:
-                    fallback = (d, spot)
-                steps = steps_from_rect(walk, _rect(item, spot))
-                if steps is not None and steps <= C.REFINERY_ORE_WALK_STEPS and (best is None or d < best[0]):
-                    best = (d, spot)
-    return (best or fallback or (None, None))[1]
+    spots = [s for s in legal_spots(view, item, near) if not (avoid and any(c in avoid for c in _cells(item, s)))]
+
+    def score(spot):
+        steps = steps_from_rect(walk, _rect(item, spot))
+        walkable = steps is not None and steps <= C.REFINERY_ORE_WALK_STEPS
+        return (not walkable, dist2((spot[0] + (nw - 1) / 2, spot[1] + (nh - 1) / 2), ore))
+
+    return _pick(view, item, spots, score)
 
 
 def perimeter_spot(view: View, base: tuple[int, int], toward, item: str = "pbox", near=None,

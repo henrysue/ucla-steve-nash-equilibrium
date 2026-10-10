@@ -5,6 +5,28 @@ and tests that say the same thing. This plan comes out of a review of the
 code as it stands (Oct 10, after the scouting/intel work) and of the last
 dozen match logs.
 
+## Progress (branch `redalert-simplify`)
+
+- [x] Step 1: corrections 1-5 (one harvester owner, squad ids in the regroup
+  check, massing-point priority, confirm kept through the dwell, a
+  one-refinery test rusher).
+- [x] Step 2: `commander.py`, the one decision module.
+- [ ] Step 3: the budget (pushed back: re-evaluate after the latest changes).
+- [x] Step 4: one way to split the army (`executor._groups`); the home guard
+  is gone.
+- [x] Also: refineries spread by field load; the rules own staging; the
+  advisor's prompt, schema and context match the strategy.
+- [x] Step 5: placement. `legal_spots` is the one candidate source, `_pick`
+  the one picker, and roles only score. Real-map replay tests
+  (`tests/test_redalert_maps.py`, fixtures from Sidestep and Trapped). Lanes
+  and the massing point are cached per view (about 100 ms down to 22 ms for
+  all roles).
+- [ ] Step 6: merge the scouting and the hunt; re-cut the expansion code.
+- [ ] Step 7: models-off A/B (needs games), then keep or remove.
+- [ ] Step 8: constants, the match log, the remaining per-view caches.
+- [ ] Step 9: test cleanup (list the obsolete tests, then delete them).
+- [ ] Step 10: remove `testrush` before the tournament.
+
 ## Where we are
 
 - **6,400 lines in 24 modules**, the biggest being `buildplan.py` (800),
