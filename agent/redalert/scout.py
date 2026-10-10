@@ -68,7 +68,8 @@ def detect_cheese(view: View) -> dict | None:
     if (not forward_mcv and view.game_seconds >= C.CHEESE_WINDOW_SECONDS
             and not _base_needs_army(view, near)):
         return None   # a raid the home units and turrets can handle: the army stays on task
-    if forward_mcv or len(near) >= C.CHEESE_MIN_ENEMY_UNITS:
+    value = sum(view.unit_costs.get(a.type, C.KNOWN_COSTS.get(a.type, C.DEFAULT_UNIT_COST)) for a in near)
+    if forward_mcv or (len(near) >= C.CHEESE_MIN_ENEMY_UNITS and value >= C.RUSH_MIN_VALUE):
         return {
             "kind": "forward_mcv" if forward_mcv else "unit_rush",
             "near_base": len(near),

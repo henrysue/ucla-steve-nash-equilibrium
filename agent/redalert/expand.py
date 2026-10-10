@@ -86,7 +86,7 @@ class Expansion:
     def refinery_ore(self, view: View) -> tuple[int, int] | None:
         """The ore of a deployed expansion that still has no refinery beside
         it — unless we are at the refinery cap or asked for it recently."""
-        if _count(view, C.REFINERY) >= C.MAX_REFINERIES:
+        if _count(view, C.REFINERY) >= C.MAX_REFINERIES or outgunned(view):
             return None
         for d in self.done:
             if not self._wants_refinery(view, d):

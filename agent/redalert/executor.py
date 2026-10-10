@@ -533,8 +533,10 @@ def home_response(view: View, mode: Mode, scout_id: int | None, reserved: frozen
     if value > C.SMALL_RAID_VALUE:
         return [], set()
     target = min(raiders, key=lambda a: (a.hp if a.hp else 100))
+    # The nearest couple of infantry (then anything else): the rest of the
+    # army keeps its position, a scout costs us two riflemen's time.
     home = sorted((u for u in _fighters(view, scout_id, reserved) if _at_home(view, u.cell)),
-                  key=lambda u: dist2(u.cell, target.cell))
+                  key=lambda u: (u.type in C.VEHICLE_TYPES, dist2(u.cell, target.cell)))
     picked, sent = [], 0.0
     for u in home:
         if sent >= C.RESPONSE_VALUE_RATIO * value and len(picked) >= C.RESPONSE_MIN_UNITS:

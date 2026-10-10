@@ -148,6 +148,9 @@ class View:
     unbuildable_cells: frozenset = frozenset()
     map_legend: dict = field(default_factory=dict)   # the map picture's legend, as given (for the log)
     map_picture: dict = field(default_factory=dict)  # {"origin", "rows"} as given (for the log)
+    # Cells of footprints the engine recently moved a building away from
+    # (agent.py's placement audit): no candidate spot may cover them.
+    failed_cells: frozenset = frozenset()
 
     # -- derived, cheap helpers ----------------------------------------------
 

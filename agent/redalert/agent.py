@@ -12,6 +12,7 @@ https://api.altruagent-game.com/skill/redalert.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 from collections import Counter
@@ -60,6 +61,7 @@ class RedAlertAgent:
         self._clock = clock
         self._commander = Commander()   # the army's one decision each view (commander.py)
         self._opening_done = False      # the standard build order stands (buildplan.opening_done)
+        self._failed_cells: dict = {}   # cell -> game time the engine moved a building off it
         # The batch play_action answers next; refused order key -> blocked
         # until (clock); army (cmd, destination) -> (last sent, unit ids).
         self._last_sent: list[dict] = []
@@ -112,6 +114,10 @@ class RedAlertAgent:
         self._audit_placements(view)
         self._memory.update(view)
         view = self._memory.apply(view)
+        self._failed_cells = {c: t for c, t in self._failed_cells.items()
+                              if view.game_seconds - t < C.FAILED_SPOT_SECONDS}
+        if self._failed_cells:
+            view = dataclasses.replace(view, failed_cells=frozenset(self._failed_cells))
 
         # Track the threat window (sets/expires defensively).
         self._commander.track_threat(view)
@@ -492,6 +498,11 @@ class RedAlertAgent:
                 landed = new[0].cell
                 self._matchlog.placement({"t": round(view.game_seconds), "item": item,
                                           "asked": p["asked"], "landed": list(landed)})
+                if p["asked"] and tuple(p["asked"]) != tuple(landed):
+                    # Moved although legal by our rule (match 89356b51: the same
+                    # expansion refinery spot three times): ask elsewhere for a while.
+                    for c in buildplan._cells(item, tuple(p["asked"])):
+                        self._failed_cells[c] = view.game_seconds
                 del self._placing[item]
             elif view.game_seconds - p["t"] > 15.0:
                 del self._placing[item]

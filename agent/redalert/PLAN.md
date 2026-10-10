@@ -49,6 +49,11 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
 - **Defend**: a building lost to a push bigger than a small raid recalls the
   army, unless our attack is winning (a base race: it goes on, the home units
   fight). A small raid is handled by the units at home only.
+- **Small raids**: a scout or two at the base draws the nearest couple of
+  infantry; the concave keeps its place. In the opening, a rush is enemies
+  worth 600+ at the base (89356b51: two scouts flipped both armies to defend).
+- **Placement**: a spot the engine moved a building from is skipped for 3
+  minutes (89356b51: one legal-looking expansion refinery spot failed three times).
 - **Economy**: trucks come with refineries (target = refineries + 2); more
   refineries over time; expand right after the service depot (~4:45), up to 3
   times, sooner when ore runs out. Money bands: broke = one queue; rich =

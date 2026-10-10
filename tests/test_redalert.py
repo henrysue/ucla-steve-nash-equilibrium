@@ -132,10 +132,10 @@ def test_single_far_enemy_is_not_cheese():
     assert scout.detect_cheese(v) is None
 
 
-def test_two_enemies_near_base_is_cheese():
-    v = _view(visible_enemies=[{"id": 50, "type": "e1", "x": 7, "y": 7, "hp": 100},
-                               {"id": 51, "type": "e1", "x": 8, "y": 8, "hp": 100}])
-    assert scout.detect_cheese(v) is not None
+def test_a_rifle_rush_near_base_is_cheese_two_scouts_are_not():
+    two = [{"id": 50, "type": "e1", "x": 7, "y": 7, "hp": 100}, {"id": 51, "type": "dog", "x": 8, "y": 8, "hp": 100}]
+    assert scout.detect_cheese(_view(visible_enemies=two)) is None      # 89356b51: scouts flipped the army
+    assert scout.detect_cheese(_view(visible_enemies=[{"id": 50 + i, "type": "e1", "x": 7, "y": 7, "hp": 100} for i in range(6)])) is not None
 
 
 def test_near_enemy_harvester_is_not_cheese():
@@ -653,7 +653,7 @@ def test_the_threat_window_runs_from_the_last_sighting():
 def test_a_small_raid_mid_game_does_not_recall_the_army():
     two = [{"id": 50, "type": "e1", "x": 7, "y": 7, "hp": 100}, {"id": 51, "type": "e1", "x": 8, "y": 8, "hp": 100}]
     assert scout.detect_cheese(_view(_t=300.0, visible_enemies=two)) is None            # home units handle it
-    assert scout.detect_cheese(_view(_t=100.0, visible_enemies=two)) is not None        # early: a rush
+    assert scout.detect_cheese(_view(_t=100.0, visible_enemies=[{"id": 50 + i, "type": "e1", "x": 7, "y": 7, "hp": 100} for i in range(6)])) is not None   # early: a rush
     six = [{"id": 50 + i, "type": "3tnk", "x": 7, "y": 7, "hp": 100} for i in range(6)]
     assert scout.detect_cheese(_view(_t=300.0, visible_enemies=six)) is not None        # a real attack
     guards = [{"id": 30 + i, "type": "3tnk", "x": 6, "y": 6, "hp": 100} for i in range(8)]
@@ -1528,7 +1528,8 @@ def test_garrison_holds_the_expansion_then_joins_a_push_once_complete():
 
 def test_an_attack_on_an_expansion_yard_is_a_base_attack():
     yard = BASE + [{"id": 80, "type": "fact", "x": 30, "y": 8}]
-    near = [{"id": 50, "type": "1tnk", "x": 32, "y": 10, "hp": 100}, {"id": 51, "type": "e1", "x": 33, "y": 9, "hp": 100}]
+    near = [{"id": 50, "type": "1tnk", "x": 32, "y": 10, "hp": 100}, {"id": 51, "type": "e1", "x": 33, "y": 9, "hp": 100},
+            {"id": 52, "type": "e3", "x": 33, "y": 10, "hp": 100}]
     v = _view(buildings=yard, visible_enemies=near)
     assert scout.detect_cheese(v) is not None
     o = executor._army_orders(_view(buildings=yard, units=_ARMY, visible_enemies=near), Mode.DEFEND_BASE)
@@ -3454,3 +3455,24 @@ def test_after_the_opening_refinery_three_and_the_depot_only_when_not_outgunned(
     assert buildplan.next_build_orders(calm) == [{"cmd": "build", "item": "proc"}]
     hot = _view(_t=170.0, buildings=done, units=_harvs(2), economy=eco, visible_enemies=_push(8))
     assert not any(o.get("item") in ("proc", "fix") for o in buildplan.next_build_orders(hot))
+
+
+# -- match 89356b51 ------------------------------------------------------------
+
+
+def test_a_lone_scout_draws_two_riflemen_the_army_keeps_its_place():
+    army = [{"id": 100 + i, "type": "e1", "x": 6 + i % 3, "y": 6, "hp": 100} for i in range(10)]
+    army += [{"id": 200, "type": "1tnk", "x": 8, "y": 8, "hp": 100}]
+    v = _view(_t=300.0, buildings=BASE, units=army, visible_enemies=[{"id": 900, "type": "dog", "x": 9, "y": 9}])
+    out, used = executor.home_response(v, Mode.BUILD, None, frozenset())
+    assert len(used) == 2 and 200 not in used and out[0]["cmd"] == "attack"
+
+
+def test_a_spot_the_engine_moved_a_building_from_is_not_offered_again():
+    import dataclasses
+    v = _view(buildings=[{"id": 10, "type": "fact", "x": 10, "y": 10}])
+    spots = buildplan.legal_spots(v, "powr")
+    bad = spots[0]
+    failed = dataclasses.replace(v, failed_cells=frozenset(buildplan._cells("powr", bad)))
+    assert bad not in buildplan.legal_spots(failed, "powr")
+    assert len(buildplan.legal_spots(failed, "powr")) > 0

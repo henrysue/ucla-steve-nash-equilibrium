@@ -94,14 +94,14 @@ def next_build_orders(view: View, expansion_ore: tuple[int, int] | None = None,
             return [orders.build(weap)]
 
     # Interrupt 2d: radar dome for the end game (unlocks siege units).
-    if (view.game_seconds >= C.DOME_AFTER_SECONDS and money >= C.DOME_ADD_FUNDS
+    from .brain import outgunned
+    if (view.game_seconds >= C.DOME_AFTER_SECONDS and money >= C.DOME_ADD_FUNDS and not outgunned(view)
             and view.has_building(C.SERVICE_DEPOT) and not _count_built_and_queued(view, (C.RADAR_DOME,))):
         dome = _available(view, C.RADAR_DOME)
         if dome:
             return [orders.build(dome)]
 
     # Past the build order, no more refineries while outgunned: units first.
-    from .brain import outgunned
     short = outgunned(view)
 
     # Interrupt 2c: more refineries over time (each comes with a harvester).
@@ -595,7 +595,9 @@ def legal_spots(view: View, item: str, near=None, skip_types=()) -> list[tuple[i
         c = (s[0] + (nw - 1) / 2, s[1] + (nh - 1) / 2)
         return not yards or any(dist2(c, y) <= r2 for y in yards)
 
-    spots = sorted(s for s in found if in_radius(s) and _in_bounds(view, item, s) and not _clashes(item, s, view))
+    failed = view.failed_cells
+    spots = sorted(s for s in found if in_radius(s) and _in_bounds(view, item, s) and not _clashes(item, s, view)
+                   and not (failed and any(c in failed for c in _cells(item, s))))
     if len(_SPOTS) > 64:
         _SPOTS.clear()
     _SPOTS[key] = (view, spots)                # holding the view keeps its id from being reused
