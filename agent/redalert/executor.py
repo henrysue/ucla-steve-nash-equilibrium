@@ -70,7 +70,9 @@ def plan(
     out += list(raid_orders)
     response, responders = home_response(view, mode, scout_id, frozenset(raid_ids) | clearing_ids)
     out += response
-    stage = probe or (expansion.stage_override if expansion is not None else None)
+    # The massing point, one priority: escort a travelling MCV first, else
+    # edge forward while an attack call is being confirmed.
+    stage = (expansion.stage_override if expansion is not None else None) or probe
     out += _army_orders(view, mode, scout_id, reserved=frozenset(raid_ids) | clearing_ids | responders, advice=advice,
                         flank_via=flank_via, stage_override=stage, hunt=hunt, hunt_points=hunt_points)
     return out

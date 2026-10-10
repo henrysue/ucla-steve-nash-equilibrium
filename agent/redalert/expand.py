@@ -61,7 +61,6 @@ class Expansion:
         self._even = False                          # trades about even or better (last view)
         self._last_done_at: float | None = None
         self._timed_out = False
-        self._harvesters: dict[tuple[int, int], list[int]] = {}   # expansion site -> harvester ids sent there
         # The expansion refinery just ordered: {"entry", "spot", "t", "known"
         # (refinery ids then)}, to see whether the engine moved it.
         self._placing: dict | None = None
@@ -250,32 +249,11 @@ class Expansion:
                     self._abort(t)
 
     def orders(self, view: View) -> list[dict]:
-        out = self._harvest_orders(view)
+        out: list[dict] = []   # harvesters: harvest.HarvestManager, the one owner of their orders
         if (self.state in ("scouting", "training") and C.MCV in view.available
                 and not view.queued_count(C.MCV) and not view.units_of(C.MCV)):
             return out + [orders.train(C.MCV, count=1)]
         return out + self._mcv_orders(view)
-
-    def _harvest_orders(self, view: View) -> list[dict]:
-        """Send ``HARVESTERS_PER_EXPANSION`` harvesters to each expansion's ore
-        once its refinery stands (pros redirect trucks to new fields), so they
-        don't all crowd the home field. Assignments are kept; losses refilled."""
-        alive = {u.id for u in view.units_of(C.HARVESTER)}
-        taken = {i for ids in self._harvesters.values() for i in ids}
-        out = []
-        for d in self.done:
-            if not self._served(view, d["ore"]):
-                continue
-            ids = [i for i in self._harvesters.get(d["site"], []) if i in alive]
-            free = sorted((u for u in view.units_of(C.HARVESTER)
-                           if u.id is not None and u.cell is not None and u.id not in taken and u.id not in ids),
-                          key=lambda u: dist2(u.cell, d["ore"]))
-            new = [u.id for u in free[:max(0, C.HARVESTERS_PER_EXPANSION - len(ids))]]
-            self._harvesters[d["site"]] = ids + new
-            taken.update(new)
-            if new:
-                out.append(orders.harvest(new, to=d["ore"]))
-        return out
 
     def _mcv_orders(self, view: View) -> list[dict]:
         if self.state != "moving" or self.site is None:

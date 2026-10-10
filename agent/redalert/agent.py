@@ -131,6 +131,8 @@ class RedAlertAgent:
         self._mode = brain.choose_mode(
             view, cheese_since=self._cheese_since, model_pref=_POSTURE.get(getattr(advice, "posture", None)),
             prev_mode=prev_mode, scout_id=self._patrol.unit_id,
+            squad_ids=frozenset({*self._patrol.unit_ids, *self._raid.unit_ids,
+                                 *self._guard.unit_ids, *self._garrison.unit_ids}),
             losing_trades=self._losing_trades(view), retreated_at=self._retreated_at,
             retreat_army=self._retreat_army, hunting=hunting,
             alarm=threat, distraction=self._raid.distracting(view),
@@ -162,12 +164,14 @@ class RedAlertAgent:
                 self._mode = prev_mode
         elif self._mode is not Mode.ALL_IN:
             self._confirm_at = None
-        if self._mode is Mode.ALL_IN:
-            self._confirm_at = None
-        # Commit: no BUILD <-> ALL_IN flip within MODE_MIN_DWELL_SECONDS.
+        # Commit: no BUILD <-> ALL_IN flip within MODE_MIN_DWELL_SECONDS. A
+        # confirmation that finished meanwhile is kept, so the attack starts
+        # the moment the window ends (not after another look).
         if ({prev_mode, self._mode} == {Mode.BUILD, Mode.ALL_IN}
                 and view.game_seconds - self._mode_since < C.MODE_MIN_DWELL_SECONDS):
             self._mode = prev_mode
+        if self._mode is Mode.ALL_IN:
+            self._confirm_at = None
         if self._mode is not prev_mode:
             self._mode_since = view.game_seconds
             if self._mode is Mode.ALL_IN:

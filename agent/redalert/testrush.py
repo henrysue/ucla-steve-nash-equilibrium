@@ -5,9 +5,9 @@ None, and the other seat of the same match runs on this machine), one seat
 (``RUSH_SEAT``, default 1) turns into an early rusher so the other seat's
 scouting, early-push warning and defenses get tested:
 
-- a rush build (power, barracks, refinery, barracks, power, refinery, war
-  factory; up to ``RUSH_BARRACKS`` barracks), no expansion, no turrets
-  unless attacked, no refineries beyond the opening's two;
+- a rush build (power, barracks, refinery, barracks, power, war factory —
+  one refinery, so our scouts read it as a rush; up to ``RUSH_BARRACKS``
+  barracks), no expansion, no turrets unless attacked;
 - production never pauses: infantry ``RUSH_INFANTRY_DEPTH`` deep, tanks
   ``RUSH_TANK_DEPTH`` deep;
 - it masses a ball at its staging point and launches when the army is worth
@@ -39,7 +39,7 @@ RUSH_REGROUP_SHARE = 0.4         # pushing until the army falls below this share
 RUSH_BARRACKS = 3
 RUSH_INFANTRY_DEPTH = 3
 RUSH_TANK_DEPTH = 2
-RUSH_BUILD_ORDER = ("powr", ("tent", "barr"), "proc", ("tent", "barr"), "powr", "proc", "weap")
+RUSH_BUILD_ORDER = ("powr", ("tent", "barr"), "proc", ("tent", "barr"), "powr", "weap")   # one refinery: a true rush
 _MARKER_DIR = Path(tempfile.gettempdir()) / "redalert_selfplay"
 _STALE_SECONDS = 3 * 3600
 

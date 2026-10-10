@@ -283,7 +283,6 @@ EXPAND_REFINERY_RETRY_SECONDS = 90.0
 EXPAND_COOLDOWN_SECONDS = 60.0
 EXPANSION_DEFENSES = 1
 ACTIVE_BASE_DEFENSES = 3           # turrets at the expansion that takes over once home is mined out
-HARVESTERS_PER_EXPANSION = 2       # sent to each expansion's ore once it has a refinery
 REFINERY_ORE_WALK_STEPS = 6        # a refinery must be this few walking steps from its ore...
 EXPAND_SITE_WALK_STEPS = 8         # ...an expansion deploy spot from its field's ore...
 FIELD_WALK_STEPS = 14              # ...and a refinery's trucks work ore this few steps away

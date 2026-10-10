@@ -1880,14 +1880,16 @@ def test_rally_points_point_production_at_the_staging_point():
     assert executor._rally_orders(v) == [{"cmd": "rally", "building": b, "to": stage} for b in (11, 12)]
 
 
-def test_harvesters_are_sent_to_an_expansion_field_once_it_has_a_refinery():
-    e = _deployed_expansion()
-    harvs = [{"id": 20 + i, "type": "harv", "x": 6 + i, "y": 6, "hp": 100} for i in range(4)]
+def test_harvesters_go_to_an_expansion_field_once_it_has_a_refinery():
+    # One owner of harvester orders: HarvestManager staffs the expansion's
+    # field by refinery share (the expansion no longer sends its own trucks).
+    harvs = [{"id": 20 + i, "type": "harv", "x": 8 + i, "y": 8, "hp": 100} for i in range(4)]
     yard = _EXP_BASE + [{"id": 80, "type": "fact", "x": 20, "y": 6}, {"id": 81, "type": "proc", "x": 24, "y": 8}]
-    v = _view(_t=500.0, buildings=yard, units=harvs)
-    o = e._harvest_orders(v)
-    assert len(o) == 1 and o[0]["cmd"] == "harvest" and o[0]["to"] == [24, 6] and len(o[0]["units"]) == 2
-    assert e._harvest_orders(v) == []                      # assigned once, not every view
+    v = dataclasses.replace(_view(_t=500.0, buildings=yard, units=harvs), ore_cells=_EXP_ORE)
+    o = HarvestManager().orders(v)
+    sent = [x for x in o if x["cmd"] == "harvest" and x.get("to") and (x["to"][0] - 24) ** 2 + (x["to"][1] - 6) ** 2 <= 9]
+    assert sent, o
+    assert not hasattr(Expansion(), "_harvest_orders")
 
 
 def test_waiting_units_hold_and_attackers_engage():
@@ -3223,3 +3225,45 @@ def test_an_attack_call_on_even_trades_is_checked_again_before_committing():
     agent.choose_action(_state(_t=440.0, buildings=BASE, units=tanks, military=strong), CTX)   # past the mode dwell
     agent.choose_action(_state(_t=444.5, buildings=BASE, units=tanks, military=strong), CTX)
     assert agent._mode is Mode.ALL_IN                                         # still strong 4 s on: go
+
+
+# -- simplification step 1: corrections ---------------------------------------------------------
+
+def test_squad_units_dont_count_when_checking_the_army_regrouped():
+    stage = scout.choke_cell(_view())
+    home = [{"id": 30 + i, "type": "e1", "x": stage[0], "y": stage[1], "hp": 100} for i in range(3)]
+    away = [{"id": 40 + i, "type": "e1", "x": 40, "y": 40, "hp": 100} for i in range(4)]       # scouts, far out
+    v = _view(units=home + away)
+    assert not brain._regrouped(v, None)
+    assert brain._regrouped(v, None, frozenset(u["id"] for u in away))
+
+
+def test_the_mcv_escort_beats_the_attack_look_ahead_for_the_massing_point():
+    class Escort:
+        stage_override = (20, 8)
+        def refinery_job(self, view): return None
+        def needs_defense(self, view): return None
+        def refinery_ore(self, view): return None
+        def defense_site(self, view): return None
+        def orders(self, view): return []
+    tanks = [{"id": 30 + i, "type": "1tnk", "x": 5, "y": 5, "hp": 100, "idle": True} for i in range(4)]
+    out = executor.plan(_view(_t=400.0, buildings=BASE, units=tanks), Mode.BUILD, expansion=Escort(), probe=(30, 30))
+    moves = [o for o in out if o["cmd"] == "attack_move"]
+    assert moves and all((o["to"][0] - 20) ** 2 + (o["to"][1] - 8) ** 2 <= 6 ** 2 for o in moves)
+
+
+def test_a_confirmation_made_during_the_anti_flip_window_starts_the_attack_when_it_ends():
+    tanks = [{"id": 30 + i, "type": "3tnk", "x": 10, "y": 10, "hp": 100} for i in range(6)]
+    agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
+    agent._mode, agent._mode_since = Mode.BUILD, 400.0                      # just changed: window until 425
+    strong = {"army_value": 5000, "visible_enemy_value": 1000}
+    for t in (405.0, 410.0, 420.0):
+        agent.choose_action(_state(_t=t, buildings=BASE, units=tanks, military=strong), CTX)
+        assert agent._mode is Mode.BUILD
+    assert agent._confirm_at == 405.0                                       # confirmed, held by the window
+    agent.choose_action(_state(_t=426.0, buildings=BASE, units=tanks, military=strong), CTX)
+    assert agent._mode is Mode.ALL_IN                                       # at once, no second look
+
+
+def test_the_test_rusher_opens_with_one_refinery():
+    assert testrush.RUSH_BUILD_ORDER.count("proc") == 1

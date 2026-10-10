@@ -20,6 +20,7 @@ def choose_mode(
     model_pref: Mode | None = None,
     prev_mode: Mode | None = None,
     scout_id: int | None = None,
+    squad_ids: frozenset = frozenset(),
     losing_trades: bool = False,
     retreated_at: float | None = None,
     retreat_army: float | None = None,
@@ -56,7 +57,7 @@ def choose_mode(
     # Safety rail 2b: an early push is coming (the scout saw it massing):
     # hold at home, don't walk into it; pull back if already out.
     if scout.early_push_warning(view) or alarm:
-        pulling_back = prev_mode in AGGRESSIVE or (prev_mode is Mode.RETREAT and not _regrouped(view, scout_id))
+        pulling_back = prev_mode in AGGRESSIVE or (prev_mode is Mode.RETREAT and not _regrouped(view, scout_id, squad_ids))
         return Mode.RETREAT if pulling_back else Mode.BUILD
 
     # Ruthless finish: their base is razed, or we dominate the trades, and
@@ -96,7 +97,7 @@ def choose_mode(
     if prev_mode in AGGRESSIVE and (edge < C.RETREAT_ARMY_EDGE or losing_trades):
         return Mode.RETREAT
     if prev_mode is Mode.RETREAT and not can_attack:
-        return Mode.BUILD if _regrouped(view, scout_id) else Mode.RETREAT
+        return Mode.BUILD if _regrouped(view, scout_id, squad_ids) else Mode.RETREAT
 
     # Early (before EARLY_ATTACK_SECONDS and a war factory) the opening army
     # stays home: it guards the harvesters while raids harass. What we see of
@@ -149,11 +150,11 @@ def _attack_threshold(view: View) -> float:
     return C.ATTACK_ARMY_EDGE
 
 
-def _regrouped(view: View, scout_id: int | None) -> bool:
+def _regrouped(view: View, scout_id: int | None, squad_ids: frozenset = frozenset()) -> bool:
     """Most of the army is back near the staging point (or there is nowhere
     to regroup / nothing left to regroup)."""
     stage = scout.choke_cell(view)
-    army = [u for u in view.combat_units if u.id != scout_id]
+    army = [u for u in view.combat_units if u.id != scout_id and u.id not in squad_ids]   # scouts, raid, guards out
     if stage is None or not army:
         return True
     r2 = C.REGROUP_RADIUS_CELLS ** 2
