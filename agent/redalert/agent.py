@@ -370,12 +370,21 @@ class RedAlertAgent:
         if self._advisor is None:
             return None
         try:
+            raid_state = self._raid.situation(view)[0]
             return self._advisor.poll(view, {
                 "mode": str(self._mode),
                 "mode_for_seconds": round(self._game_seconds - self._mode_since) if self._game_seconds else 0,
-                "scout_id": self._patrol.unit_id,
-                "raid_squad_ids": list(self._raid.unit_ids),
-                "default_staging": list(scout.choke_cell(view) or []) or None,
+                "confirming_attack": self._commander.confirming,
+                "massing_point": list(scout.choke_cell(view) or []) or None,
+                "our_unit_value": round(brain.our_unit_value(view)),
+                "enemy_unit_value_known": round(brain.enemy_unit_value(view)),
+                "enemy_turrets_known": len(executor.enemy_defenses(view)),
+                "raid_squad": {"ids": list(self._raid.unit_ids), "situation": raid_state,
+                               "drawing_their_army": self._raid.distracting(view)},
+                "scouts": dict(self._patrol.roles),
+                "intel": {"enemy_opening": self._intel.opening(),
+                          "threat_alarm": self._patrol.alarm(view) or self._intel.rushing(view),
+                          "their_base_seen_at": self._patrol.base_seen_at},
             })
         except Exception as exc:  # noqa: BLE001 - the advisor must never stall the game
             self._log(f"[redalert] advisor poll failed, rules only: {type(exc).__name__}: {exc}")

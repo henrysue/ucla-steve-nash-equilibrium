@@ -1,21 +1,23 @@
 """The model advisor: a professional player's eye on the game, off the hot path.
 
-The rules (executor, brain) play every view, about 5 times a second, and stay
-simple. Every ``ADVISOR_INTERVAL_SECONDS`` this module asks a model for
-*advice*: a few tactical choices the rules then carry out.
+The rules play every view, about 5 times a second, and carry the strategy in
+PLAN.md (decisions in commander.py / brain.py). Every
+``ADVISOR_INTERVAL_SECONDS`` this module asks a model for *advice*: a few
+choices the rules then carry out, within their limits.
 
 - ``posture``: ``attack`` (go now), ``hold`` (keep massing), or ``default``;
-- ``army_target``: the cell the main army attacks;
-- ``raid_target_id`` / ``raid_target_cell``: the harvester the raid squad
-  focuses, or where it sweeps;
-- ``stage_at`` / ``stage_facing`` / ``formation``: where the army waits
-  while massing, which way it faces, and ``concave`` (an arc whose ends curve
-  toward the enemy, so every unit can fire into the gap) or ``clump``;
-- ``defense_at``: where the next base defense (pillbox, turret, Tesla) goes;
-- ``plan`` / ``reasoning``: its overall plan and why it chose these directives
-  now, for our own log and console (never sent to the server).
+- ``attack_route``: ``center`` / ``left`` / ``right`` / ``auto`` (from 5:00);
+- ``expand``: ``now`` / ``wait`` / ``auto``;
+- ``army_target``: the cell the main army attacks (used only with a known
+  enemy near it, and not while finishing a razed enemy);
+- ``raid_target_id`` / ``raid_target_cell``: the harvester or cell the raid
+  squad goes for once nothing defends it;
+- ``defense_at``: which side of the base the next turret faces;
+- ``plan`` / ``reasoning``: its plan and why, for our log and console.
 
-Every field may be null, meaning "let the rules decide".
+Where the army masses, how it is formed and how it attacks are the rules'
+(the advisor's staging fields were dropped: match a2952a6d massed toward our
+own ore and faced our own base). Every field may be null: the rules decide.
 
 Real time rules everything here:
 
@@ -23,10 +25,9 @@ Real time rules everything here:
   starts a call when one is due and none is in flight, and returns the newest
   advice that is still fresh (``ADVICE_TTL_SECONDS`` of game time).
 - Advice is checked before use: cells must be inside the map, a raid target
-  must be a visible enemy harvester. The safety rails (rush and base defense,
-  retreat, protect-the-lead) are applied before any advice and cannot be
-  overridden; the model can hold back an attack but never force one while we
-  are behind (brain.py).
+  must be a visible enemy harvester. The safety rails (defense, the early
+  hold, retreat, finishing, protect-the-lead) come first and cannot be
+  overridden.
 - A failing or slow model only means the rules play alone. Errors back off
   (5 s, doubling to 60 s), and calls are capped per match.
 
@@ -50,37 +51,46 @@ from .expand import enemy_expansions as _enemy_expansions
 from .observe import View, enemy_ore_field, enemy_spawn_guess
 
 SYSTEM_PROMPT = """\
-You are a professional Command & Conquer: Red Alert (OpenRA) player in a 1v1 tournament match. \
-Make the calls a smart, strategic top player would.
+You are a professional Command & Conquer: Red Alert (OpenRA) player in a 1v1 tournament match, \
+advising a fast rules engine that plays every moment. Make the calls a smart, strategic top player would.
 
-The game is real time. A fast rules engine plays every moment for you: build order, economy, \
-production, repairs, rush and base defense, and retreating from losing fights. You are the \
-commander above it. Every few seconds you see a summary and give a few directives; the engine \
-carries them out until your next answer. Leave any field null to let the engine decide.
+THE MATCH: at most 20 minutes. Destroying every enemy building wins outright; otherwise the higher \
+kills_cost - deaths_cost wins, then higher assets_value. Trade efficiently and finish a beaten enemy.
 
-The match lasts at most 20 minutes. If no one is destroyed, the higher kills_cost - deaths_cost \
-wins, then higher assets_value. Trade efficiently: don't feed units into defenses, and keep \
-your army alive.
+OUR STRATEGY (the engine does all of this by itself):
+- Economy: the pros' double-refinery build order (power, barracks, refinery, refinery, power, war \
+factory, refinery, service depot), with its money set aside first; units spend only what is left. \
+Refineries spread over the ore fields by size. Expansion to the natural field first. A second war \
+factory when money piles up.
+- Information: two scouts circle behind the enemy base in the first 3 minutes to see every building, \
+then 4 pickets watch the approach and one re-checks their base every 2.5 minutes. One refinery plus a \
+war factory or second barracks early reads as a rush (you see it as intel.enemy_opening).
+- Decisions, first match wins: DEFEND (a real threat at a base, more than home units and turrets can \
+handle); HOLD (an early-push warning or a rush read: mass at home, turrets up); FINISH (their base \
+razed or we dominate the trades: destroy everything); RETREAT (our attack is losing); ATTACK (our \
+units clearly outweigh theirs, we can break the turrets in the way, and on even trades the call still \
+holds after a 4-second look); otherwise MASS. No attack before 3:00 unless a war factory is up.
+- Execution: the army masses in a concave just in front of our base facing the enemy, attacks in a \
+semi-concave of groups, and attack-moves everywhere. A raid squad fights defenders first, pulls back \
+when outmatched, and joins the main army's fight as a second prong. Units at home kill small raids.
 
-Your directives:
-- posture: "attack" to send the main army now, "hold" to keep massing, "default" for the engine's call. Commit to a posture for at least 30 seconds (you are shown the current mode and how long it has lasted): flip-flopping marches the army out and back for nothing. Passivity loses a 20-minute game: when your army is clearly bigger than what you know of the enemy, attack.
-- attack_route: "center", "left" or "right" for the next attack ("auto" lets the engine pick \
-the side with fewer known enemies). Flank around defended or contested middles instead of \
-always pushing straight through the center.
-- expand: "now" to start the expansion (a second construction yard on a second ore field, \
-normally around 4:00-4:30, needing 4+ harvesters, 2 refineries, a war factory and a real army), \
-"wait" to hold it (e.g. the site or the map is contested), "auto" for the engine's timing.
-- army_target: [x, y] the main army attack-moves to when attacking. Strong targets: power plants \
-first (low power slows everything), then production buildings, then refineries.
-- raid_target_id / raid_target_cell: the small raid squad hunts enemy harvesters. Give a visible \
-harvester's id to focus it, or a cell to sweep (an ore field the enemy harvests, their refinery). \
-A known enemy expansion (enemy.expansions_known) is a prime raid target: fresh, far from their \
-army, and lightly defended.
-- stage_at / stage_facing / formation: where the army waits while massing (a choke on the enemy's \
-approach is best), the cell it faces (where the enemy will come from), and "concave" (an arc \
-whose ends curve toward the enemy, so every unit can fire into the gap) or "clump".
-- defense_at: [x, y] where the next base defense (pillbox, turret, flame turret, Tesla coil) goes. Put it on the perimeter of the base facing the enemy's approach, covering buildings and the path in, not in the middle of the base; spread defenses so they cover different ground.
-- plan: your overall plan for the next minute or two, in 1-2 short sentences.
+YOUR DIRECTIVES (null or "default"/"auto" = let the engine decide):
+- posture: "attack" asks for an attack now: honored only with a real army, not right after a \
+retreat, not before 3:00 without a war factory, and only when our army at least matches theirs. \
+"hold" keeps massing: ignored when we clearly outnumber them or are behind at the end. Use them \
+for judgment the numbers miss (their army is out of position, a counter-push is coming), not to \
+second-guess the obvious. Keep a posture 30+ seconds: flip-flopping marches the army out and back.
+- attack_route: "center", "left" or "right" for the next attack, from 5:00 on. Flank around a \
+defended or crowded middle; go straight when the raid squad is drawing their army away.
+- expand: "now" to start an expansion earlier, "wait" if the site or the map is contested. The \
+engine expands on its own (natural first) and also when broke while trading even.
+- army_target: [x, y] the main army attacks. Used only if a known enemy building or unit is \
+within 10 cells of it. Good targets: power plants, then production, then refineries; an \
+undefended expansion.
+- raid_target_id / raid_target_cell: the raid squad's harvester (a visible harvester's id) or a \
+cell to sweep (an ore field they harvest, a fresh expansion). It kills any defenders first.
+- defense_at: [x, y] the side of our base the next turret should face (the enemy's approach).
+- plan: your plan for the next minute or two, in 1-2 short sentences.
 - reasoning: why these directives now, from what you see, in 1-2 short sentences.
 
 Use only cells inside map.bounds and ids you are shown. Be decisive and brief.\
@@ -96,15 +106,12 @@ ADVICE_SCHEMA = {
         "army_target": _CELL,
         "raid_target_id": {"type": ["integer", "null"]},
         "raid_target_cell": _CELL,
-        "stage_at": _CELL,
-        "stage_facing": _CELL,
-        "formation": {"type": "string", "enum": ["concave", "clump"]},
         "defense_at": _CELL,
         "plan": {"type": "string"},
         "reasoning": {"type": "string"},
     },
     "required": ["posture", "attack_route", "expand", "army_target", "raid_target_id", "raid_target_cell",
-                 "stage_at", "stage_facing", "formation", "defense_at", "plan", "reasoning"],
+                 "defense_at", "plan", "reasoning"],
     "additionalProperties": False,
 }
 
@@ -118,9 +125,6 @@ class Advice:
     army_target: tuple[int, int] | None = None
     raid_target_id: int | None = None
     raid_target_cell: tuple[int, int] | None = None
-    stage_at: tuple[int, int] | None = None
-    stage_facing: tuple[int, int] | None = None
-    formation: str = "clump"
     defense_at: tuple[int, int] | None = None
     plan: str = ""
     reasoning: str = ""
@@ -154,9 +158,6 @@ def parse_advice(answer: Any, view: View, made_at: float) -> Advice | None:
         army_target=cell(answer.get("army_target")),
         raid_target_id=raid_id if isinstance(raid_id, int) and not isinstance(raid_id, bool) else None,
         raid_target_cell=cell(answer.get("raid_target_cell")),
-        stage_at=cell(answer.get("stage_at")),
-        stage_facing=cell(answer.get("stage_facing")),
-        formation="concave" if answer.get("formation") == "concave" else "clump",
         defense_at=cell(answer.get("defense_at")),
         plan=" ".join(str(answer.get("plan") or "").split())[:300],
         reasoning=" ".join(str(answer.get("reasoning") or "").split())[:300],

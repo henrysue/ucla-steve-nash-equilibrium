@@ -35,7 +35,7 @@ def plan(
     ``raid_ids`` / ``raid_orders`` are the harvester-raid squad (raid.py) and the
     home guard (guard.py), also
     kept out of the army. ``advice`` is the model advisor's fresh advice, if
-    any (advisor.py): targets, staging and formation the rules then carry out.
+    any (advisor.py): targets, route, raid target and turret side, within the rules' limits.
     """
     if not view.ok:
         return []

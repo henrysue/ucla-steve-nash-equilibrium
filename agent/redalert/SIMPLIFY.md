@@ -179,14 +179,12 @@ of these lines, and is it the only one doing so?
 
    That also lets us drop the now-redundant retries.
 8. **The model layers.**
-   - **Advisor:** it gives about 10 fields, and the rules now override or
-     ignore most of them:
-     - its army target is ignored while finishing, after a stall, or
-       without a known enemy near it;
-     - the formation is forced to a concave;
-     - its massing point is limited;
-     - its "hold" is limited;
-     - its attack route only applies after 5:00.
+   - **Advisor:** now aligned (done): its prompt states this strategy and
+     how each directive is used and limited; it sees our unit value against
+     theirs, the opening read, the threat alarm, the raid situation and
+     whether an attack is being confirmed. The staging and formation fields
+     are gone (the rules own them). Its army target still only counts with a
+     known enemy near it; "hold" and "attack" stay limited.
    - **Squad leads:** the rules override them in every fight.
    - **Cost:** both add latency, cost and nondeterminism.
    - **Recommendation:** run 5–10 test games with the models off and compare

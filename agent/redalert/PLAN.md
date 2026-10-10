@@ -13,10 +13,13 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
 
 - **Rules play every view** (no model on the hot path): `agent.py` reads the
   state, `brain.py` picks a Mode, `executor.py` builds one order batch.
-- **Models advise off the hot path**: the advisor (`advisor.py`, Sonnet) sets
-  posture, targets, staging, formation, defense side and expansion timing every
-  ~6 s; Haiku squad leads (`squadlead.py`) direct the raid squad and the
-  garrison every ~4 s. Advice is validated and expires; safety rules win.
+- **Models advise off the hot path**: the advisor (`advisor.py`, Sonnet) is
+  told this strategy and sees what the rules see (unit values, intel, raid
+  situation, confirming); every ~6 s it may set posture, attack route,
+  expansion wish, army target, raid target and turret side, each within the
+  rules' limits (staging and formation are the rules'). Haiku squad leads
+  (`squadlead.py`) direct the raid squad and the garrison when not in a fight.
+  Advice is validated and expires; safety rules win.
 - **Logs**: `matchlog.py` writes a JSONL and a summary per match to
   `matchlogs/` (samples every 15 s, mode changes, refusals, model advice).
 

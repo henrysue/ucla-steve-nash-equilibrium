@@ -907,9 +907,9 @@ class _FakeProvider:
         return self.answer
 
 
-_ANSWER = {"posture": "hold", "army_target": [30, 30], "raid_target_id": None, "raid_target_cell": [37, 34],
-           "stage_at": [22, 22], "stage_facing": [40, 40], "formation": "concave", "defense_at": [9, 9],
-           "plan": "Hold the choke in a concave, raid their ore.", "reasoning": "Their army is bigger; harass instead."}
+_ANSWER = {"posture": "hold", "attack_route": "auto", "expand": "auto", "army_target": [30, 30],
+           "raid_target_id": None, "raid_target_cell": [37, 34], "defense_at": [9, 9],
+           "plan": "Mass at home, raid their ore.", "reasoning": "Their army is bigger; harass instead."}
 
 
 def _settled(adv, view):
@@ -921,8 +921,7 @@ def _settled(adv, view):
 def test_advisor_never_blocks_and_returns_validated_advice():
     adv = ra_advisor.Advisor(_FakeProvider(_ANSWER), log=lambda *_: None, clock=lambda: 0.0, interval=0.0)
     advice = _settled(adv, _view(_t=100.0))
-    assert advice.posture == "hold" and advice.stage_at == (22, 22) and advice.formation == "concave"
-    assert advice.defense_at == (9, 9) and advice.raid_target_cell == (37, 34)
+    assert advice.posture == "hold" and advice.defense_at == (9, 9) and advice.raid_target_cell == (37, 34)
 
 
 def test_advice_off_the_map_is_dropped_and_stale_advice_expires():
@@ -951,7 +950,7 @@ def test_concave_slots_curve_toward_the_enemy():
     assert sorted([slots[0][0], slots[4][0]]) == [17, 23]  # spread evenly across the approach
 
 
-def test_advice_drives_staging_formation_raid_and_defense():
+def test_advice_drives_the_raid_and_turret_side_while_the_rules_form_the_concave():
     adv = ra_advisor.parse_advice(_ANSWER, _view(), 100.0)
     units = [{"id": 30 + i, "type": "e1", "x": 5, "y": 5, "hp": 100, "idle": True} for i in range(5)]
     o = executor._army_orders(_view(buildings=BASE, units=units), Mode.BUILD, advice=adv)
@@ -1028,7 +1027,7 @@ def test_advisor_plan_goes_to_console_only_when_it_changes(tmp_path):
                                              _view(), 112.0), 3.0)
     console = [l for l in lines if "advisor t=" in l]
     assert len(console) == 2
-    assert "hold: Hold the choke in a concave, raid their ore. | why: Their army is bigger" in console[0]
+    assert "hold: Mass at home, raid their ore. | why: Their army is bigger" in console[0]
     assert "attack: Push their power now." in console[1]
 
     final = GameState.from_mcp_state({**_raw(), "phase": "finished", "is_terminal": True,
@@ -1036,7 +1035,7 @@ def test_advisor_plan_goes_to_console_only_when_it_changes(tmp_path):
     agent.on_match_end(final, CTX)
     md = next(tmp_path.glob("*.md")).read_text(encoding="utf-8")
     assert "## Model plan" in md and "3 answers" in md
-    assert "**100s, hold**: Hold the choke" in md and "**112s, attack**: Push their power now." in md
+    assert "**100s, hold**: Mass at home" in md and "**112s, attack**: Push their power now." in md
     assert md.count("**106s") == 0  # a repeated plan is not listed again
 
 
@@ -3297,3 +3296,32 @@ def test_the_commander_keeps_the_bookkeeping():
     behind = _view(_t=430.0, buildings=BASE, units=[{"id": 30, "type": "3tnk", "x": 10, "y": 10, "hp": 100}],
                    military={"army_value": 800, "visible_enemy_value": 5000, "kills_cost": 3000})
     assert c.decide(behind) is Mode.RETREAT and c.retreated_at == 430.0 and c.retreat_army == 800
+
+
+# -- the advisor is aligned with the strategy -----------------------------------------------------
+
+def test_the_advisor_schema_has_only_fields_the_rules_use():
+    props = set(ra_advisor.ADVICE_SCHEMA["properties"])
+    assert props == {"posture", "attack_route", "expand", "army_target", "raid_target_id", "raid_target_cell",
+                     "defense_at", "plan", "reasoning"}
+    for word in ("double-refinery", "rush", "concave", "second prong", "DEFEND", "FINISH", "4-second look"):
+        assert word in ra_advisor.SYSTEM_PROMPT, word
+
+
+def test_the_advisor_sees_what_the_rules_see():
+    seen = {}
+
+    class Spy:
+        calls = 0
+        def poll(self, view, situation):
+            seen.update(situation)
+            return None
+        def close(self):
+            pass
+
+    agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0, advisor_factory=lambda log, on_advice: Spy())
+    agent.choose_action(_state(_t=300.0, buildings=BASE, units=_raid_army(2, 6)), CTX)
+    for key in ("mode", "confirming_attack", "massing_point", "our_unit_value", "enemy_unit_value_known",
+                "enemy_turrets_known", "raid_squad", "scouts", "intel"):
+        assert key in seen, key
+    assert set(seen["intel"]) == {"enemy_opening", "threat_alarm", "their_base_seen_at"}
