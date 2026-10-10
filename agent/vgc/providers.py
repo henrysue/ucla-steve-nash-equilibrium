@@ -125,7 +125,10 @@ class AnthropicProvider:
                 left = timeout - (time.monotonic() - started)
                 response = self._create(system, turns, schema, left, effort, False)
         except self._anthropic.APIStatusError as exc:
-            raise ProviderError(f"Claude request failed (HTTP {exc.status_code})") from None
+            # The API's reason, so a rejected request is diagnosable from the
+            # console (82908a24 showed only "HTTP 400"). No secrets in it.
+            reason = " ".join(str(getattr(exc, "message", "") or "").split())[:240]
+            raise ProviderError(f"Claude request failed (HTTP {exc.status_code}{': ' + reason if reason else ''})") from None
         except self._anthropic.APIError as exc:
             raise ProviderError(f"Claude request failed ({type(exc).__name__})") from None
         except TypeError as exc:

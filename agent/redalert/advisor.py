@@ -134,7 +134,9 @@ ADVICE_SCHEMA = {
     "properties": {
         "enemy_style": {"type": "string", "enum": list(STYLES)},
         "balance": {"type": "string", "enum": list(BALANCES)},
-        "mistakes": {"type": "array", "maxItems": 3, "items": {
+        # No maxItems: Claude's structured outputs reject it (HTTP 400, every
+        # call failed in match 82908a24); parse_advice keeps the first 3.
+        "mistakes": {"type": "array", "items": {
             "type": "object", "additionalProperties": False, "required": ["kind", "note"],
             "properties": {"kind": {"type": "string", "enum": list(MISTAKES)}, "note": {"type": "string"}}}},
         "posture": {"type": "string", "enum": ["attack", "hold", "default"]},

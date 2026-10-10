@@ -3619,3 +3619,20 @@ def test_against_a_macro_enemy_the_raid_party_is_bigger_and_flanks():
     plain.update(v, Mode.BUILD, None, types.SimpleNamespace(enemy_style="standard", raid_target_id=None,
                                                              raid_target_cell=(40, 40)))
     assert len(plain.unit_ids) == C.RAID_SQUAD_SIZE and len(plain.orders(v)) == 1
+
+
+def test_the_advice_schema_uses_only_keywords_claude_structured_outputs_accept():
+    # match 82908a24: "maxItems" made every advisor call fail with HTTP 400
+    unsupported = {"maxItems", "minLength", "maxLength", "minimum", "maximum", "exclusiveMinimum",
+                   "exclusiveMaximum", "multipleOf"}
+
+    def walk(node):
+        if isinstance(node, dict):
+            assert not unsupported & set(node), unsupported & set(node)
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    walk(ra_advisor.ADVICE_SCHEMA)
