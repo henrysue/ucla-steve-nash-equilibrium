@@ -133,7 +133,7 @@ class RedAlertAgent:
         hunting = self._hunter.hunting(view)
         self._break_stall(view)
         # testrush (TEST ONLY): against ourselves in a test match, one seat rushes.
-        rushing = self._rusher.active(context)
+        rushing = self._rusher.active(context, raw.get("your_seat"))
         forced = self._rusher.mode(view, self._commander.cheese_since) if rushing else None
         # The army's one decision (commander.py).
         self._commander.decide(

@@ -2908,6 +2908,16 @@ def test_the_rusher_wakes_only_against_ourselves_in_a_test_match(monkeypatch, tm
     assert not other.active(_ctx(1, tournament="t-1", session="spar-1"))   # never in a tournament game
 
 
+def test_the_rusher_reads_the_seat_from_the_observation_when_the_context_has_none(monkeypatch, tmp_path):
+    monkeypatch.setenv("RA_TEST_RUSH", "1")
+    monkeypatch.delenv("RA_TEST_RUSH_SEAT", raising=False)
+    monkeypatch.setattr(testrush, "_MARKER_DIR", tmp_path)
+    seat0, seat1 = testrush.SelfPlayRusher(), testrush.SelfPlayRusher()
+    assert not seat1.active(_ctx(None, session="spar-9"), "Multi1")
+    assert not seat0.active(_ctx(None, session="spar-9"), "Multi0")
+    assert seat1.active(_ctx(None, session="spar-9"), "Multi1")
+
+
 def test_the_rusher_can_be_turned_off_or_moved(monkeypatch, tmp_path):
     monkeypatch.setattr(testrush, "_MARKER_DIR", tmp_path)
     monkeypatch.setenv("RA_TEST_RUSH", "0")

@@ -54,8 +54,11 @@ class SelfPlayRusher:
         self._marked = False
         self._launch_value: float | None = None   # army value when the current push launched
 
-    def active(self, context) -> bool:
-        """True when this seat should rush (test match against ourselves)."""
+    def active(self, context, your_seat=None) -> bool:
+        """True when this seat should rush (test match against ourselves).
+        ``your_seat``: the observation's seat ("Multi1"), used when the
+        context has no ``seat_position`` (Testing-page games come without it:
+        08560d9b and 89356b51 never rushed although RA_TEST_RUSH=1)."""
         if self._settled:
             return self._active
         if os.environ.get("RA_TEST_RUSH", "1").strip() == "0":
@@ -66,6 +69,9 @@ class SelfPlayRusher:
             return False
         session = getattr(context, "session_id", None)
         seat = getattr(context, "seat_position", None)
+        if seat is None and your_seat is not None:
+            digits = "".join(ch for ch in str(your_seat) if ch.isdigit())
+            seat = int(digits) if digits else None
         if not session or seat is None:
             return False
         self._session = str(session)
