@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from . import config as C
 from . import orders
-from .observe import View, dist2, enemy_spawn_guess
+from .observe import View, centre_offset, dist2, enemy_spawn_guess
 
 
 def _available(view: View, candidates) -> str | None:
@@ -449,8 +449,7 @@ def _clashes(item: str, cell, view: View) -> bool:
     overlaps one of our buildings, leaves no free cell beside it, or sits on
     a kept-clear lane (:func:`_lanes`): units need paths through the base,
     not mazes around it."""
-    x0, y0, x1, y1 = _rect(item, cell)
-    footprint = [(x, y) for x in range(x0, x1 + 1) for y in range(y0, y1 + 1)]
+    footprint = _solid(item, cell)             # empty corners aren't checked (BuildingUtils.CanPlaceBuilding)
     no_build = _no_build(view)
     if any(c in no_build for c in footprint):
         return True
@@ -460,10 +459,26 @@ def _clashes(item: str, cell, view: View) -> bool:
     for b in view.buildings:
         if b.cell is None or b.wreck:
             continue
-        bx0, by0, bx1, by1 = _rect(b.type, b.cell)
-        if x0 <= bx1 + 1 and bx0 <= x1 + 1 and y0 <= by1 + 1 and by0 <= y1 + 1:
+        if _gap(item, cell, b.type, b.cell) < 1:
             return True
     return False
+
+
+def _solid(item: str, cell) -> list[tuple[int, int]]:
+    """The cells that are part of the building (its footprint less the
+    ``EMPTY_CELLS`` corners)."""
+    empty = C.EMPTY_CELLS.get(item, ())
+    return [c for c in _cells(item, cell) if (c[0] - cell[0], c[1] - cell[1]) not in empty]
+
+
+def _gap(a: str, a_cell, b: str, b_cell) -> int:
+    """Free cells (Chebyshev) between two buildings' solid cells; -1 = overlap."""
+    if a not in C.EMPTY_CELLS and b not in C.EMPTY_CELLS:
+        ax0, ay0, ax1, ay1 = _rect(a, a_cell)
+        bx0, by0, bx1, by1 = _rect(b, b_cell)
+        return max(bx0 - ax1, ax0 - bx1, by0 - ay1, ay0 - by1) - 1
+    sa, sb = _solid(a, a_cell), _solid(b, b_cell)
+    return min(max(abs(p[0] - q[0]), abs(p[1] - q[1])) for p in sa for q in sb) - 1
 
 
 _LANES: list = [None, None]   # [view, lanes]: one view's lanes (computed once per view)
@@ -566,7 +581,7 @@ def legal_spots(view: View, item: str, near=None, skip_types=()) -> list[tuple[i
     (matches fd507a58, c2fec761): such spots are placed exactly as asked.
     Cached per view."""
     nw, nh = _footprint(item)
-    key = (id(view), nw, nh, near, tuple(skip_types))
+    key = (id(view), item, near, tuple(skip_types))     # by item: same-size shapes differ (proc, fix)
     hit = _SPOTS.get(key)
     if hit is not None and hit[0] is view:     # the same view object, not a reused id
         return hit[1]
@@ -578,9 +593,11 @@ def legal_spots(view: View, item: str, near=None, skip_types=()) -> list[tuple[i
     found: set = set()
     for kind, cell in anchors:
         x0, y0, x1, y1 = _rect(kind, cell)
+        # Gaps count solid cells only (a refinery's or depot's empty corners
+        # don't reach): OpenRA's IsCloseEnoughToBase.
         for sx in range(x0 - nw - gap, x1 + gap + 2):
             for sy in range(y0 - nh - gap, y1 + gap + 2):
-                if max(x0 - (sx + nw - 1), sx - x1, y0 - (sy + nh - 1), sy - y1) - 1 == gap:
+                if _gap(item, (sx, sy), kind, cell) == gap:
                     found.add((sx, sy))
     # The build radius (the lobby's "buildradius"): the building's centre
     # within BUILD_RADIUS_CELLS of one of our construction yards. Placements
@@ -589,8 +606,8 @@ def legal_spots(view: View, item: str, near=None, skip_types=()) -> list[tuple[i
     yards = []
     for b in view.buildings:
         if b.type == C.CONSTRUCTION_YARD and b.cell is not None and not b.wreck:
-            w, h = _footprint(b.type)
-            yards.append((b.cell[0] + (w - 1) / 2, b.cell[1] + (h - 1) / 2))
+            dx, dy = centre_offset(b.type)
+            yards.append((b.cell[0] + dx, b.cell[1] + dy))
     r2 = C.BUILD_RADIUS_CELLS ** 2
 
     def in_radius(s):

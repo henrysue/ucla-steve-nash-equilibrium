@@ -415,17 +415,18 @@ def _count(view: View, kind: str) -> int:
 
 
 def has_room(cell, view: View) -> bool:
-    """Whether an MCV at ``cell`` can unfold: the 3x3 block around it is
-    inside the map, passable, ore-free, and clear of our buildings."""
+    """Whether an MCV at ``cell`` can unfold: the yard (3x4 with its bib, top-
+    left at ``cell`` - (1, 1): the MCV's Transforms offset) is inside the map,
+    passable, ore-free, and clear of our buildings."""
     from .buildplan import _clashes
 
     x, y = cell
     if view.bounds is not None:
         bx, by, bw, bh = view.bounds
-        if not (bx + 1 <= x - 1 and x + 1 <= bx + bw - 2 and by + 1 <= y - 1 and y + 1 <= by + bh - 2):
+        if not (bx + 1 <= x - 1 and x + 1 <= bx + bw - 2 and by + 1 <= y - 1 and y + 2 <= by + bh - 2):
             return False
     taken = view.blocked_cells | frozenset(view.ore_cells)
-    if any((x + i, y + j) in taken for i in (-1, 0, 1) for j in (-1, 0, 1)):
+    if any((x + i, y + j) in taken for i in (-1, 0, 1) for j in (-1, 0, 1, 2)):
         return False
     return not _clashes(C.CONSTRUCTION_YARD, (x - 1, y - 1), view)
 

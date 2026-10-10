@@ -106,20 +106,25 @@ BUILDING_GAP_CELLS = 1             # free cells between buildings (OpenRA allows
 LANE_WIDTH_CELLS = 3               # kept-clear road from the base toward the staging point...
 LANE_KEEP_CLEAR_CELLS = 14         # ...for this many cells
 EXIT_CLEAR_ROWS = 2                # rows kept clear in front of barracks / war factories
-# (width, height), top-left anchored; the rules give no sizes. Power plants,
-# barracks and the dome carry a bib row below (2x3): placements touching it
-# fail (placement audit, match fd507a58). The refinery is 3x4: every
-# refinery whose 4th row lay on ore was moved home (match e2f73d65: all six
-# expansion refineries, 8400 spent in the main base).
+# (width, height), top-left anchored, from OpenRA's mods/ra/rules/structures.yaml
+# (the platform's rules give no sizes). Bib rows ("=") are part of the
+# footprint: they must be on buildable ground and block other buildings.
+#   fact xxX xxx XxX ===   proc _X_ xxx X== ===   fix _+_ +++ _+_
+#   powr/barr/tent/dome xx xx ==   apwr/weap xxx xxx ===   turrets, silo, kenn x
 FOOTPRINTS = {
-    "fact": (3, 3), "powr": (2, 3), "apwr": (3, 3), "tent": (2, 3), "barr": (2, 3),
+    "fact": (3, 4), "powr": (2, 3), "apwr": (3, 3), "tent": (2, 3), "barr": (2, 3),
     "proc": (3, 4), "weap": (3, 3), "fix": (3, 3), "silo": (1, 1), "dome": (2, 3), "kenn": (1, 1),
-    "pbox": (1, 1), "gun": (1, 1), "ftur": (1, 1), "tsla": (1, 2),
+    "pbox": (1, 1), "gun": (1, 1), "ftur": (1, 1), "tsla": (1, 1),
 }
 DEFAULT_FOOTPRINT = (2, 2)
-# The reported (centre) cell's offset from the top-left, where it isn't
-# (w // 2, h // 2): every refinery that landed where asked was reported 1 down.
-CENTRE_OFFSETS = {"proc": (1, 1)}
+# Footprint cells that aren't part of the building ("_"): not checked for
+# ground, and gaps to neighbours are measured from the other cells (OpenRA's
+# IsCloseEnoughToBase uses Tiles(), which skips them).
+EMPTY_CELLS = {"proc": ((0, 0), (2, 0)), "fix": ((0, 0), (2, 0), (0, 2), (2, 2))}
+# The reported centre cell's offset from the top-left: (dims - 1) / 2, half a
+# cell up for buildings with LocalCenterOffset 0,-512 (the bib carriers),
+# rounded (Building.CenterOffset). Elsewhere (w // 2, h // 2).
+CENTRE_OFFSETS = {"proc": (1, 1), "fact": (1, 1)}
 
 # -- defenses and repairs ----------------------------------------------------------------------
 STANDING_DEFENSES = 1              # once the war factory is up

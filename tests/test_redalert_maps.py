@@ -9,7 +9,9 @@ cells the server would report.
 Placements are judged by OpenRA's rule as our placement audit measured it,
 written out here independently of buildplan.py: the footprint lies on
 buildable ground, overlaps no building, and lies within one free cell of a
-building that extends the buildable area (not a turret).
+building that extends the buildable area (not a turret), gaps counted
+between solid cells: OpenRA's IsCloseEnoughToBase with the shapes from
+mods/ra/rules/structures.yaml (proc _X_ / xxx / X== / ===, fix _+_ / +++ / _+_).
 """
 
 from __future__ import annotations
@@ -72,22 +74,27 @@ def _rect(kind, cell):
 
 def _legal(view, item: str, spot) -> str | None:
     """Why OpenRA would move ``item`` placed at ``spot``, or None if legal."""
-    r = _rect(item, spot)
-    cells = [(x, y) for x in range(r[0], r[2] + 1) for y in range(r[1], r[3] + 1)]
+    cells = _solid(item, spot)               # empty corners aren't checked (CanPlaceBuilding)
     bad = view.unbuildable_cells | view.blocked_cells | frozenset(view.ore_cells)
     if any(c in bad for c in cells):
         return "unbuildable ground"
-    gaps = []
+    near = False
+    mine = _solid(item, spot)
     for b in view.buildings:
-        q = _rect(b.type, b.cell)
-        gap = max(max(q[0] - r[2], r[0] - q[2]) - 1, max(q[1] - r[3], r[1] - q[3]) - 1)
+        theirs = _solid(b.type, b.cell)
+        gap = min(max(abs(p[0] - q[0]), abs(p[1] - q[1])) for p in mine for q in theirs) - 1
         if gap < 0:
             return f"overlaps {b.type}"
-        if b.type not in NO_AREA:
-            gaps.append(gap)
-    if not gaps or min(gaps) > 1:
-        return f"out of reach (nearest gap {min(gaps) if gaps else None})"
-    return None
+        if b.type not in NO_AREA and gap <= 1:
+            near = True
+    return None if near else "out of reach"
+
+
+def _solid(kind, cell):
+    r = _rect(kind, cell)
+    empty = {"proc": {(0, 0), (2, 0)}, "fix": {(0, 0), (2, 0), (0, 2), (2, 2)}}.get(kind, set())
+    empty = {(r[0] + i, r[1] + j) for i, j in empty}
+    return [(x, y) for x in range(r[0], r[2] + 1) for y in range(r[1], r[3] + 1) if (x, y) not in empty]
 
 
 CASES = [(path, i) for path in FIXTURES for i in range(3)]

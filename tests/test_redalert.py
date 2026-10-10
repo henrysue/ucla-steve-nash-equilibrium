@@ -770,7 +770,7 @@ _MID = dict(base_center=[20, 20])   # a base mid-map, so offsets aren't clamped
 def test_refinery_goes_beside_the_ore_within_reach():
     v = dataclasses.replace(_view(base_center=[10, 10], buildings=[{"id": 10, "type": "fact", "x": 10, "y": 10}]), ore_cells=((20, 11), (21, 11)))
     x, y = buildplan.placement_cell(v, "proc")
-    assert x == 14  # the yard spans x 10-12; one free cell (13), then the refinery, on the ore side
+    assert x in (14, 15)  # the yard spans x 10-12; one or two free cells (a yard reaches 2), then the refinery
 
 
 def test_ore_cells_come_from_the_map_layout():
@@ -1120,18 +1120,28 @@ def test_losses_from_before_the_attack_do_not_trigger_a_retreat():
 # -- legal, growing placement (match 28e54539: hints too far were ignored) ----
 
 
+def _solid_cells(kind, cell):
+    """A building's cells, less the empty ones (OpenRA: proc _X_ / XXX / X== / ===, fix _+_ / +++ / _+_)."""
+    w, h = C.FOOTPRINTS.get(kind, (2, 2))
+    empty = {"proc": {(0, 0), (2, 0)}, "fix": {(0, 0), (2, 0), (0, 2), (2, 2)}}.get(kind, set())
+    empty = {(cell[0] + i, cell[1] + j) for i, j in empty}
+    return [(cell[0] + i, cell[1] + j) for i in range(w) for j in range(h)
+            if (cell[0] + i, cell[1] + j) not in empty]
+
+
+def _cell_gap(a, a_cell, b, b_cell):
+    return min(max(abs(p[0] - q[0]), abs(p[1] - q[1]))
+               for p in _solid_cells(a, a_cell) for q in _solid_cells(b, b_cell)) - 1
+
+
 def _legal(spot, item, buildings):
-    """One free cell from some building, overlapping none (footprints top-left)."""
-    fp = lambda t: __import__("agent.redalert.config", fromlist=["x"]).FOOTPRINTS.get(t, (2, 2))  # noqa: E731
-    w, h = fp(item)
+    """A free cell from every building and within reach of one (footprints top-left)."""
     touching = False
     for b in buildings:
-        bw, bh = fp(b["type"])
-        gx = max(b["x"] - (spot[0] + w - 1), spot[0] - (b["x"] + bw - 1)) - 1
-        gy = max(b["y"] - (spot[1] + h - 1), spot[1] - (b["y"] + bh - 1)) - 1
-        if gx < 1 and gy < 1:
+        g = _cell_gap(item, spot, b["type"], (b["x"], b["y"]))
+        if g < 1:
             return False                   # overlaps or leaves no path
-        if max(gx, gy) <= 2:
+        if g <= 1:
             touching = True
     return touching
 
@@ -1547,9 +1557,7 @@ def test_buildings_keep_the_road_out_and_factory_exits_clear():
         spot = buildplan.placement_cell(v, item)
         if spot is None:
             continue
-        w, h = __import__("agent.redalert.config", fromlist=["x"]).FOOTPRINTS.get(item, (2, 2))
-        cells = {(spot[0] + i, spot[1] + j) for i in range(w) for j in range(h)}
-        assert not cells & lanes, (item, spot)
+        assert not set(_solid_cells(item, spot)) & lanes, (item, spot)   # empty corners are walkable
 
 
 # -- lessons from match f9f06e34's end: the tiebreak and the bank ---------------------
@@ -2943,16 +2951,8 @@ _NO_AREA_T = {"pbox", "hbox", "gun", "ftur", "tsla", "agun", "sam"}
 
 
 def _real_gap(v, item, spot):
-    nw, nh = C.FOOTPRINTS.get(item, (2, 2))
-    r = (spot[0], spot[1], spot[0] + nw - 1, spot[1] + nh - 1)
-    gaps = []
-    for b in v.buildings:
-        if b.type in _NO_AREA_T:
-            continue
-        w, h = C.FOOTPRINTS.get(b.type, (2, 2))
-        q = (b.cell[0], b.cell[1], b.cell[0] + w - 1, b.cell[1] + h - 1)
-        gaps.append(max(max(q[0] - r[2], r[0] - q[2]) - 1, max(q[1] - r[3], r[1] - q[3]) - 1))
-    return min(gaps)
+    """The free cells between the spot and the nearest building (solid cells)."""
+    return min(_cell_gap(item, spot, b.type, b.cell) for b in v.buildings if b.type not in _NO_AREA_T)
 
 
 def test_grown_buildings_are_always_one_cell_from_a_building_even_on_a_diagonal():

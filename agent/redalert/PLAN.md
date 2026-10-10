@@ -54,6 +54,15 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
   worth 600+ at the base (89356b51: two scouts flipped both armies to defend).
 - **Placement**: a spot the engine moved a building from is skipped for 3
   minutes (89356b51: one legal-looking expansion refinery spot failed three times).
+- **Placement rules, from the OpenRA source** (BuildingUtils.cs, Building.cs,
+  mods/ra/rules/structures.yaml): every non-empty footprint cell (bibs
+  included) on Clear/Road terrain (ore is "Ore": never), no actor of any
+  kind on it, no other building or bib; within 2 cells (Chebyshev, at most
+  one free cell) of a cell of a building that gives buildable area (not
+  turrets); its centre within 16 cells of a yard's centre (we keep 13).
+  Shapes: fact 3x4 (bib row), proc _X_/xxx/X==/===, fix _+_/+++/_+_,
+  tsla 1x1. Checked against 266 logged placements: 200 legal and placed,
+  26 illegal and moved; most of the 30 legal-but-moved had units in the way.
 - **Turrets**: the first faces the road in (scout.approach_cell: the cell 12
   from the base that is the shortest walk from the enemy spawn), as close to
   that line as a legal spot allows; the rest fan out to either side.
