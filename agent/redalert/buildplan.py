@@ -673,27 +673,45 @@ def sell_for_income(view: View) -> dict | None:
 
 def open_ore(view: View, depleted: frozenset = frozenset(),
              radius: float | None = C.REFINERY_ORE_SEARCH_CELLS) -> tuple[int, int] | None:
-    """The ore cell nearest one of our yards (within ``radius``; None = any
-    distance) in a field that is not mined out (``depleted``) and has fewer
-    than ``MAX_REFINERIES_PER_FIELD`` refineries on it: where the next
-    refinery goes. (Match b7fcbd4e put five refineries on one field and
-    stayed broke.)"""
+    """Where the next refinery goes: the ore cell, nearest our yards, of the
+    field with the most room — fewest refineries for its size — among fields
+    within ``radius`` of a yard (None: any distance) that are not mined out.
+
+    A field's capacity is one refinery per ``ORE_CELLS_PER_REFINERY`` ore
+    cells, at least 1 and at most ``MAX_REFINERIES_PER_FIELD``. Spreading by
+    load, not distance: the nearest field used to take every refinery (match
+    a2952a6d: three around a 37-cell field 8 cells out, none at the 47-cell
+    field 11 cells out, while the trucks drove there; b7fcbd4e: five on one
+    field)."""
+    from .expand import _ore_components
     from .harvest import refinery_fields
     from .scout import our_yards
 
     yards = our_yards(view)
-    if not yards:
+    if not yards or not view.ore_cells:
         return None
+    comps = _ore_components(view)
+    owner = {c: i for i, comp in enumerate(comps) for c in comp}
+    load = [0] * len(comps)
+    for key, n in refinery_fields(view).items():
+        if key in owner:
+            load[owner[key]] += n
     field2 = (C.EXPAND_CLUSTER_CELLS * 1.5) ** 2
-    full = [f for f, n in refinery_fields(view).items() if n >= C.MAX_REFINERIES_PER_FIELD]
     r2 = radius * radius if radius is not None else None
     best = None
-    for c in view.ore_cells:
-        if any(dist2(c, f) <= field2 for f in depleted) or any(dist2(c, f) <= field2 for f in full):
+    for i, comp in enumerate(comps):
+        cap = max(1, min(C.MAX_REFINERIES_PER_FIELD, len(comp) // C.ORE_CELLS_PER_REFINERY))
+        if load[i] >= cap:
             continue
-        d = min(dist2(c, y) for y in yards)
-        if (r2 is None or d <= r2) and (best is None or d < best[0]):
-            best = (d, c)
+        live = [c for c in comp if not any(dist2(c, f) <= field2 for f in depleted)]
+        if not live:
+            continue
+        d, cell = min((min(dist2(c, y) for y in yards), c) for c in live)
+        if r2 is not None and d > r2:
+            continue
+        rank = (load[i] / cap, d)
+        if best is None or rank < best[0]:
+            best = (rank, cell)
     return best[1] if best else None
 
 

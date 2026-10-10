@@ -121,18 +121,19 @@ def early_push_warning(view: View) -> bool:
 
 
 def choke_cell(view: View) -> tuple[int, int] | None:
-    """Where the army masses, new units rally and the army regroups: just in
-    front of the base, between the enemy and our harvesters —
-    ``STAGE_FORWARD_CELLS`` toward the enemy from the midpoint of the base and
-    its ore field (never past ``STAGE_FRACTION`` of the way). A raid on the
-    harvesters runs into the army; massing a third of the way out left them
-    unguarded. If known enemies are near it, ``STAGE_FALLBACK_CELLS`` only:
-    never mass, or send reinforcements one by one, into ground the enemy holds."""
+    """Where the army masses, new units rally and the army regroups:
+    ``STAGE_FORWARD_CELLS`` in front of the base toward the enemy (never past
+    ``STAGE_FRACTION`` of the way): ready to attack, between them and us.
+    (Measured from the midpoint of the base and its nearest ore, it leaned
+    toward the ore side — match a2952a6d massed away from the enemy; home
+    responders guard the harvesters.) If known enemies are near it,
+    ``STAGE_FALLBACK_CELLS`` only: never mass, or send reinforcements one by
+    one, into ground the enemy holds."""
     base = view.base_center
     toward = _enemy_side(view)
     if base is None or toward is None:
         return None
-    anchor = _home_anchor(view, base)
+    anchor = base
     stage = _forward(view, anchor, toward, C.STAGE_FORWARD_CELLS, base)
     if early_push_warning(view) or not stage_is_safe(view, stage):
         stage = _forward(view, anchor, toward, C.STAGE_FALLBACK_CELLS, base)
@@ -170,16 +171,6 @@ def _clear_stage(view: View, stage, toward) -> tuple[int, int]:
             if 0 < dx * dx + dy * dy <= m * m]
     near.sort(key=lambda c: (dist2(c, stage), dist2(c, toward)))
     return next((c for c in near if clear(c)), stage)
-
-
-def _home_anchor(view: View, base) -> tuple[float, float]:
-    """Between the base and its nearest ore (where the harvesters work)."""
-    r2 = C.REFINERY_ORE_SEARCH_CELLS ** 2
-    near = [c for c in view.ore_cells if dist2(c, base) <= r2]
-    if not near:
-        return base
-    ore = min(near, key=lambda c: dist2(c, base))
-    return ((base[0] + ore[0]) / 2, (base[1] + ore[1]) / 2)
 
 
 def _forward(view: View, anchor, toward, cells: float, base) -> tuple[int, int]:

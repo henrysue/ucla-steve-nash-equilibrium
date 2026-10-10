@@ -368,26 +368,22 @@ def _stage_forward(
     view: View, scout_id: int | None = None, reserved: frozenset = frozenset(), advice=None,
     stage_override: tuple[int, int] | None = None,
 ) -> list[dict]:
-    """While massing, gather at the staging point: the advisor's ``stage_at``
-    if it gave one, else the forward choke.
+    """While massing, gather at the massing point (scout.choke_cell; an
+    override while escorting an MCV or edging forward to confirm an attack)
+    in a concave facing the enemy base (:func:`concave_slots`); a handful of
+    units just attack-move there.
 
-    Default (``clump``): idle units outside the staging radius attack-move
-    there; units already there (or busy fighting) are left alone. With the
-    advisor's ``concave`` formation, units take slots on an arc facing
-    ``stage_facing`` (default: the enemy base) — see :func:`concave_slots`.
-    """
-    stage = getattr(advice, "stage_at", None)
-    if stage is not None and not (scout.stage_is_ours(view, stage) and scout.stage_is_safe(view, stage)):
-        stage = None  # the advisor's pick is in contested or enemy-held ground
-    stage = stage_override or stage or scout.choke_cell(view)   # escorting an MCV: stage at its site
+    The rules own staging: the advisor's ``stage_at`` and ``stage_facing``
+    are not used (match a2952a6d: it massed the army back toward our own ore
+    field and turned the concave to face our base)."""
+    stage = stage_override or scout.choke_cell(view)
     if stage is None:
         return []
     fighters = _fighters(view, scout_id, reserved)
     # Massing (and holding at home) is always a concave facing the enemy's
     # approach: every unit can fire into the middle where they arrive.
     if len(fighters) >= 3:
-        facing = getattr(advice, "stage_facing", None) or enemy_spawn_guess(view)
-        return _concave_orders(view, fighters, stage, facing)
+        return _concave_orders(view, fighters, stage, enemy_spawn_guess(view))
     r2 = C.STAGING_RADIUS_CELLS ** 2
     movers = [u.id for u in fighters if u.idle and dist2(u.cell, stage) > r2]
     return [orders.attack_move(movers[:orders.MAX_UNITS_PER_ORDER], list(stage))] if movers else []

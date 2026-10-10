@@ -76,7 +76,7 @@ cell from the base are silently moved next to the construction yard.
 - A needed harvester can't wait behind tanks in the vehicle queue.
 - Cap refineries; ask for an expansion's refinery once, not every view.
 - Only attacks in the opening are rushes; later, defend without dropping the economy.
-- Mass (and rally new units) just in front of the base, between the harvesters and the enemy: 8 cells out from base+ore, 3 if enemies are near; never send units one by one into contested ground.
+- Mass (and rally new units) 10 cells in front of the base toward the enemy (3 if enemies are near), in a concave facing their base; the rules own staging, not the advisor (a2952a6d: it massed toward our ore and faced our base).
 - Every combat order is an attack-move, retreats and pull-backs included: a plain move let units be shot in the back without answering. Plain moves only for the MCV and the scout.
 - No all-in before 3:00 and a war factory: early sightings show a fraction of the enemy (b7fcbd4e: both seats traded their opening army at 1:05).
 - Broke with no harvester: sell a spare building (dome, depot, defenses, extra production) to buy one.
@@ -101,7 +101,7 @@ cell from the base are silently moved next to the construction yard.
 - An expansion counts as ours when a NEW yard appears near the planned site, even several cells off it (0561274e lost track of one and never built its refinery).
 - Expand to the natural first: the nearest unmined field by walking, not the richest (b7fcbd4e walked past a natural 16 cells behind the base).
 - Buildings stand only on clear ground: rough ground, beach and road/bridge are walkable but unbuildable, and a footprint there is moved home.
-- At most 3 refineries per field; the next one goes to a field with room, or the base crawls toward one.
+- Refineries spread over the fields in reach by load: a field takes one per 15 ore cells (1-3); the next goes to the field with the most room, nearest first on a tie (a2952a6d: three around the nearer, smaller field, none at the bigger one).
 - Once their base is nearly razed (we knew 6+ enemy buildings, now 3 or fewer) and we lead, finish them: no protect-lead or hold; with none known the hunter aims the army and a big army sweeps 3 points at once (0561274e idled on ruins for 6 minutes).
 - The advisor's army target counts only with a known enemy within 10 cells of it (b7fcbd4e: its stale target kept a 40k army 10 cells from the enemy's last building for 5 minutes).
 - Stop buying refineries for an expansion after 2 have been moved home.

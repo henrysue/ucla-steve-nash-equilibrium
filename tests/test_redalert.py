@@ -220,11 +220,11 @@ def test_build_leaves_busy_units_alone():
 def test_build_stages_idle_units_at_the_choke():
     idle = [{**u, "idle": True} for u in _ARMY]
     o = executor._army_orders(_view(buildings=BASE, units=idle), Mode.BUILD)
-    assert o == [{"cmd": "attack_move", "units": [30, 31], "to": [10, 10]}]
+    assert o == [{"cmd": "attack_move", "units": [30, 31], "to": [11, 11]}]
 
 
 def test_units_already_staged_are_not_reordered():
-    staged = [{"id": 30, "type": "e1", "x": 10, "y": 11, "hp": 100, "idle": True}]
+    staged = [{"id": 30, "type": "e1", "x": 11, "y": 12, "hp": 100, "idle": True}]
     assert executor._army_orders(_view(buildings=BASE, units=staged), Mode.BUILD) == []
 
 
@@ -556,9 +556,9 @@ def test_retreat_ends_in_an_attack_when_strong_again():
 
 def test_retreat_attack_moves_back_to_the_staging_point():
     far = [{"id": 30, "type": "1tnk", "x": 40, "y": 40, "hp": 100},
-           {"id": 31, "type": "1tnk", "x": 10, "y": 11, "hp": 100}]
+           {"id": 31, "type": "1tnk", "x": 11, "y": 12, "hp": 100}]
     o = executor._army_orders(_view(buildings=BASE, units=far), Mode.RETREAT)
-    assert o == [{"cmd": "attack_move", "units": [30], "to": [10, 10]}]   # shot at, it shoots back
+    assert o == [{"cmd": "attack_move", "units": [30], "to": [11, 11]}]   # shot at, it shoots back
 
 
 def test_the_agent_retreats_after_its_attack_goes_bad():
@@ -572,7 +572,7 @@ def test_the_agent_retreats_after_its_attack_goes_bad():
                                      military={"army_value": 2100, "visible_enemy_value": 3500}), CTX)
     assert agent._mode is Mode.RETREAT
     # they fight back on the way out, to the massing point in front of the base
-    assert {"cmd": "attack_move", "units": [30, 31, 32], "to": [10, 10]} in dec.action["orders"]
+    assert {"cmd": "attack_move", "units": [30, 31, 32], "to": [11, 11]} in dec.action["orders"]
 
 
 # -- rules from https://api.altruagent-game.com/skill/redalert ---------------
@@ -1140,7 +1140,7 @@ def _legal(spot, item, buildings):
 def test_every_placement_is_within_reach_of_the_base():
     blds = [{"id": 10, "type": "fact", "x": 10, "y": 10}, {"id": 11, "type": "powr", "x": 6, "y": 7},
             {"id": 12, "type": "tent", "x": 14, "y": 13}, {"id": 13, "type": "proc", "x": 14, "y": 8}]
-    v = dataclasses.replace(_view(base_center=[11, 11], buildings=blds), ore_cells=((22, 6),))
+    v = dataclasses.replace(_view(base_center=[11, 11], buildings=blds), ore_cells=_ore_patch(20, 2, 6, 6))
     for item in ("proc", "tent", "weap", "fix", "powr", "silo", "pbox"):
         spot = buildplan.placement_cell(v, item)
         assert spot is not None and _legal(spot, item, blds), (item, spot)
@@ -1240,16 +1240,16 @@ def test_six_riflemen_are_not_an_army_to_attack_with():
 
 
 def test_staging_is_on_our_side_and_falls_back_from_known_enemies():
-    assert scout.choke_cell(_view()) == (10, 10)                # 8 cells in front of [4,4] toward [40,40]
+    assert scout.choke_cell(_view()) == (11, 11)                # 10 cells in front of [4,4] toward [40,40]
     near = [{"id": 50, "type": "1tnk", "x": 12, "y": 11, "hp": 100}]
     assert scout.choke_cell(_view(visible_enemies=near)) == (6, 6)  # enemies there: right by the base
 
 
-def test_advisor_stage_in_the_contested_middle_is_refused():
+def test_the_advisor_does_not_pick_the_massing_point():
     adv = ra_advisor.parse_advice({**_ANSWER, "stage_at": [22, 22], "formation": "clump"}, _view(), 100.0)
     units = [{"id": 30, "type": "e1", "x": 5, "y": 5, "hp": 100, "idle": True}]
     o = executor._army_orders(_view(buildings=BASE, units=units), Mode.BUILD, advice=adv)
-    assert o[0]["to"] == [10, 10]                               # in front of our base, not the midpoint
+    assert o[0]["to"] == [11, 11]                               # the rules' massing point, not the advisor's
 
 
 def test_flank_waypoint_is_off_to_the_side_and_passable():
@@ -1710,7 +1710,7 @@ def test_a_withdrawal_attack_moves_every_unit():
     units = [{"id": 30, "type": "1tnk", "x": 38, "y": 38, "hp": 100}, {"id": 31, "type": "1tnk", "x": 30, "y": 30, "hp": 100}]
     enemy = [{"id": 90, "type": "3tnk", "x": 40, "y": 39, "hp": 100}]
     o = executor._army_orders(_view(buildings=BASE, units=units, visible_enemies=enemy), Mode.RETREAT)
-    assert o == [{"cmd": "attack_move", "units": [30, 31], "to": [10, 10]}]   # no plain moves under fire
+    assert o == [{"cmd": "attack_move", "units": [30, 31], "to": [11, 11]}]   # no plain moves under fire
 
 
 # -- rule-based micro and Haiku squad leads -------------------------------------------
@@ -2516,12 +2516,26 @@ _HOME_PROCS = [{"id": 13, "type": "proc", "x": 14, "y": 10}, {"id": 14, "type": 
                {"id": 15, "type": "proc", "x": 6, "y": 11}]
 
 
-def test_a_field_with_three_refineries_takes_no_more():
-    two = _fields_view(_HOME_PROCS[:2])
-    assert buildplan.open_ore(two) in _HOME_FIELD
-    three = _fields_view(_HOME_PROCS)
-    assert buildplan.open_ore(three) is None                         # nothing else in reach...
+def test_a_field_takes_refineries_by_its_size_three_at_most():
+    big = _ore_patch(10, 10, 9, 5)                                   # 45 cells: room for 3
+    two = _fields_view(_HOME_PROCS[:2], ore=big + _NATURAL)
+    assert buildplan.open_ore(two) in big
+    three = _fields_view(_HOME_PROCS, ore=big + _NATURAL)
+    assert buildplan.open_ore(three) is None                         # full, nothing else in reach...
     assert buildplan.open_ore(three, radius=None) in _NATURAL        # ...so the base crawls to the natural
+    small = _fields_view(_HOME_PROCS[:1], ore=_HOME_FIELD + _NATURAL)   # 16 cells: room for 1
+    assert buildplan.open_ore(small) is None
+
+
+def test_refineries_spread_over_the_fields_in_reach_by_load():
+    # a2952a6d: a 37-cell field 8 cells out took all three refineries while a
+    # 47-cell field 11 cells out got none. Now the second goes to the other field.
+    near = _ore_patch(10, 10, 6, 6)                                  # 36 cells, the nearer field
+    west = _ore_patch(2, 14, 4, 12)                                  # 48 cells, a little farther
+    first = _fields_view(ore=near + west)
+    assert buildplan.open_ore(first) in near                         # first: the nearest
+    one = _fields_view([{"id": 13, "type": "proc", "x": 16, "y": 12}], ore=near + west)
+    assert buildplan.open_ore(one) in west                           # second: the emptier field
 
 
 def test_no_refinery_is_bought_for_a_full_field():
