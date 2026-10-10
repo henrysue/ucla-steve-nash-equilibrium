@@ -131,7 +131,7 @@ def next_build_orders(view: View, expansion_ore: tuple[int, int] | None = None,
         if silo and view.queued_count(silo) == 0:
             return [orders.build(silo)]
 
-    step = walk_build_order(view, C.BUILD_ORDER)
+    step = walk_build_order(view, _build_order(view))
     if step:
         return step
     # A kennel once the war factory is up (Soviet: dogs, the best scouts).
@@ -139,6 +139,15 @@ def next_build_orders(view: View, expansion_ore: tuple[int, int] | None = None,
     if kennel and view.has_building(C.WAR_FACTORY) and not _count_built_and_queued(view, (C.KENNEL,)):
         return [orders.build(kennel)]
     return []
+
+
+def _build_order(view: View) -> tuple:
+    """The opening, then its follow-up unless outgunned (units first)."""
+    from .brain import outgunned
+
+    if opening_done(view) and outgunned(view):
+        return C.BUILD_ORDER
+    return C.BUILD_ORDER + C.FOLLOW_UP
 
 
 def opening_done(view: View) -> bool:
@@ -171,7 +180,7 @@ def build_reserve(view: View) -> float:
             owed += cost(item) * max(0.0, 1.0 - done)
     nxt = 0.0
     seen: dict = {}
-    for step in C.BUILD_ORDER:
+    for step in _build_order(view):
         seen[_ids(step)] = want = seen.get(_ids(step), 0) + 1
         if _count_built_and_queued(view, _ids(step)) >= want:
             continue

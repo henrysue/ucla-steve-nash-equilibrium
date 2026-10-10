@@ -3404,12 +3404,28 @@ def test_no_refinery_while_outgunned_units_first(monkeypatch):
     assert not any(o.get("item") == "proc" for o in buildplan.next_build_orders(v))
 
 
-def test_a_lost_building_opens_the_threat_window():
-    cmd = Commander()
-    cmd.track_threat(_view(_t=400.0, buildings=BASE + [{"id": 12, "type": "proc"}]))
-    assert cmd.cheese_since is None
-    cmd.track_threat(_view(_t=401.0, buildings=BASE))
-    assert cmd.cheese_since == 401.0
+def _push(n):
+    return [{"id": 900 + i, "type": "e3", "x": 8, "y": 8} for i in range(n)]
+
+
+def test_a_building_lost_to_a_push_opens_the_threat_window_a_small_raid_does_not():
+    for enemies, opened in ((_push(2), False), (_push(8), True)):
+        cmd = Commander()
+        cmd.track_threat(_view(_t=400.0, buildings=BASE + [{"id": 12, "type": "proc"}], visible_enemies=enemies))
+        cmd.cheese_since = None                       # whatever the size rule says, look at the loss alone
+        cmd.track_threat(_view(_t=401.0, buildings=BASE, visible_enemies=enemies))
+        assert (cmd.cheese_since == 401.0) is opened, len(enemies)
+
+
+def test_a_winning_attack_goes_on_while_their_push_hits_our_base():
+    army = [{"id": 100 + i, "type": "e3", "x": 30, "y": 30, "hp": 100} for i in range(30)]
+    v = _view(_t=400.0, buildings=BASE, units=army, visible_enemies=_push(8),
+              military={"army_value": 9000, "visible_enemy_value": 2400})
+    for prev, defends in ((Mode.ALL_IN, False), (Mode.BUILD, True)):
+        cmd = Commander()
+        cmd.mode, cmd.mode_since, cmd.cheese_since = prev, 300.0, 400.0
+        mode = cmd.decide(v)
+        assert (mode in (Mode.DEFEND_BASE, Mode.DEFEND_RUSH)) is defends, (prev, mode)
 
 
 def test_the_opening_is_the_build_orders_unless_a_rush_is_read():
@@ -3425,7 +3441,16 @@ def test_the_opening_is_the_build_orders_unless_a_rush_is_read():
     agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0, advisor_factory=lambda log, on_advice: Spy())
     agent.choose_action(_state(_t=100.0, buildings=BASE), CTX)
     assert calls == []                                   # build order not done: the advisor waits
-    done = [{"id": 10 + i, "type": t} for i, t in enumerate(
-        ("fact", "powr", "tent", "proc", "proc", "powr", "weap", "proc", "fix"))]
+    done = [{"id": 10 + i, "type": t} for i, t in enumerate(("fact", "powr", "tent", "proc", "proc", "powr", "weap"))]
     agent.choose_action(_state(_t=300.0, buildings=done), CTX)
     assert calls == [300.0]
+
+
+def test_after_the_opening_refinery_three_and_the_depot_only_when_not_outgunned():
+    done = [{"id": 10 + i, "type": t} for i, t in enumerate(("fact", "powr", "tent", "proc", "proc", "powr", "weap"))]
+    eco = {"power_provided": 300, "power_drained": 100}
+    calm = _view(_t=170.0, buildings=done, units=_harvs(2), economy=eco)
+    assert buildplan.opening_done(calm)
+    assert buildplan.next_build_orders(calm) == [{"cmd": "build", "item": "proc"}]
+    hot = _view(_t=170.0, buildings=done, units=_harvs(2), economy=eco, visible_enemies=_push(8))
+    assert not any(o.get("item") in ("proc", "fix") for o in buildplan.next_build_orders(hot))

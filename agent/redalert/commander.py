@@ -22,7 +22,7 @@ threat window. ``agent.py`` only feeds it data and acts on the mode.
 
 from __future__ import annotations
 
-from . import brain
+from . import brain, scout
 from . import config as C
 from .modes import Mode
 from .observe import View
@@ -44,12 +44,13 @@ class Commander:
 
     def track_threat(self, view: View) -> None:
         """Update the threat window (call first each view). Losing a building
-        opens it too, whatever the threat's size: match e2f73d65 lost seven
-        buildings in 90 s and never left BUILD (the attackers it could see
-        never outweighed the units and turrets "at home")."""
+        to a push bigger than a small raid opens it too, however many units
+        are "at home": match e2f73d65 lost seven buildings in 90 s and never
+        left BUILD. A small raid is the home units' job (executor.home_response)."""
         self.cheese_since = brain.update_cheese_since(view, self.cheese_since)
         ids = {b.id for b in view.buildings if b.id is not None and not b.wreck}
-        if self._building_ids is not None and self._building_ids - ids and view.game_seconds > 0:
+        if (self._building_ids is not None and self._building_ids - ids and view.game_seconds > 0
+                and _push_value(view) > C.SMALL_RAID_VALUE):
             self.cheese_since = view.game_seconds
         self._building_ids = ids
 
@@ -58,9 +59,15 @@ class Commander:
                distraction: bool = False, escorting: bool = False, rushing: bool = False,
                forced: Mode | None = None) -> Mode:
         prev = self.mode
+        losing = self.losing_trades(view)
+        # A base race: our attack is winning, so it goes on while their push
+        # hits our base (the home units still fight it). In the opening a
+        # rush always calls the army home.
+        base_race = (prev is Mode.ALL_IN and not losing and brain._army_edge(view) >= 1.0
+                     and view.game_seconds >= C.CHEESE_WINDOW_SECONDS)
         mode = brain.choose_mode(
-            view, cheese_since=self.cheese_since, model_pref=model_pref, prev_mode=prev,
-            scout_id=scout_id, squad_ids=squad_ids, losing_trades=self.losing_trades(view),
+            view, cheese_since=None if base_race else self.cheese_since, model_pref=model_pref, prev_mode=prev,
+            scout_id=scout_id, squad_ids=squad_ids, losing_trades=losing,
             retreated_at=self.retreated_at, retreat_army=self.retreat_army, hunting=hunting,
             alarm=alarm, distraction=distraction,
         )
@@ -123,3 +130,8 @@ class Commander:
             self.retreated_at = view.game_seconds
             self.retreat_army = view.army_value
         self.mode = mode
+
+
+def _push_value(view: View) -> float:
+    """The enemy combat units at our base (scout.enemy_threat_near_base), priced."""
+    return sum(view.unit_costs.get(a.type, C.DEFAULT_UNIT_COST) for a in scout.enemy_threat_near_base(view))

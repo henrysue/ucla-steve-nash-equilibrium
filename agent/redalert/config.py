@@ -42,12 +42,16 @@ KNOWN_COSTS = {                    # the skill guide's prices, when the rules gi
     "harv": 1100, "mcv": 2500, "kenn": 200, "e1": 100, "e3": 300, "dog": 200,
 }
 
-# -- opening: the double-refinery build order (a repeated id = one more of it) -----------
+# -- opening: the pros' double refinery into the war factory (a repeated id = one more of it) --
+# The replays: refineries at 1:00 / 1:38, war factory 2:40. The advisor waits
+# until it stands (unless a rush is read).
 BUILD_ORDER = (
     POWER_PLANT, BARRACKS, REFINERY, REFINERY,   # economy + infantry
-    POWER_PLANT, WAR_FACTORY, REFINERY,          # power + war factory
-    SERVICE_DEPOT,                               # tech (and the expansion MCV)
+    POWER_PLANT, WAR_FACTORY,                    # power + war factory
 )
+# Then, unless outgunned (units first): the third refinery and the service
+# depot (tanks and the expansion MCV).
+FOLLOW_UP = (REFINERY, SERVICE_DEPOT)
 POWER_MARGIN = 25                  # build power when provided - drained falls below this
 SILO_FILL_RATIO = 0.8              # build a silo when stored ore passes this share of capacity
 

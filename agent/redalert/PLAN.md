@@ -42,9 +42,13 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
 
 ## Strategy
 
-- **Opening**: power, barracks, refinery, refinery, power, war factory,
-  refinery, service depot (the pros' double-refinery order: refineries
-  1:00 / 1:38, war factory 2:40, depot 3:50); only 5 infantry until the war factory.
+- **Opening**: power, barracks, refinery, refinery, power, war factory (the
+  pros' double refinery: refineries 1:00 / 1:38, war factory 2:40). The advisor
+  waits until it stands unless a rush is read. Then, unless outgunned (units
+  first), the third refinery and the service depot.
+- **Defend**: a building lost to a push bigger than a small raid recalls the
+  army, unless our attack is winning (a base race: it goes on, the home units
+  fight). A small raid is handled by the units at home only.
 - **Economy**: trucks come with refineries (target = refineries + 2); more
   refineries over time; expand right after the service depot (~4:45), up to 3
   times, sooner when ore runs out. Money bands: broke = one queue; rich =
