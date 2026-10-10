@@ -877,11 +877,11 @@ def test_no_new_attack_during_the_retreat_cooldown():
 
 def test_the_agent_measures_a_losing_exchange():
     agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
-    assert not agent._losing_trades(_view(_t=100.0, military={"kills_cost": 1000, "deaths_cost": 1000}))
-    assert agent._losing_trades(_view(_t=125.0, military={"kills_cost": 1400, "deaths_cost": 3000}))
+    assert not agent._commander.losing_trades(_view(_t=100.0, military={"kills_cost": 1000, "deaths_cost": 1000}))
+    assert agent._commander.losing_trades(_view(_t=125.0, military={"kills_cost": 1400, "deaths_cost": 3000}))
     fair = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
-    fair._losing_trades(_view(_t=100.0, military={"kills_cost": 1000, "deaths_cost": 1000}))
-    assert not fair._losing_trades(_view(_t=125.0, military={"kills_cost": 2500, "deaths_cost": 3000}))
+    fair._commander.losing_trades(_view(_t=100.0, military={"kills_cost": 1000, "deaths_cost": 1000}))
+    assert not fair._commander.losing_trades(_view(_t=125.0, military={"kills_cost": 2500, "deaths_cost": 3000}))
 
 
 def test_known_enemy_defenses_count_as_enemy_strength():
@@ -1133,11 +1133,11 @@ def test_no_cancel_when_the_harvester_is_already_first_or_not_needed():
 
 def test_losses_from_before_the_attack_do_not_trigger_a_retreat():
     agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
-    agent._losing_trades(_view(_t=470.0, military={"kills_cost": 1000, "deaths_cost": 1000}))
-    agent._losing_trades(_view(_t=490.0, military={"kills_cost": 1000, "deaths_cost": 2500}))  # hit while massing
+    agent._commander.losing_trades(_view(_t=470.0, military={"kills_cost": 1000, "deaths_cost": 1000}))
+    agent._commander.losing_trades(_view(_t=490.0, military={"kills_cost": 1000, "deaths_cost": 2500}))  # hit while massing
     agent._mode_since = 493.0                                                                  # attack starts
-    assert not agent._losing_trades(_view(_t=496.0, military={"kills_cost": 1000, "deaths_cost": 2500}))
-    assert agent._losing_trades(_view(_t=515.0, military={"kills_cost": 1200, "deaths_cost": 4000}))  # losing *this* fight
+    assert not agent._commander.losing_trades(_view(_t=496.0, military={"kills_cost": 1000, "deaths_cost": 2500}))
+    assert agent._commander.losing_trades(_view(_t=515.0, military={"kills_cost": 1200, "deaths_cost": 4000}))  # losing *this* fight
 
 
 
@@ -1182,17 +1182,17 @@ def test_defenses_spread_along_the_edge_instead_of_piling_up():
 
 def test_no_trade_retreat_in_the_first_seconds_of_a_fight():
     agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
-    agent._mode_since, agent._attack_army = 700.0, 14000.0
-    agent._losing_trades(_view(_t=700.0, military={"kills_cost": 15000, "deaths_cost": 22000}))
-    assert not agent._losing_trades(_view(_t=705.0, military={"kills_cost": 15200, "deaths_cost": 25000}))  # 5 s in
+    agent._mode_since, agent._commander.attack_army = 700.0, 14000.0
+    agent._commander.losing_trades(_view(_t=700.0, military={"kills_cost": 15000, "deaths_cost": 22000}))
+    assert not agent._commander.losing_trades(_view(_t=705.0, military={"kills_cost": 15200, "deaths_cost": 25000}))  # 5 s in
 
 
 def test_trade_retreat_scales_with_the_army():
     agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
-    agent._mode_since, agent._attack_army = 700.0, 14000.0    # floor: 15% of 14000 = 2100
-    agent._losing_trades(_view(_t=700.0, military={"kills_cost": 15000, "deaths_cost": 22000}))
-    assert not agent._losing_trades(_view(_t=720.0, military={"kills_cost": 15300, "deaths_cost": 23500}))  # lost 1500
-    assert agent._losing_trades(_view(_t=725.0, military={"kills_cost": 15300, "deaths_cost": 25000}))      # lost 3000
+    agent._mode_since, agent._commander.attack_army = 700.0, 14000.0    # floor: 15% of 14000 = 2100
+    agent._commander.losing_trades(_view(_t=700.0, military={"kills_cost": 15000, "deaths_cost": 22000}))
+    assert not agent._commander.losing_trades(_view(_t=720.0, military={"kills_cost": 15300, "deaths_cost": 23500}))  # lost 1500
+    assert agent._commander.losing_trades(_view(_t=725.0, military={"kills_cost": 15300, "deaths_cost": 25000}))      # lost 3000
 
 
 def test_no_new_attack_until_the_army_has_regrown():
@@ -3267,3 +3267,44 @@ def test_a_confirmation_made_during_the_anti_flip_window_starts_the_attack_when_
 
 def test_the_test_rusher_opens_with_one_refinery():
     assert testrush.RUSH_BUILD_ORDER.count("proc") == 1
+
+
+# -- simplification step 2: the commander owns the decision -------------------------------------
+
+from agent.redalert.commander import Commander  # noqa: E402
+
+
+def _strong(t, **kw):
+    tanks = [{"id": 30 + i, "type": "3tnk", "x": 10, "y": 10, "hp": 100} for i in range(6)]
+    return _view(_t=t, buildings=BASE + [{"id": 12, "type": "weap", "x": 4, "y": 8}], units=tanks,
+                 military={"army_value": 5000, "visible_enemy_value": 1000, **kw})
+
+
+def test_the_commander_confirms_on_even_trades_and_goes_at_once_when_ahead():
+    c = Commander()
+    c.mode = Mode.BUILD
+    assert c.decide(_strong(400.0)) is Mode.BUILD and c.confirming           # looking first
+    assert c.decide(_strong(404.0)) is Mode.ALL_IN and not c.confirming       # held: committed
+    ahead = Commander()
+    ahead.mode = Mode.BUILD
+    assert ahead.decide(_strong(400.0, kills_cost=3000)) is Mode.ALL_IN       # clearly ahead: no look
+
+
+def test_the_commander_escort_and_forced_modes():
+    c = Commander()
+    c.mode = Mode.BUILD
+    edge = _strong(400.0, kills_cost=3000, army_value=2000)                   # 2:1, not overwhelming
+    assert c.decide(edge, escorting=True) is Mode.BUILD                       # the MCV first
+    r = Commander()
+    r.mode = Mode.BUILD
+    assert r.decide(_view(_t=100.0, buildings=BASE), rushing=True, forced=Mode.ALL_IN) is Mode.ALL_IN
+
+
+def test_the_commander_keeps_the_bookkeeping():
+    c = Commander()
+    c.mode = Mode.BUILD
+    c.decide(_strong(400.0, kills_cost=3000))
+    assert c.changed and c.mode_since == 400.0 and c.attack_army == 5000 and c.attacks == 1
+    behind = _view(_t=430.0, buildings=BASE, units=[{"id": 30, "type": "3tnk", "x": 10, "y": 10, "hp": 100}],
+                   military={"army_value": 800, "visible_enemy_value": 5000, "kills_cost": 3000})
+    assert c.decide(behind) is Mode.RETREAT and c.retreated_at == 430.0 and c.retreat_army == 800

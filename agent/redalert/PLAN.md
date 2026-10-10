@@ -24,15 +24,18 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
 |---|---|
 | `observe.py` | Typed, defensive view of the state and game config (map, ore, costs) |
 | `memory.py` | Enemies seen through the fog |
-| `brain.py` | Mode: OPEN, BUILD, ALL_IN, RETREAT, DEFEND_RUSH, DEFEND_BASE, PROTECT_LEAD |
+| `commander.py` | The army's one decision each view: policy, escort, look-before-commit, no quick flips |
+| `brain.py` | The policy: OPEN, BUILD, ALL_IN, RETREAT, DEFEND_RUSH, DEFEND_BASE, PROTECT_LEAD |
 | `buildplan.py` | What to build next and where to place it |
 | `executor.py` | Production, economy, army orders, rally points, stances |
-| `scout.py` | Base threats, staging point, patrol, hunting the last buildings |
+| `scout.py` | Base threats, the massing point, hunting the last buildings |
+| `scouting.py` / `intel.py` | The scout corps (early circuits, pickets, base checks); reading their opening |
 | `raid.py` / `guard.py` | Harvester raids; home guard and expansion garrison |
 | `expand.py` | Our expansions; enemy expansion sites |
 | `harvest.py` | Harvesters steered to fields that still have ore |
 | `micro.py` / `movement.py` | Focus fire, pull back damaged units; unstick units |
 | `orders.py` | Order builders and shape checks |
+| `testrush.py` | TEST ONLY: the self-play sparring rusher (remove before the tournament) |
 
 ## Strategy
 

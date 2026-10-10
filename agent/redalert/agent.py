@@ -24,6 +24,7 @@ from altruagent.console import print_line
 from . import brain, buildplan, executor, micro, orders, scout, squadlead
 from . import testrush  # TEST ONLY (self-play sparring rusher): remove before the tournament
 from . import intel, scouting
+from .commander import Commander
 from .expand import Expansion
 from .expand import enemy_expansions as _enemy_expansions
 from .guard import Garrison, HomeGuard
@@ -56,8 +57,7 @@ class RedAlertAgent:
     ) -> None:
         self._log = log
         self._clock = clock
-        self._cheese_since: float | None = None
-        self._mode: Mode = Mode.OPEN
+        self._commander = Commander()   # the army's one decision each view (commander.py)
         # The batch play_action answers next; refused order key -> blocked
         # until (clock); army (cmd, destination) -> (last sent, unit ids).
         self._last_sent: list[dict] = []
@@ -67,7 +67,6 @@ class RedAlertAgent:
         self._production_sent: dict[str, float] = {}
         self._patrol = scouting.ScoutCorps()
         self._intel = intel.EnemyIntel()
-        self._confirm_at: float | None = None   # when an attack call was first made (confirmed CONFIRM_SECONDS later)
         self._memory = EnemyMemory()
         self._raid = Raid()
         self._guard = HomeGuard()
@@ -85,14 +84,7 @@ class RedAlertAgent:
         # Per-match review log (off unless a log directory is configured).
         self._matchlog = MatchLog(log, directory=log_dir)
         self._game_seconds: float | None = None
-        # (game seconds, kills_cost, deaths_cost) for the trade-based retreat.
-        self._trades: list[tuple[float, float, float]] = []
-        self._retreated_at: float | None = None
-        self._mode_since = 0.0
-        self._attack_army = 0.0              # army value when the current attack began
-        self._retreat_army: float | None = None  # army value at the last retreat
         # Flank route for the current attack (executor.choose_flank).
-        self._attacks = 0
         self._flank_via: tuple[int, int] | None = None
         # The model advisor (None: rules only). Built after the match log so
         # each piece of advice is logged as it arrives.
@@ -118,73 +110,35 @@ class RedAlertAgent:
         self._memory.update(view)
         view = self._memory.apply(view)
 
-        # Track the cheese window (sets/expires defensively; strategy hole #3).
-        self._cheese_since = brain.update_cheese_since(view, self._cheese_since)
+        # Track the threat window (sets/expires defensively).
+        self._commander.track_threat(view)
 
         self._intel.update(view)
         self._patrol.update(view, taken={*self._raid.unit_ids, *self._guard.unit_ids, *self._garrison.unit_ids})
         threat = self._patrol.alarm(view) or self._intel.rushing(view)
         advice = self._poll_advisor(view)
-        prev_mode = self._mode
         hunting = self._hunter.hunting(view)
         self._break_stall(view)
-        self._mode = brain.choose_mode(
-            view, cheese_since=self._cheese_since, model_pref=_POSTURE.get(getattr(advice, "posture", None)),
-            prev_mode=prev_mode, scout_id=self._patrol.unit_id,
-            squad_ids=frozenset({*self._patrol.unit_ids, *self._raid.unit_ids,
-                                 *self._guard.unit_ids, *self._garrison.unit_ids}),
-            losing_trades=self._losing_trades(view), retreated_at=self._retreated_at,
-            retreat_army=self._retreat_army, hunting=hunting,
-            alarm=threat, distraction=self._raid.distracting(view),
-        )
         # testrush (TEST ONLY): against ourselves in a test match, one seat rushes.
         rushing = self._rusher.active(context)
-        if rushing:
-            forced = self._rusher.mode(view, self._cheese_since)
-            if forced is not None:
-                self._mode = forced
-        # Defend the haul: while the expansion MCV is on the road, the army
-        # escorts it instead of attacking (safety modes still win).
+        forced = self._rusher.mode(view, self._commander.cheese_since) if rushing else None
+        # The army's one decision (commander.py).
+        self._commander.decide(
+            view, model_pref=_POSTURE.get(getattr(advice, "posture", None)), scout_id=self._patrol.unit_id,
+            squad_ids=frozenset({*self._patrol.unit_ids, *self._raid.unit_ids,
+                                 *self._guard.unit_ids, *self._garrison.unit_ids}),
+            hunting=hunting, alarm=threat, distraction=self._raid.distracting(view),
+            escorting=self._expansion.escorting, rushing=rushing, forced=forced,
+        )
+        if self._commander.changed:
+            # While the raid squad holds their army, straight down the centre.
+            self._flank_via = (None if self._mode is not Mode.ALL_IN or self._raid.distracting(view)
+                               else self._pick_route(view, advice))
+        self._update_flank(view)
         if not rushing:   # testrush: the rusher never expands
             self._expansion.update(view, self._mode, advice, ore_running_out=self._harvest.home_depleted(view))
-        if self._expansion.escorting and self._mode is Mode.ALL_IN and not brain.must_attack(view) and not hunting:
-            self._mode = Mode.BUILD
         if self._expansion.scout_target is not None and self._patrol.visit is None:
             self._patrol.visit = self._expansion.scout_target
-        # Look before committing: while trades are about even, a fresh attack
-        # call is re-checked CONFIRM_SECONDS later as the army edges forward
-        # and sees more through the fog; it goes ahead only if the numbers
-        # still say so. Once confirmed, the attack is fully committed.
-        even = abs(view.kills_cost - view.deaths_cost) <= C.CONFIRM_TRADE_BAND
-        if (self._mode is Mode.ALL_IN and prev_mode is not Mode.ALL_IN and even
-                and not (rushing or hunting or brain._catching_up(view))):
-            if self._confirm_at is None:
-                self._confirm_at = view.game_seconds
-            if view.game_seconds - self._confirm_at < C.CONFIRM_SECONDS:
-                self._mode = prev_mode
-        elif self._mode is not Mode.ALL_IN:
-            self._confirm_at = None
-        # Commit: no BUILD <-> ALL_IN flip within MODE_MIN_DWELL_SECONDS. A
-        # confirmation that finished meanwhile is kept, so the attack starts
-        # the moment the window ends (not after another look).
-        if ({prev_mode, self._mode} == {Mode.BUILD, Mode.ALL_IN}
-                and view.game_seconds - self._mode_since < C.MODE_MIN_DWELL_SECONDS):
-            self._mode = prev_mode
-        if self._mode is Mode.ALL_IN:
-            self._confirm_at = None
-        if self._mode is not prev_mode:
-            self._mode_since = view.game_seconds
-            if self._mode is Mode.ALL_IN:
-                self._attack_army = view.army_value
-                # While the raid squad holds their army, straight down the centre.
-                self._flank_via = None if self._raid.distracting(view) else self._pick_route(view, advice)
-                self._attacks += 1
-            else:
-                self._flank_via = None
-        self._update_flank(view)
-        if self._mode is Mode.RETREAT and prev_mode is not Mode.RETREAT:
-            self._retreated_at = view.game_seconds
-            self._retreat_army = view.army_value
         self._game_seconds = view.game_seconds
 
         self._raid.update(view, self._mode, self._patrol.unit_id, advice,
@@ -430,21 +384,21 @@ class RedAlertAgent:
             self._log(f"[redalert] advisor poll failed, rules only: {type(exc).__name__}: {exc}")
             return None
 
-    def _losing_trades(self, view) -> bool:
-        """Since the attack began (at most ``TRADE_WINDOW_SECONDS`` back): lost
-        at least ``TRADE_LOSS_MIN`` and more than ``TRADE_LOSS_RATIO`` x what
-        we killed. Losses from before the attack don't count (match 28e54539
-        retreated 3 s into an attack over losses taken while massing)."""
-        t = view.game_seconds
-        self._trades.append((t, view.kills_cost, view.deaths_cost))
-        self._trades = [row for row in self._trades if t - row[0] <= C.TRADE_WINDOW_SECONDS]
-        if t - self._mode_since < C.MIN_ENGAGEMENT_SECONDS:
-            return False  # give the fight a chance: the first volley always costs
-        since = [row for row in self._trades if row[0] >= self._mode_since] or self._trades[-1:]
-        _, kills0, deaths0 = since[0]
-        lost, killed = view.deaths_cost - deaths0, view.kills_cost - kills0
-        floor = max(C.TRADE_LOSS_MIN, C.TRADE_LOSS_ARMY_SHARE * self._attack_army)
-        return lost >= floor and lost > C.TRADE_LOSS_RATIO * killed
+    # The commander's state, under the names the rest of the agent (and older
+    # tests) use.
+    _mode = property(lambda self: self._commander.mode,
+                     lambda self, v: setattr(self._commander, "mode", v))
+    _mode_since = property(lambda self: self._commander.mode_since,
+                           lambda self, v: setattr(self._commander, "mode_since", v))
+    _confirm_at = property(lambda self: self._commander.confirm_at,
+                           lambda self, v: setattr(self._commander, "confirm_at", v))
+    _cheese_since = property(lambda self: self._commander.cheese_since,
+                             lambda self, v: setattr(self._commander, "cheese_since", v))
+    _retreated_at = property(lambda self: self._commander.retreated_at,
+                             lambda self, v: setattr(self._commander, "retreated_at", v))
+    _retreat_army = property(lambda self: self._commander.retreat_army,
+                             lambda self, v: setattr(self._commander, "retreat_army", v))
+    _attacks = property(lambda self: self._commander.attacks)
 
     def _break_stall(self, view) -> None:
         """An attack that kills nothing for ``ATTACK_STALL_SECONDS`` with no
