@@ -2109,7 +2109,7 @@ def test_a_finished_refinery_goes_to_the_expansion_even_right_after_asking():
     yard = _EXP_BASE + [{"id": 80, "type": "fact", "x": 20, "y": 6}]
     e.done[0]["asked_at"] = 330.0                                         # asked 10 s ago: throttled
     v = _exp_view(t=340.0, buildings=yard, production=[{"item": "proc", "queue": "Building", "ready": True}])
-    assert e.refinery_ore(v) is None and e.needs_refinery(v) == (24, 6)
+    assert e.refinery_ore(v) is None and e.refinery_job(v)["ore"] == (24, 6)
     (order,) = [o for o in executor.plan(v, Mode.BUILD, expansion=e) if o["cmd"] == "place"]
     x, y = order["at"]
     assert (x - 24) ** 2 + (y - 6) ** 2 < (x - 4) ** 2 + (y - 4) ** 2     # at the expansion, not home
@@ -2430,30 +2430,6 @@ def _expansion_needing_refinery():
     return e
 
 
-def test_a_refinery_the_engine_moved_home_marks_its_spot_off_limits():
-    e, v = _expansion_needing_refinery(), _mid_view()
-    job = e.refinery_job(v)
-    assert job is e.done[0]
-    spot = buildplan._beside_ore(v, job["ore"], "proc", near=job["site"])
-    e.placed_refinery(v, job, spot)
-    moved = _mid_view([{"id": 99, "type": "proc", "x": 16, "y": 24}])          # came up beside the main yard
-    e.update(dataclasses.replace(moved, game_seconds=v.game_seconds + 1), Mode.BUILD)
-    assert e.refineries_moved == 1 and spot in job["avoid"]
-    again = buildplan._beside_ore(moved, job["ore"], "proc", near=job["site"], avoid=job["avoid"])
-    assert again is not None and not set(buildplan._cells("proc", again)) & job["avoid"]
-
-
-def test_a_refinery_that_lands_where_asked_teaches_nothing():
-    e, v = _expansion_needing_refinery(), _mid_view()
-    job = e.refinery_job(v)
-    spot = buildplan._beside_ore(v, job["ore"], "proc", near=job["site"])
-    e.placed_refinery(v, job, spot)
-    landed = _mid_view([{"id": 99, "type": "proc", "x": spot[0], "y": spot[1]}])
-    e.update(dataclasses.replace(landed, game_seconds=v.game_seconds + 1), Mode.BUILD)
-    assert e.refineries_moved == 0 and "avoid" not in job
-    assert e.refinery_job(landed) is None                                      # served now
-
-
 def test_a_refinery_against_a_cliff_does_not_harvest_across_it():
     ore = _ore_patch(20, 16, 3, 3)                                             # just across the cliff (y = 13)
     blds = [{"id": 10, "type": "fact", "x": 4, "y": 4}, {"id": 13, "type": "proc", "x": 20, "y": 10}]
@@ -2609,12 +2585,6 @@ def test_a_big_hunting_army_sweeps_several_points_at_once():
     assert len({u for x in o for u in x["units"]}) == 18
 
 
-def test_an_expansion_whose_refineries_keep_landing_at_home_is_given_up():
-    e, v = _expansion_needing_refinery(), _mid_view()
-    e.done[0]["moved"] = C.EXPAND_REFINERY_MAX_MOVES
-    assert e.refinery_job(v) is None and e.needs_refinery(v) is None and e.refinery_ore(v) is None
-
-
 # -- fixing b7fcbd4e's mistakes: no early trade, guard the harvesters, never walk away under fire, sell to recover
 
 def test_no_all_in_before_the_economy_is_up_even_against_a_small_seen_army():
@@ -2684,16 +2654,6 @@ def test_a_grown_building_skips_a_slot_with_units_on_it():
     tank = [{"id": 30, "type": "1tnk", "x": first[0], "y": first[1], "hp": 100}]
     second = buildplan.grow_spot(_view(buildings=blds, units=tank), (1.0, 0.0), "powr")
     assert second is not None and second != first
-
-
-def test_a_moved_expansion_refinery_is_logged_with_where_it_landed():
-    e, v = _expansion_needing_refinery(), _mid_view()
-    job = e.refinery_job(v)
-    spot = buildplan._beside_ore(v, job["ore"], "proc", near=job["site"])
-    e.placed_refinery(v, job, spot)
-    moved = _mid_view([{"id": 99, "type": "proc", "x": 16, "y": 24}])
-    e.update(dataclasses.replace(moved, game_seconds=v.game_seconds + 1), Mode.BUILD)
-    assert e.moves == [{"t": round(v.game_seconds + 1), "asked": list(spot), "landed": [16, 24]}]
 
 
 # -- broke but trading even: expand again sooner (a1329ceb, b7fcbd4e: no second expansion by 10:00) --
@@ -3344,3 +3304,17 @@ def test_a_spot_with_units_beside_it_loses_to_a_clear_one():
     truck = [{"id": 40, "type": "harv", "x": first[0] - 1, "y": first[1], "hp": 100}]   # beside, not on it
     second = buildplan.grow_spot(_view(buildings=blds, units=truck), (1.0, 0.0), "powr")
     assert second != first
+
+
+# -- step 6: scouts sweep the hunter's search points ----------------------------------------------
+
+def test_while_hunting_each_free_scout_sweeps_its_own_search_point():
+    corps = ScoutCorps()
+    corps.roles = {"left": 30, "right": 31, "p0": 32}
+    corps._circling = {"right"}                                              # out on a base check
+    corps._route = {"right": [(40, 40)]}
+    scouts = [{"id": 30 + i, "type": "e1", "x": 10 + 10 * i, "y": 10, "hp": 100, "idle": True} for i in range(3)]
+    o = corps.orders(_view(_t=900.0, units=scouts), search=[(12, 30), (35, 12), (40, 40)])
+    sweeps = {x["units"][0]: tuple(x["to"]) for x in o if x["units"][0] in (30, 32)}
+    assert sweeps == {30: (12, 30), 32: (35, 12)}                            # nearest, one each
+    assert any(x["units"] == [31] and tuple(x["to"]) == (40, 40) for x in o)   # the circling scout keeps its route

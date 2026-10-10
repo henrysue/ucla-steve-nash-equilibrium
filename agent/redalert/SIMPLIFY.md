@@ -21,7 +21,10 @@ dozen match logs.
   (`tests/test_redalert_maps.py`, fixtures from Sidestep and Trapped). Lanes
   and the massing point are cached per view (about 100 ms down to 22 ms for
   all roles).
-- [ ] Step 6: merge the scouting and the hunt; re-cut the expansion code.
+- [x] Step 5 follow-up: truck roads kept clear, units beside a spot count;
+  fixtures corrected (logs hold top-left cells since the centre-cell fix).
+- [x] Step 6: scouts sweep the hunter's search points; the expansion's
+  relocation safety nets and the duplicate refinery query are gone.
 - [ ] Step 7: models-off A/B (needs games), then keep or remove.
 - [ ] Step 8: constants, the match log, the remaining per-view caches.
 - [ ] Step 9: test cleanup (list the obsolete tests, then delete them).

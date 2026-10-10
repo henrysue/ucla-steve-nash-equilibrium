@@ -107,10 +107,14 @@ class ScoutCorps:
                 self._start_circuit(view, role)
                 self._last_check = view.game_seconds
 
-    def orders(self, view: View) -> list[dict]:
+    def orders(self, view: View, search: list | None = None) -> list[dict]:
+        """``search``: the hunter's unchecked search points while we hunt the
+        enemy's last buildings — each scout not on a circuit takes one."""
         out: list[dict] = []
         units = {u.id: u for u in view.units if u.id is not None}
         visit_done = False
+        if search:
+            out += self._sweep(view, units, list(search))
         for role, uid in self.roles.items():
             u = units.get(uid)
             if u is None or u.cell is None:
@@ -118,6 +122,8 @@ class ScoutCorps:
             if role in self._circling:
                 out += self._circuit_orders(view, role, u)
                 continue
+            if search:
+                continue                             # sweeping (above)
             if self.visit is not None and not visit_done:
                 visit_done = True
                 if dist2(u.cell, self.visit) <= 36:
@@ -194,6 +200,21 @@ class ScoutCorps:
         return [_reachable(view, q) for q in points]
 
     # -- internals ---------------------------------------------------------------
+
+    def _sweep(self, view: View, units: dict, points: list) -> list[dict]:
+        """Each free scout to the nearest search point no other scout took."""
+        out = []
+        free = [units[uid] for role, uid in self.roles.items()
+                if role not in self._circling and uid in units and units[uid].cell is not None]
+        for u in sorted(free, key=lambda u: u.id):
+            if not points:
+                break
+            p = min(points, key=lambda p: dist2(p, u.cell))
+            points.remove(p)
+            if u.idle or self._sent.get(u.id) != p:
+                self._sent[u.id] = p
+                out.append(orders.move([u.id], list(p)))
+        return out
 
     def _start_circuit(self, view: View, role: str) -> None:
         side = 1 if role in ("left", "p0") else -1

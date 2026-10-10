@@ -189,13 +189,13 @@ def placement_orders(
     view: View, defense_at: tuple[int, int] | None = None, expansion_ore: tuple[int, int] | None = None,
     expansion_defense: tuple[int, int] | None = None, depleted: frozenset = frozenset(),
     home: tuple[int, int] | None = None, expansion_site: tuple[int, int] | None = None,
-    avoid: frozenset = frozenset(), clearing: dict | None = None,
+    clearing: dict | None = None,
 ) -> list[dict]:
     """Place every finished-but-unplaced building (ready in the queue), at a
     spot chosen by role (:func:`placement_cell`). ``defense_at`` (the model
     advisor's pick) steers which side a defense goes on. ``expansion_site``
     keeps the expansion's refinery among that expansion's own buildings (never
-    at home), off the ``avoid`` cells where the engine moved one before.
+    at home).
 
     Our units standing on the chosen spot are moved off it first (OpenRA
     moves a building placed over units to the main yard), and the placement
@@ -210,7 +210,7 @@ def placement_orders(
             if item == C.REFINERY and expansion_ore is not None:
                 # The expansion's refinery: beside its ore (never on it), else
                 # grown from the expansion's own buildings toward the ore.
-                at = (_beside_ore(view, expansion_ore, item, near=expansion_site, avoid=avoid)
+                at = (_beside_ore(view, expansion_ore, item, near=expansion_site)
                       or _crawl_from_nearest(view, expansion_ore, item, near=expansion_site))
             elif item == C.REFINERY:
                 # Beside a field with room (not a mined-out or full one), else
@@ -609,14 +609,13 @@ def grow_spot(view: View, bearing, item: str, near=None, skip_types=()) -> tuple
     return _pick(view, item, spots, score)
 
 
-def _beside_ore(view: View, ore, item: str, near=None, avoid: frozenset = frozenset()) -> tuple[int, int] | None:
+def _beside_ore(view: View, ore, item: str, near=None) -> tuple[int, int] | None:
     """A legal refinery spot (:func:`legal_spots`) nearest ``ore`` whose
     trucks can WALK to that field's ore in ``REFINERY_ORE_WALK_STEPS`` — not
     across a cliff; with no walkable spot, the nearest spot anyway (better a
     refinery than none). ``near``: only beside one expansion's buildings (a
     spot beside the main base put the expansion's refinery at home — match
-    0561274e). ``avoid``: cells no footprint may cover (where the engine moved
-    a refinery before)."""
+    0561274e)."""
     from .terrain import field_cells, steps_from_rect, walk_distances
 
     if ore is None:
@@ -624,7 +623,7 @@ def _beside_ore(view: View, ore, item: str, near=None, avoid: frozenset = frozen
     field = field_cells(view, ore, C.EXPAND_CLUSTER_CELLS * 1.5) or [ore]
     walk = walk_distances(view, field, C.REFINERY_ORE_WALK_STEPS + 2)
     nw, nh = _footprint(item)
-    spots = [s for s in legal_spots(view, item, near) if not (avoid and any(c in avoid for c in _cells(item, s)))]
+    spots = legal_spots(view, item, near)
 
     def score(spot):
         steps = steps_from_rect(walk, _rect(item, spot))

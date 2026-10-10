@@ -61,11 +61,6 @@ class Expansion:
         self._even = False                          # trades about even or better (last view)
         self._last_done_at: float | None = None
         self._timed_out = False
-        # The expansion refinery just ordered: {"entry", "spot", "t", "known"
-        # (refinery ids then)}, to see whether the engine moved it.
-        self._placing: dict | None = None
-        self.refineries_moved = 0
-        self.moves: list[dict] = []    # {"t", "asked", "landed"}: each expansion refinery the engine moved (log)
 
     # -- what other parts read -----------------------------------------------
 
@@ -116,34 +111,12 @@ class Expansion:
         return None
 
     def refinery_job(self, view: View) -> dict | None:
-        """For PLACEMENT: the first expansion with no refinery yet, ignoring
-        the request throttle ({"site", "ore", ...}, with "avoid" cells once
-        the engine has moved one of its refineries)."""
+        """For PLACEMENT: the first expansion with no refinery serving its ore
+        yet ({"site", "ore", ...}), ignoring the request throttle."""
         return next((d for d in self.done if self._wants_refinery(view, d)), None)
 
     def _wants_refinery(self, view: View, d: dict) -> bool:
-        """No refinery serves this expansion yet, and the engine hasn't moved
-        ``EXPAND_REFINERY_MAX_MOVES`` of its refineries home already (each
-        one was 1400 spent at home: match b7fcbd4e moved four)."""
-        return d.get("moved", 0) < C.EXPAND_REFINERY_MAX_MOVES and not self._served(view, d["ore"])
-
-    def placed_refinery(self, view: View, job: dict, spot) -> None:
-        """The executor ordered ``job``'s refinery at ``spot``: watch where it lands."""
-        if spot is None:
-            return
-        p = self._placing
-        if p is None or p["entry"] is not job or view.game_seconds - p["t"] > C.REFINERY_PLACE_WAIT_SECONDS:
-            known = {b.id for b in view.buildings if b.type == C.REFINERY}
-            self._placing = {"entry": job, "spot": tuple(spot), "t": view.game_seconds, "known": known}
-        else:
-            p["spot"] = tuple(spot)
-
-    def needs_refinery(self, view: View) -> tuple[int, int] | None:
-        """For PLACEMENT: the ore of an expansion with no refinery yet,
-        ignoring the request throttle. (Using the throttled check here sent
-        every finished refinery to the main base — match 4bc1ee71: 7
-        refineries, none at the expansion.)"""
-        return next((d["ore"] for d in self.done if self._wants_refinery(view, d)), None)
+        return not self._served(view, d["ore"])
 
     def served(self, view: View, ore) -> bool:
         """Whether a refinery of ours serves this ore (for the match log)."""
@@ -182,7 +155,6 @@ class Expansion:
         self._track_depletion(view)
         self._track_money(view)
         self._track_refinery_requests(view)
-        self._track_moved_refinery(view)
         self._track_defense_requests(view)
         if self.state == "idle":
             if (len(self.done) < C.EXPAND_MAX_EXPANSIONS and self._failures < C.EXPAND_MAX_FAILURES
@@ -341,33 +313,6 @@ class Expansion:
                     d["asked_at"] is None or view.game_seconds - d["asked_at"] >= C.EXPAND_REFINERY_RETRY_SECONDS):
                 d["asked_at"] = view.game_seconds
                 return
-
-    def _track_moved_refinery(self, view: View) -> None:
-        """OpenRA quietly moves a building it can't put at the asked spot
-        (terrain the map picture doesn't show, out of reach) next to the main
-        yard. When the expansion refinery we ordered comes up elsewhere, mark
-        that spot (and a cell around it) off-limits for the next one."""
-        p = self._placing
-        if p is None:
-            return
-        new = [b for b in view.buildings
-               if b.type == C.REFINERY and b.cell is not None and b.id not in p["known"]]
-        if not new:
-            if view.game_seconds - p["t"] > C.REFINERY_PLACE_WAIT_SECONDS:
-                self._placing = None   # never placed (no money, cancelled): nothing learned
-            return
-        self._placing = None
-        sx, sy = p["spot"]
-        landed = min(new, key=lambda b: dist2(b.cell, p["spot"]))
-        if dist2(landed.cell, p["spot"]) <= C.REFINERY_MOVED_CELLS ** 2:
-            return
-        self.refineries_moved += 1
-        self.moves = (self.moves + [{"t": round(view.game_seconds), "asked": list(p["spot"]),
-                                     "landed": list(landed.cell)}])[-5:]
-        p["entry"]["moved"] = p["entry"].get("moved", 0) + 1
-        avoid = set(p["entry"].get("avoid", ()))
-        avoid.update((x, y) for x in range(sx - 1, sx + 4) for y in range(sy - 1, sy + 4))
-        p["entry"]["avoid"] = frozenset(avoid)
 
     def _served(self, view: View, ore) -> bool:
         """A refinery of ours whose trucks can walk to this ore."""

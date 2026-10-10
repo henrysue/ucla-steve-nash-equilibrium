@@ -159,8 +159,6 @@ class RedAlertAgent:
             # how often the engine moved an expansion refinery off its spot.
             "expansion_ores": [d["ore"] for d in self._expansion.done],
             "expansions_served": [self._expansion.served(view, d["ore"]) for d in self._expansion.done],
-            "refineries_moved": self._expansion.refineries_moved,
-            "refinery_moves": self._expansion.moves,
             "expand_push": self._expansion._push(view.game_seconds),
             "harvesters_by_field": {f"{f[0]},{f[1]}": n for f, n in self._harvest.last_counts.items()},
             "depleted_fields": sorted(f"{f[0]},{f[1]}" for f in self._harvest.depleted()),
@@ -184,7 +182,9 @@ class RedAlertAgent:
             sell = None
         planned = ([sell] if sell else []) + executor.plan(
             view, self._mode,
-            scout_id=self._patrol.unit_id, scout_orders=self._patrol.orders(view) + self._patrol.production(view),
+            scout_id=self._patrol.unit_id,
+            scout_orders=(self._patrol.orders(view, self._hunter.targets(view, len(self._patrol.roles))
+                                              if hunting else None) + self._patrol.production(view)),
             raid_ids=[*self._raid.unit_ids, *self._garrison.unit_ids, *micro_ids,
                       *self._patrol.unit_ids],
             raid_orders=(self._raid_orders(view)

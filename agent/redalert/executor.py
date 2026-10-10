@@ -48,14 +48,10 @@ def plan(
     place_def = expansion.needs_defense(view) if expansion is not None else None
     placed = buildplan.placement_orders(
         view, getattr(advice, "defense_at", None), job["ore"] if job else None, place_def, depleted, home,
-        expansion_site=job["site"] if job else None, avoid=job.get("avoid", frozenset()) if job else frozenset(),
-        clearing=clearing)
+        expansion_site=job["site"] if job else None, clearing=clearing)
     # Units stepping off a building's spot sit out the army's orders this view
     # (the army code would walk them straight back).
     clearing_ids = {i for o in placed if o.get("cmd") in ("move", "attack_move") for i in o.get("units") or ()}
-    if job is not None:   # watch where the engine actually puts it
-        spot = next((o.get("at") for o in placed if o.get("cmd") == "place" and o.get("item") == C.REFINERY), None)
-        expansion.placed_refinery(view, job, spot)
     out += placed
     out += buildplan.next_build_orders(view, exp_ore, depleted, rusher=rusher)  # advance the build order / power
     out += expansion.orders(view) if expansion is not None else []
