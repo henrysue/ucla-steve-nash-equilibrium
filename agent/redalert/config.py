@@ -103,13 +103,18 @@ LANE_KEEP_CLEAR_CELLS = 14         # ...for this many cells
 EXIT_CLEAR_ROWS = 2                # rows kept clear in front of barracks / war factories
 # (width, height), top-left anchored; the rules give no sizes. Power plants,
 # barracks and the dome carry a bib row below (2x3): placements touching it
-# fail (placement audit, match fd507a58).
+# fail (placement audit, match fd507a58). The refinery is 3x4: every
+# refinery whose 4th row lay on ore was moved home (match e2f73d65: all six
+# expansion refineries, 8400 spent in the main base).
 FOOTPRINTS = {
     "fact": (3, 3), "powr": (2, 3), "apwr": (3, 3), "tent": (2, 3), "barr": (2, 3),
-    "proc": (3, 3), "weap": (3, 3), "fix": (3, 3), "silo": (1, 1), "dome": (2, 3), "kenn": (1, 1),
+    "proc": (3, 4), "weap": (3, 3), "fix": (3, 3), "silo": (1, 1), "dome": (2, 3), "kenn": (1, 1),
     "pbox": (1, 1), "gun": (1, 1), "ftur": (1, 1), "tsla": (1, 2),
 }
 DEFAULT_FOOTPRINT = (2, 2)
+# The reported (centre) cell's offset from the top-left, where it isn't
+# (w // 2, h // 2): every refinery that landed where asked was reported 1 down.
+CENTRE_OFFSETS = {"proc": (1, 1)}
 
 # -- defenses and repairs ----------------------------------------------------------------------
 STANDING_DEFENSES = 1              # once the war factory is up
@@ -127,6 +132,7 @@ CHEESE_NEAR_BASE_CELLS = 18        # enemies this close to any of our yards are 
 CHEESE_MIN_ENEMY_UNITS = 2
 CHEESE_EXPIRE_SECONDS = 25.0       # after the threat was last seen
 CHEESE_WINDOW_SECONDS = 180.0      # a threat before this is a rush (rifle spam); later, DEFEND_BASE
+OUTGUNNED_MIN_VALUE = 1500         # enemy units worth this and more than ours: no MCV or extra refinery (units first)
 BASE_DEFEND_MIN_VALUE = 1500       # later, the army comes home only for a threat worth this...
 BASE_DEFEND_HOME_RATIO = 1.0       # ...and more than this x what already defends the base (units at home, turrets)
 BASE_DEFEND_EXPIRE_SECONDS = 10.0  # ...and goes back out this soon after the base is clear

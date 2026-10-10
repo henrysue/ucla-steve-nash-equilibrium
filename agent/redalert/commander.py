@@ -40,10 +40,18 @@ class Commander:
         self.attack_army = 0.0                    # army value when the current attack began
         self.attacks = 0
         self._trades: list[tuple[float, float, float]] = []   # (game seconds, kills, deaths)
+        self._building_ids: set | None = None
 
     def track_threat(self, view: View) -> None:
-        """Update the threat window (call first each view)."""
+        """Update the threat window (call first each view). Losing a building
+        opens it too, whatever the threat's size: match e2f73d65 lost seven
+        buildings in 90 s and never left BUILD (the attackers it could see
+        never outweighed the units and turrets "at home")."""
         self.cheese_since = brain.update_cheese_since(view, self.cheese_since)
+        ids = {b.id for b in view.buildings if b.id is not None and not b.wreck}
+        if self._building_ids is not None and self._building_ids - ids and view.game_seconds > 0:
+            self.cheese_since = view.game_seconds
+        self._building_ids = ids
 
     def decide(self, view: View, *, model_pref: Mode | None = None, scout_id: int | None = None,
                squad_ids: frozenset = frozenset(), hunting: bool = False, alarm: bool = False,

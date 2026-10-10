@@ -35,6 +35,7 @@ from __future__ import annotations
 
 from . import config as C
 from . import orders
+from .brain import outgunned
 from .modes import DEFENSIVE, Mode
 from .observe import View, dist2, enemy_spawn_guess
 
@@ -349,6 +350,7 @@ class Expansion:
             and _count(view, C.REFINERY) >= C.EXPAND_MIN_REFINERIES
             and view.has_building(C.WAR_FACTORY)
             and view.army_value >= C.EXPAND_MIN_ARMY_VALUE
+            and not outgunned(view)
             and mode not in DEFENSIVE and mode is not Mode.RETREAT
             and (view.remaining_seconds is None or view.game_seconds <= C.EXPAND_LAST_START_SECONDS)
         )

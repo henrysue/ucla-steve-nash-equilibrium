@@ -21,7 +21,7 @@ import pytest
 
 from agent.redalert import buildplan, scout, terrain
 from agent.redalert import config as C
-from agent.redalert.observe import read
+from agent.redalert.observe import centre_offset, read
 from agent.redalert.scouting import ScoutCorps
 
 FIXTURES = sorted(pathlib.Path(__file__).parent.glob("fixtures/redalert/*.json"))
@@ -60,8 +60,8 @@ def _as_reported(fx: dict, i: int, kind: str, x: int, y: int) -> dict:
     logs written after the centre-cell fix hold top-left cells ("cells":
     "top_left"); older ones the reported cells."""
     if fx.get("cells") == "top_left":
-        w, h = C.FOOTPRINTS.get(kind, C.DEFAULT_FOOTPRINT)
-        x, y = x + w // 2, y + h // 2
+        dx, dy = centre_offset(kind)
+        x, y = x + dx, y + dy
     return {"id": i + 1, "type": kind, "x": x, "y": y}
 
 

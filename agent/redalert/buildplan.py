@@ -100,8 +100,13 @@ def next_build_orders(view: View, expansion_ore: tuple[int, int] | None = None,
         if dome:
             return [orders.build(dome)]
 
+    # Past the build order, no more refineries while outgunned: units first.
+    from .brain import outgunned
+    short = outgunned(view)
+
     # Interrupt 2c: more refineries over time (each comes with a harvester).
-    if money >= C.REFINERY_ADD_FUNDS and _count_built_and_queued(view, (C.REFINERY,)) < refinery_target(view):
+    if (not short and money >= C.REFINERY_ADD_FUNDS
+            and _count_built_and_queued(view, (C.REFINERY,)) < refinery_target(view)):
         proc = _available(view, C.REFINERY)
         # Only where a field has room for one more (MAX_REFINERIES_PER_FIELD);
         # far ore doesn't rule it out when we're ahead: the base crawls toward it.
@@ -114,7 +119,7 @@ def next_build_orders(view: View, expansion_ore: tuple[int, int] | None = None,
     # refinery, not more trucks ("never spam trucks without drop-off points").
     refineries = sum(1 for b in view.buildings if b.type == C.REFINERY and not b.wreck)
     harvesters = len(view.units_of(C.HARVESTER))
-    if refineries and harvesters >= C.MAX_HARVESTERS_PER_REFINERY * refineries \
+    if not short and refineries and harvesters >= C.MAX_HARVESTERS_PER_REFINERY * refineries \
             and open_ore(view, depleted, radius=None) is not None:
         proc = _available(view, C.REFINERY)
         if proc and not _count_built_and_queued(view, (C.REFINERY,)) > refineries:
@@ -134,6 +139,18 @@ def next_build_orders(view: View, expansion_ore: tuple[int, int] | None = None,
     if kennel and view.has_building(C.WAR_FACTORY) and not _count_built_and_queued(view, (C.KENNEL,)):
         return [orders.build(kennel)]
     return []
+
+
+def opening_done(view: View) -> bool:
+    """Every step of the standard build order stands (built, not queued)."""
+    have: dict = {}
+    for step in C.BUILD_ORDER:
+        ids = _ids(step)
+        have[ids] = have.get(ids, 0) + 1
+        built = sum(1 for b in view.buildings if b.type in ids and not b.wreck)
+        if built < have[ids]:
+            return False
+    return True
 
 
 def build_reserve(view: View) -> float:

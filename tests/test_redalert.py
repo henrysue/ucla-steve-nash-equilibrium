@@ -52,9 +52,9 @@ def _raw(**over):
 def _as_reported(b):
     if not isinstance(b, dict) or "x" not in b or "y" not in b:
         return b
-    from agent.redalert.config import DEFAULT_FOOTPRINT, FOOTPRINTS
-    w, h = FOOTPRINTS.get(str(b.get("type")).lower(), DEFAULT_FOOTPRINT)
-    return {**b, "x": b["x"] + w // 2, "y": b["y"] + h // 2}
+    from agent.redalert.observe import centre_offset
+    dx, dy = centre_offset(str(b.get("type")).lower())
+    return {**b, "x": b["x"] + dx, "y": b["y"] + dy}
 
 
 def _view(**over):
@@ -3280,6 +3280,7 @@ def test_the_advisor_sees_what_the_rules_see():
             pass
 
     agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0, advisor_factory=lambda log, on_advice: Spy())
+    agent._opening_done = True
     agent.choose_action(_state(_t=300.0, buildings=BASE, units=_raid_army(2, 6)), CTX)
     for key in ("mode", "confirming_attack", "massing_point", "our_unit_value", "enemy_unit_value_known",
                 "enemy_turrets_known", "raid_squad", "scouts", "intel"):
@@ -3370,3 +3371,61 @@ def test_units_clearing_a_spot_get_no_other_order_in_the_batch():
         placed=[], clearing_ids={41})
     assert out == [{"cmd": "attack_move", "units": [40], "to": [20, 20]}, {"cmd": "harvest", "units": [40]},
                    {"cmd": "attack_move", "units": [42], "to": [30, 30]}]
+
+
+# -- match e2f73d65: blue's comeback ------------------------------------------
+
+
+def test_the_refinery_is_three_by_four_and_reported_one_cell_in():
+    from agent.redalert.observe import centre_offset
+    assert C.FOOTPRINTS["proc"] == (3, 4) and centre_offset("proc") == (1, 1)
+    v = _view(buildings=[{"id": 10, "type": "proc", "x": 20, "y": 20}])
+    assert v.buildings[0].cell == (20, 20)
+
+
+def test_army_value_leaves_out_the_harvesters_the_server_counts():
+    v = _view(units=_harvs(3) + [{"id": 40, "type": "e1", "x": 6, "y": 6}],
+              military={"army_value": 3 * 1100 + 100})
+    assert v.army_value == 100
+
+
+def _saturated_view(enemies=()):
+    built = _ECON_BASE + [{"id": 15, "type": "powr"}, {"id": 16, "type": "powr"}, {"id": 17, "type": "fix"},
+                          {"id": 18, "type": "tent"}, {"id": 19, "type": "proc"}, {"id": 20, "type": "proc"}]
+    return _view(buildings=built, units=_harvs(9, start=30), economy={"power_provided": 300, "power_drained": 100},
+                 visible_enemies=list(enemies))
+
+
+def test_no_refinery_while_outgunned_units_first(monkeypatch):
+    monkeypatch.setattr(buildplan, "open_ore", lambda *a, **k: (30, 10))   # a field with room
+    assert any(o.get("item") == "proc" for o in buildplan.next_build_orders(_saturated_view()))
+    v = _saturated_view([{"id": 900 + i, "type": "e3", "x": 30, "y": 30} for i in range(8)])
+    assert brain.outgunned(v)
+    assert not any(o.get("item") == "proc" for o in buildplan.next_build_orders(v))
+
+
+def test_a_lost_building_opens_the_threat_window():
+    cmd = Commander()
+    cmd.track_threat(_view(_t=400.0, buildings=BASE + [{"id": 12, "type": "proc"}]))
+    assert cmd.cheese_since is None
+    cmd.track_threat(_view(_t=401.0, buildings=BASE))
+    assert cmd.cheese_since == 401.0
+
+
+def test_the_opening_is_the_build_orders_unless_a_rush_is_read():
+    calls = []
+
+    class Spy:
+        def poll(self, view, situation):
+            calls.append(view.game_seconds)
+            return None
+        def close(self):
+            pass
+
+    agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0, advisor_factory=lambda log, on_advice: Spy())
+    agent.choose_action(_state(_t=100.0, buildings=BASE), CTX)
+    assert calls == []                                   # build order not done: the advisor waits
+    done = [{"id": 10 + i, "type": t} for i, t in enumerate(
+        ("fact", "powr", "tent", "proc", "proc", "powr", "weap", "proc", "fix"))]
+    agent.choose_action(_state(_t=300.0, buildings=done), CTX)
+    assert calls == [300.0]

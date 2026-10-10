@@ -206,6 +206,15 @@ def enemy_unit_value(view: View) -> float:
     return sum(view.unit_costs.get(a.type, C.DEFAULT_UNIT_COST) for a in seen.values())
 
 
+def outgunned(view: View) -> bool:
+    """The enemy units we know of are worth ``OUTGUNNED_MIN_VALUE`` and more
+    than ours: units come before an MCV or another refinery (match e2f73d65:
+    red bought a fourth MCV and three refineries with 7 fighters left, and
+    blue's 25 walked through its base)."""
+    enemy = enemy_unit_value(view)
+    return enemy >= C.OUTGUNNED_MIN_VALUE and our_unit_value(view) < enemy
+
+
 def can_break_defenses(view: View) -> bool:
     """No ground turrets guard the attack target, or our army can take them:
     ``INFANTRY_PER_DEFENSE`` infantry per turret (``INFANTRY_MASS_MIN`` at

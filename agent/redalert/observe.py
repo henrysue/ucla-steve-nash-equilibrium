@@ -93,8 +93,14 @@ def _top_left(b: Actor) -> Actor:
     out, past OpenRA's adjacency limit, and the engine moved it home."""
     if b.cell is None:
         return b
-    w, h = C.FOOTPRINTS.get(b.type, C.DEFAULT_FOOTPRINT)
-    return replace(b, cell=(b.cell[0] - w // 2, b.cell[1] - h // 2))
+    dx, dy = centre_offset(b.type)
+    return replace(b, cell=(b.cell[0] - dx, b.cell[1] - dy))
+
+
+def centre_offset(kind: str) -> tuple[int, int]:
+    """Where the server reports a building, from its top-left cell."""
+    w, h = C.FOOTPRINTS.get(kind, C.DEFAULT_FOOTPRINT)
+    return C.CENTRE_OFFSETS.get(kind, (w // 2, h // 2))
 
 
 @dataclass(frozen=True)
@@ -231,9 +237,9 @@ def read(raw: dict, game_config: dict | None = None) -> View:
         base_center=_cell(obs.get("base_center")),
         spawns=spawns,
         bounds=bounds_t,
-        # The live observation may not report army values; when it doesn't,
-        # price the actors we can see from the rules' unit costs. Without this
-        # our army reads 0 and the brain never leaves BUILD.
+        # Priced from the actors themselves, combat units only: the server's
+        # army_value counts harvesters (match e2f73d65: "13150" was 10
+        # harvesters and 7 fighters, so the rules saw an army that wasn't there).
         army_value=_mil_value(mil, ("army_value", "value"), units, costs),
         enemy_army_value=_mil_value(mil, ("visible_enemy_value", "enemy_value"), enemy_units, costs),
         kills_cost=_num(mil.get("kills_cost")),
@@ -393,13 +399,15 @@ def _unit_costs(rules: dict) -> dict[str, float]:
 
 
 def _mil_value(mil: dict, keys: tuple[str, ...], actors: list[Actor], costs: dict[str, float]) -> float:
-    """The server's figure when it sends one, else the summed cost of the
-    combat actors we can see (harvesters and the MCV excluded)."""
+    """Combat value only: the server's figure less the harvesters and MCVs
+    it counts, else the summed cost of the combat actors we can see."""
+    cost = lambda a: costs.get(a.type, C.KNOWN_COSTS.get(a.type, C.DEFAULT_UNIT_COST))  # noqa: E731
+    economy = set(C.HARVESTER) | {C.MCV}
     for key in keys:
         if key in mil:
-            return _num(mil.get(key))
-    skip = set(C.HARVESTER) | {C.MCV}
-    return sum(costs.get(a.type, C.DEFAULT_UNIT_COST) for a in actors if a.type not in skip and not a.wreck)
+            trucks = sum(cost(a) for a in actors if a.type in economy and not a.wreck)
+            return max(0.0, _num(mil.get(key)) - trucks)
+    return sum(cost(a) for a in actors if a.type not in economy and not a.wreck)
 
 
 def _empty() -> View:

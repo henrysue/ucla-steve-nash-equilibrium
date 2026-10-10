@@ -59,6 +59,7 @@ class RedAlertAgent:
         self._log = log
         self._clock = clock
         self._commander = Commander()   # the army's one decision each view (commander.py)
+        self._opening_done = False      # the standard build order stands (buildplan.opening_done)
         # The batch play_action answers next; refused order key -> blocked
         # until (clock); army (cmd, destination) -> (last sent, unit ids).
         self._last_sent: list[dict] = []
@@ -118,7 +119,11 @@ class RedAlertAgent:
         self._intel.update(view)
         self._patrol.update(view, taken={*self._raid.unit_ids, *self._garrison.unit_ids})
         threat = self._patrol.alarm(view) or self._intel.rushing(view)
-        advice = self._poll_advisor(view)
+        # The opening is the standard build order's: the advisor is consulted
+        # once it stands, or sooner if a rush is read or the base is attacked.
+        self._opening_done = self._opening_done or buildplan.opening_done(view)
+        advice = (self._poll_advisor(view)
+                  if self._opening_done or threat or self._commander.cheese_since is not None else None)
         hunting = self._hunter.hunting(view)
         self._break_stall(view)
         # testrush (TEST ONLY): against ourselves in a test match, one seat rushes.
