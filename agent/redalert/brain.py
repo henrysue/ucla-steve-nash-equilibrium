@@ -65,7 +65,8 @@ def choose_mode(
     # for the win. No protect-lead, no model hold (matches 0561274e and
     # 654f1b2e went to the time limit this way, the latter 59k to 26k with
     # the enemy down to a 400 army and no harvesters).
-    if (hunting or _dominant(view)) and _has_real_army(view)             and view.army_value >= C.MODEL_HOLD_MAX_EDGE * view.enemy_army_value:
+    if (hunting or _dominant(view)) and _has_real_army(view) \
+            and view.army_value >= C.MODEL_HOLD_MAX_EDGE * enemy_estimate(view):
         return Mode.ALL_IN
 
     # Safety rail 3: near the time limit and ahead -> protect the lead.
@@ -114,14 +115,14 @@ def choose_mode(
         can_attack = True
     policy_choice = Mode.ALL_IN if can_attack else Mode.BUILD
 
-    # The model may push an attack (with a real army, not while behind) or hold
-    # one back — but not when we clearly outnumber what we know of, or when
-    # behind at the end. It never overrides the safety rails above.
-    overwhelming = view.enemy_army_value > 0 and view.army_value >= C.MODEL_HOLD_MAX_EDGE * view.enemy_army_value
+    # The model may hold an attack back — but not when we clearly outnumber
+    # them, or when behind at the end. It can't push one the numbers don't
+    # support: its "attack" calls read the same fog-blind figures (08560d9b:
+    # "a strong army value lead" at 3900 vs a real 5000-6000). It never
+    # overrides the safety rails above.
+    overwhelming = view.army_value >= C.MODEL_HOLD_MAX_EDGE * enemy_estimate(view) > 0
     if model_pref is Mode.BUILD and not ((overwhelming or behind_late) and can_attack):
         return Mode.BUILD
-    if model_pref is Mode.ALL_IN and _has_real_army(view) and not cooling_down and regrown and not early:
-        return Mode.ALL_IN if edge >= 1.0 else Mode.BUILD
 
     return policy_choice
 
@@ -132,11 +133,22 @@ def _defend(view: View) -> Mode:
     return Mode.DEFEND_RUSH if view.game_seconds < C.CHEESE_WINDOW_SECONDS else Mode.DEFEND_BASE
 
 
+def enemy_estimate(view: View) -> float:
+    """The enemy army through the fog: the most of what we see or remember,
+    what we saw of it lately less our kills since (``enemy_army_peak``), and
+    — both sides start equal on similar incomes — ``ENEMY_PRIOR_SHARE`` x our
+    army adjusted by the trades (their losses are our kills). Match 08560d9b
+    attacked with 3900 "against 1400"; they had 5000-6000, and showed 4000
+    fifteen seconds before."""
+    prior = C.ENEMY_PRIOR_SHARE * (view.army_value + view.deaths_cost - view.kills_cost)
+    return max(view.enemy_army_value, view.enemy_army_peak, prior, 0.0)
+
+
 def _army_edge(view: View) -> float:
-    """Our army value over the enemy value we can see. Large when enemy unseen
-    (we assume we can push when nothing opposes us), small when outmatched."""
+    """Our army value over the estimated enemy army (:func:`enemy_estimate`).
+    Large when nothing is known of them, small when outmatched."""
     ours = view.army_value
-    theirs = view.enemy_army_value
+    theirs = enemy_estimate(view)
     if theirs <= 0:
         return float("inf") if ours > 0 else 0.0
     return ours / theirs
@@ -248,8 +260,9 @@ def must_attack(view: View) -> bool:
 def _overwhelming(view: View) -> bool:
     """Our army is at least MODEL_HOLD_MAX_EDGE x a KNOWN enemy army (an
     unseen enemy is not a beaten one: fog hides armies)."""
-    return (view.enemy_army_value > 0 and view.army_value >= C.MIN_ATTACK_ARMY_VALUE
-            and view.army_value >= C.MODEL_HOLD_MAX_EDGE * view.enemy_army_value)
+    theirs = enemy_estimate(view)
+    return (theirs > 0 and view.army_value >= C.MIN_ATTACK_ARMY_VALUE
+            and view.army_value >= C.MODEL_HOLD_MAX_EDGE * theirs)
 
 
 def _catching_up(view: View) -> bool:

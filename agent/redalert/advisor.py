@@ -75,8 +75,9 @@ semi-concave of groups, and attack-moves everywhere. A raid squad fights defende
 when outmatched, and joins the main army's fight as a second prong. Units at home kill small raids.
 
 YOUR DIRECTIVES (null or "default"/"auto" = let the engine decide):
-- posture: "attack" asks for an attack now: honored only with a real army, not right after a \
-retreat, not before 3:00 without a war factory, and only when our army at least matches theirs. \
+- posture: "attack" can't start an attack the numbers don't support: the engine attacks once our \
+army is 1.3x enemy.army_value_estimate (the fog hides most of their army; never judge by what \
+you happen to see). \
 "hold" keeps massing: ignored when we clearly outnumber them or are behind at the end. Use them \
 for judgment the numbers miss (their army is out of position, a counter-push is coming), not to \
 second-guess the obvious. Keep a posture 30+ seconds: flip-flopping marches the army out and back.
@@ -187,7 +188,8 @@ def build_prompt(view: View, situation: dict) -> dict:
             **situation,
         },
         "enemy": {
-            "army_value_estimate": round(view.enemy_army_value),
+            "army_value_seen": round(view.enemy_army_value),
+            "army_value_estimate": round(_estimate(view)),   # fog included: what the rules attack against
             "visible_units": [{"id": a.id, "type": a.type, "cell": list(a.cell)}
                               for a in view.enemy_units if a.cell is not None and not a.wreck][:20],
             "remembered_units": groups(view.known_enemy_units, 4),
@@ -307,3 +309,9 @@ def advisor_from_env(log: Callable[[str], None], on_advice=None) -> Advisor | No
             pass
     log(f"[redalert] advisor on: {provider!r}, every {interval or C.ADVISOR_INTERVAL_SECONDS:g} s")
     return Advisor(provider, log=log, interval=interval, on_advice=on_advice)
+
+
+def _estimate(view) -> float:
+    from .brain import enemy_estimate
+
+    return enemy_estimate(view)

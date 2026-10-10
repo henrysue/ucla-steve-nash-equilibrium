@@ -151,6 +151,9 @@ class View:
     # Cells of footprints the engine recently moved a building away from
     # (agent.py's placement audit): no candidate spot may cover them.
     failed_cells: frozenset = frozenset()
+    # The most enemy army we saw in the last ENEMY_PEAK_SECONDS, less what we
+    # killed since (agent.py): the fog hides most of it most of the time.
+    enemy_army_peak: float = 0.0
 
     # -- derived, cheap helpers ----------------------------------------------
 

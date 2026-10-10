@@ -168,12 +168,17 @@ def build_reserve(view: View) -> float:
     build-order step not started yet. The pros' build order runs on time
     because its money is set aside; the rest goes into units (no infantry
     cap)."""
+    from .brain import outgunned
+
     cost = lambda item: view.unit_costs.get(item) or C.KNOWN_COSTS.get(item, C.DEFAULT_UNIT_COST)  # noqa: E731
     owed = 0.0
+    short = outgunned(view)
     for p in view.production:
         item = str(p.get("item") or "").lower()
         if p.get("ready") or not item:
             continue
+        if item == C.MCV and short:
+            continue                   # outgunned: units before the MCV (it is cancelled)
         if _is_building(view, item) or item in C.HARVESTER or item == C.MCV:
             progress = p.get("progress")
             done = float(progress) if isinstance(progress, (int, float)) and not isinstance(progress, bool) else 0.0

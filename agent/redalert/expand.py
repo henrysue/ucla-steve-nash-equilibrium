@@ -223,9 +223,14 @@ class Expansion:
 
     def orders(self, view: View) -> list[dict]:
         out: list[dict] = []   # harvesters: harvest.HarvestManager, the one owner of their orders
-        if (self.state in ("scouting", "training") and C.MCV in view.available
-                and not view.queued_count(C.MCV) and not view.units_of(C.MCV)):
-            return out + [orders.train(C.MCV, count=1)]
+        if self.state in ("scouting", "training") and C.MCV in view.available and not view.units_of(C.MCV):
+            # Checked again when it trains, not just when the expansion began
+            # (08560d9b: the gates passed at 2:30, the MCV trained at 4:22 with 3 fighters).
+            if view.queued_count(C.MCV):
+                if outgunned(view):
+                    return out + [orders.cancel(C.MCV)]   # units first: the money comes back
+            elif not outgunned(view) and len(view.combat_units) >= C.EXPAND_MIN_FIGHTERS:
+                return out + [orders.train(C.MCV, count=1)]
         return out + self._mcv_orders(view)
 
     def _mcv_orders(self, view: View) -> list[dict]:

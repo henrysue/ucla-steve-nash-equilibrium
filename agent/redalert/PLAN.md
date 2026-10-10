@@ -69,6 +69,15 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
   Buildings grow only into the half of the base facing their bearing, and
   for turrets units in the way don't outrank direction (they're cleared off
   the spot): 08560d9b's massing army pushed the first flame tower behind the base.
+- **The enemy through the fog** (brain.enemy_estimate): the most of what we
+  see or remember, the most we saw in the last 3 minutes less our kills
+  since, and 0.8 x (our army + our deaths - our kills). Attacks, retreats and
+  the advisor's posture all weigh this, never just what is visible (08560d9b).
+- **Retreat** at losses over 1.3x kills (was 2x). The massing army attacks
+  anything worth more than a small raid within 12 cells of it.
+- **Expansion MCV**: trained only with 8+ fighters and not outgunned;
+  cancelled (money back) if outgunned while it trains.
+- **Advisor posture**: "hold" only; it can't push an attack the numbers don't support.
 - **Flanking**: none before 10:00 unless decisively ahead (dominant trades
   or 2.5x their known army): engaged early, a flank loses us the defense.
 - **Economy**: trucks come with refineries (target = refineries + 2); more
