@@ -189,6 +189,9 @@ class MatchLog:
             "assets": round(view.assets_value),
             "buildings": dict(types),
             # Where each building actually stands: ``place at`` is only a hint.
+            # Top-left cells (observe.py converts the server's centre cells),
+            # like the placement audit's "landed"; logs before Oct 10 ~10:10
+            # hold the reported centre cells instead.
             "placed": [[b.type, *b.cell] for b in view.buildings if b.cell is not None and not b.wreck][:30],
             "queued": [str(p.get("item")) for p in view.production if not p.get("ready")],
             "explored_pct": obs.get("explored_percent"),

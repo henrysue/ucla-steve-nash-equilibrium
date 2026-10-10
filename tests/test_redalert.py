@@ -3325,3 +3325,22 @@ def test_the_advisor_sees_what_the_rules_see():
                 "enemy_turrets_known", "raid_squad", "scouts", "intel"):
         assert key in seen, key
     assert set(seen["intel"]) == {"enemy_opening", "threat_alarm", "their_base_seen_at"}
+
+
+# -- placement keeps off the trucks' roads and away from units (a2952a6d) -------------------------
+
+def test_no_building_on_the_road_from_a_refinery_to_its_ore():
+    blds = [{"id": 10, "type": "fact", "x": 4, "y": 4}, {"id": 13, "type": "proc", "x": 10, "y": 4}]
+    v = dataclasses.replace(_view(buildings=blds), ore_cells=_ore_patch(20, 4, 3, 3))
+    road = buildplan._truck_roads(v)
+    assert all(any((x, y) in road for y in (4, 5, 6)) for x in range(13, 20))   # spans the gap to the ore
+    assert buildplan._clashes("powr", (15, 4), v)
+
+
+def test_a_spot_with_units_beside_it_loses_to_a_clear_one():
+    blds = [{"id": 10, "type": "fact", "x": 10, "y": 10}]
+    v = _view(buildings=blds)
+    first = buildplan.grow_spot(v, (1.0, 0.0), "powr")
+    truck = [{"id": 40, "type": "harv", "x": first[0] - 1, "y": first[1], "hp": 100}]   # beside, not on it
+    second = buildplan.grow_spot(_view(buildings=blds, units=truck), (1.0, 0.0), "powr")
+    assert second != first

@@ -458,7 +458,11 @@ def _compute_lanes(view: View) -> frozenset:
       barracks, where new units come out;
     - ``STAGE_CLEAR_CELLS`` around the massing point, where the army stands
       (match 159f4f11: barracks asked for there four times, moved home each
-      time — units standing on the spot).
+      time — units standing on the spot);
+    - the harvesters' road from each refinery to the ore it serves (match
+      a2952a6d: a war factory, depot and power plant asked for on truck
+      routes were all moved home — trucks on the spot — and buildings there
+      would box the trucks in).
     """
     from .scout import choke_cell
 
@@ -480,7 +484,36 @@ def _compute_lanes(view: View) -> frozenset:
         if b.cell is not None and not b.wreck and (b.type == C.WAR_FACTORY or b.type in C.BARRACKS):
             x0, _, x1, y1 = _rect(b.type, b.cell)
             cells.update((x, y) for x in range(x0, x1 + 1) for y in range(y1 + 1, y1 + 1 + C.EXIT_CLEAR_ROWS))
+    cells |= _truck_roads(view)
     return frozenset(cells)
+
+
+def _truck_roads(view: View) -> set:
+    """The straight road from each refinery to the nearest ore its trucks can
+    walk to (within ``FIELD_WALK_STEPS``), one cell wide."""
+    from .terrain import ring, walk_distances
+
+    if not view.ore_cells:
+        return set()
+    ore = set(view.ore_cells)
+    roads: set = set()
+    for b in view.buildings:
+        if b.type != C.REFINERY or b.cell is None or b.wreck:
+            continue
+        rect = _rect(b.type, b.cell)
+        starts = [c for c in ring(rect) if c not in view.blocked_cells]
+        walk = walk_distances(view, starts, C.FIELD_WALK_STEPS)
+        near = [c for c in walk if c in ore]
+        if not near:
+            continue
+        target = min(near, key=lambda c: walk[c])
+        cx, cy = (rect[0] + rect[2]) / 2, (rect[1] + rect[3]) / 2
+        steps = max(abs(target[0] - cx), abs(target[1] - cy), 1)
+        for i in range(int(steps) + 1):
+            cell = (round(cx + (target[0] - cx) * i / steps), round(cy + (target[1] - cy) * i / steps))
+            if not (rect[0] <= cell[0] <= rect[2] and rect[1] <= cell[1] <= rect[3]):
+                roads.add(cell)
+    return roads
 
 
 def _in_bounds(view: View, item: str, cell) -> bool:
@@ -530,16 +563,24 @@ def legal_spots(view: View, item: str, near=None, skip_types=()) -> list[tuple[i
 
 def _pick(view: View, item: str, spots, score) -> tuple[int, int] | None:
     """The best spot by ``score`` (lower is better; a tuple ranks tiers
-    first), a spot no unit stands on beating one with units on it within the
-    same first tier. ``None`` when there is none."""
+    first), a spot with no unit on it or beside it beating one with units
+    there within the same first tier: OpenRA moves a building placed over a
+    unit to the main yard, and units beside a spot step onto it. ``None``
+    when there is none."""
     if not spots:
         return None
     occupied = _occupied(view)
+    nw, nh = _footprint(item)
+
+    def in_the_way(spot):
+        # a unit on the footprint or right beside it (it may step onto it)
+        return any((x, y) in occupied for x in range(spot[0] - 1, spot[0] + nw + 1)
+                   for y in range(spot[1] - 1, spot[1] + nh + 1))
 
     def rank(spot):
         s = score(spot)
         tier, rest = (s[0], s[1:]) if isinstance(s, tuple) else (0, (s,))
-        return (tier, any(c in occupied for c in _cells(item, spot))) + rest
+        return (tier, in_the_way(spot)) + rest
 
     return min(spots, key=rank)
 

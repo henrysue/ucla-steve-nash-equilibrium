@@ -2,8 +2,9 @@
 
 Each fixture (tests/fixtures/redalert/*.json) holds a map picture and legend
 from a real match (Sidestep, Trapped from both sides), our base centre, the
-enemy spawn, and our buildings at three moments, as the server reported them
-(centre cells). Views are built through the real parser (observe.read).
+enemy spawn, and our buildings at three moments ("cells": top-left or as
+reported). Views are built through the real parser (observe.read), from the
+cells the server would report.
 
 Placements are judged by OpenRA's rule as our placement audit measured it,
 written out here independently of buildplan.py: the footprint lies on
@@ -42,7 +43,7 @@ def _view(fx: dict, state: dict, name: str):
             "tick": int(state["t"] * 25), "economy": {"cash": 2000, "power_provided": 300, "power_drained": 100},
             "military": {"army_value": 0, "visible_enemy_value": 0, "kills_cost": 0, "deaths_cost": 0},
             "units": [], "visible_enemies": [], "visible_enemy_buildings": [], "production": [], "events": [],
-            "buildings": [{"id": i + 1, "type": t, "x": x, "y": y} for i, (t, x, y) in enumerate(state["buildings"])],
+            "buildings": [_as_reported(fx, i, t, x, y) for i, (t, x, y) in enumerate(state["buildings"])],
             "available_production": ["powr", "barr", "tent", "proc", "weap", "fix", "dome", "ftur", "pbox", "e1"],
             "base_center": fx["base_center"],
         },
@@ -52,6 +53,16 @@ def _view(fx: dict, state: dict, name: str):
     config = {"rules": {"maps": {map_id: {"layout": {**pic, "legend": fx["legend"]}, "bounds": bounds,
                                           "spawns": [fx["base_center"], fx["enemy_spawn"]]}}}}
     return read(raw, config)
+
+
+def _as_reported(fx: dict, i: int, kind: str, x: int, y: int) -> dict:
+    """The building as the server reports it: its centre cell. Fixtures from
+    logs written after the centre-cell fix hold top-left cells ("cells":
+    "top_left"); older ones the reported cells."""
+    if fx.get("cells") == "top_left":
+        w, h = C.FOOTPRINTS.get(kind, C.DEFAULT_FOOTPRINT)
+        x, y = x + w // 2, y + h // 2
+    return {"id": i + 1, "type": kind, "x": x, "y": y}
 
 
 def _rect(kind, cell):
