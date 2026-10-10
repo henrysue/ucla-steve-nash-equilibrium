@@ -134,6 +134,7 @@ DEFENSE_FAN_DEGREES = (0, -25, 25, -50, 50)  # turret slots, relative to the ene
 APPROACH_RING_CELLS = 12           # the approach: the cell this far from the base that is the shortest walk from the enemy
 APPROACH_MAX_STEPS = 400
 DEFENSE_SIDE_WEIGHT = 2.0          # turret spots: each cell off the slot's line costs this many cells forward
+DEFENSE_UNIT_SLACK = 2.0           # ...and units in the way only decide among spots within this of the best
 DEFENSE_MAIN_RADIUS_CELLS = 16     # defenses this close to the base count toward its caps
 DEFENSE_MIN_GAP_CELLS = 3          # a slot is taken if a defense is this close
 DEFENSE_SIDE_MAX_DEGREES = 60.0    # the advisor's defense side must face the enemy within this

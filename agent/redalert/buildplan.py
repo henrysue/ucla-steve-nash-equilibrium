@@ -623,14 +623,19 @@ def legal_spots(view: View, item: str, near=None, skip_types=()) -> list[tuple[i
     return spots
 
 
-def _pick(view: View, item: str, spots, score) -> tuple[int, int] | None:
+def _pick(view: View, item: str, spots, score, slack: float | None = None) -> tuple[int, int] | None:
     """The best spot by ``score`` (lower is better; a tuple ranks tiers
     first), a spot with no unit on it or beside it beating one with units
     there within the same first tier: OpenRA moves a building placed over a
     unit to the main yard, and units beside a spot step onto it. ``None``
-    when there is none."""
+    when there is none. ``slack``: units in the way only decide among spots
+    scoring within this of the best (turrets: the direction matters more,
+    and units on the chosen spot are cleared off it)."""
     if not spots:
         return None
+    if slack is not None:
+        best = min(score(s) for s in spots)
+        spots = [s for s in spots if score(s) <= best + slack]
     occupied = _occupied(view)
     nw, nh = _footprint(item)
 
@@ -647,7 +652,8 @@ def _pick(view: View, item: str, spots, score) -> tuple[int, int] | None:
     return min(spots, key=rank)
 
 
-def grow_spot(view: View, bearing, item: str, near=None, skip_types=(), side_weight: float = 0.5) -> tuple[int, int] | None:
+def grow_spot(view: View, bearing, item: str, near=None, skip_types=(), side_weight: float = 0.5,
+              slack: float | None = None) -> tuple[int, int] | None:
     """A legal spot (:func:`legal_spots`) as far along ``bearing`` (a unit
     vector) as possible without drifting far to the side: the base grows in
     the wanted direction building by building. ``None`` (engine default)
@@ -676,7 +682,7 @@ def grow_spot(view: View, bearing, item: str, near=None, skip_types=(), side_wei
     # the base (match 08560d9b: the first flame tower went up at the back).
     # Units on the chosen spot are cleared off it (executor._keep_clear).
     front = [s for s in spots if ahead(s) > 0]
-    return _pick(view, item, front or spots, score)
+    return _pick(view, item, front or spots, score, slack)
 
 
 def _beside_ore(view: View, ore, item: str, near=None) -> tuple[int, int] | None:
@@ -736,7 +742,7 @@ def perimeter_spot(view: View, base: tuple[int, int], toward, item: str = "pbox"
         # Close to the slot's line beats far forward: a turret beside the
         # road in covers it, one far out to the side covers nothing.
         spot = grow_spot(view, (math.cos(angle), math.sin(angle)), item, near=near, skip_types=C.DEFENSES,
-                         side_weight=C.DEFENSE_SIDE_WEIGHT)
+                         side_weight=C.DEFENSE_SIDE_WEIGHT, slack=C.DEFENSE_UNIT_SLACK)
         if spot is None:
             continue
         fallback = fallback or spot

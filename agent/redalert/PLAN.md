@@ -66,6 +66,11 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
 - **Turrets**: the first faces the road in (scout.approach_cell: the cell 12
   from the base that is the shortest walk from the enemy spawn), as close to
   that line as a legal spot allows; the rest fan out to either side.
+  Buildings grow only into the half of the base facing their bearing, and
+  for turrets units in the way don't outrank direction (they're cleared off
+  the spot): 08560d9b's massing army pushed the first flame tower behind the base.
+- **Flanking**: none before 10:00 unless decisively ahead (dominant trades
+  or 2.5x their known army): engaged early, a flank loses us the defense.
 - **Economy**: trucks come with refineries (target = refineries + 2); more
   refineries over time; expand right after the service depot (~4:45), up to 3
   times, sooner when ore runs out. Money bands: broke = one queue; rich =
