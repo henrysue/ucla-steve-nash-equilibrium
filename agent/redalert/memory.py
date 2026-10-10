@@ -14,7 +14,12 @@ Forgetting:
 - Either is dropped when one of our actors stands within
   ``MEMORY_CLEAR_RADIUS_CELLS`` of its last cell and it is not visible: we are
   looking at that spot and it is not there (moved, or destroyed).
-- Buildings otherwise stay remembered for the whole match.
+- Buildings otherwise stay remembered for the whole match — at the cell we
+  last saw them, refreshed each time we see them again (same id).
+- A construction yard that packs up into an MCV gets a new id: an enemy MCV
+  seen beside a remembered yard means the yard has moved, so the yard is
+  dropped and the MCV followed; a new yard seen beside a remembered MCV means
+  it deployed there, so the MCV is dropped.
 """
 
 from __future__ import annotations
@@ -47,7 +52,8 @@ class EnemyMemory:
                     self._known.pop(actor.id, None)
                     continue
                 visible.add(actor.id)
-                self._known[actor.id] = Memory(actor, now, building)
+                self._known[actor.id] = Memory(actor, now, building)   # refreshed: the cell we see now
+        self._follow_transforms(view, visible)
 
         lookers = [a.cell for a in view.units + view.buildings if a.cell is not None and not a.wreck]
         r2 = C.MEMORY_CLEAR_RADIUS_CELLS ** 2
@@ -58,6 +64,30 @@ class EnemyMemory:
             looked = mem.actor.cell is not None and any(dist2(c, mem.actor.cell) <= r2 for c in lookers)
             if expired or looked:
                 del self._known[actor_id]
+
+    def _follow_transforms(self, view: View, visible: set) -> None:
+        """A yard that packed up (MCV seen beside it) or an MCV that deployed
+        (a yard seen beside it) left a stale memory under its old id."""
+        r2 = C.TRANSFORM_RADIUS_CELLS ** 2
+        mcvs = [a.cell for a in view.enemy_units if a.type == C.MCV and a.cell is not None and not a.wreck]
+        yards = [a.cell for a in view.enemy_buildings if a.type == C.CONSTRUCTION_YARD and a.cell is not None and not a.wreck]
+        for actor_id, mem in list(self._known.items()):
+            if actor_id in visible or mem.actor.cell is None:
+                continue
+            if mem.building and mem.actor.type == C.CONSTRUCTION_YARD and any(dist2(c, mem.actor.cell) <= r2 for c in mcvs):
+                del self._known[actor_id]      # it packed up and drives off as that MCV
+            elif not mem.building and mem.actor.type == C.MCV and any(dist2(c, mem.actor.cell) <= r2 for c in yards):
+                del self._known[actor_id]      # it deployed into that yard
+
+    def forget_near(self, cell, radius: float) -> int:
+        """Drop remembered buildings within ``radius`` of ``cell`` (the army
+        stalled there: they are gone). Returns how many."""
+        r2 = radius * radius
+        gone = [i for i, m in self._known.items()
+                if m.building and m.actor.cell is not None and dist2(m.actor.cell, cell) <= r2]
+        for i in gone:
+            del self._known[i]
+        return len(gone)
 
     # -- what the rest of the agent reads ----------------------------------------
 

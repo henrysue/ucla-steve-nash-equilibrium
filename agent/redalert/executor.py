@@ -24,6 +24,9 @@ def plan(
     depleted: frozenset = frozenset(),
     home: tuple[int, int] | None = None,
     clearing: dict | None = None,
+    rusher: bool = False,   # testrush (TEST ONLY): no opening infantry cap
+    threat: bool = False,
+    probe: tuple[int, int] | None = None,
 ) -> list[dict]:
     """All orders for this view, concatenated in priority order (pre-cap).
 
@@ -54,18 +57,21 @@ def plan(
         spot = next((o.get("at") for o in placed if o.get("cmd") == "place" and o.get("item") == C.REFINERY), None)
         expansion.placed_refinery(view, job, spot)
     out += placed
-    out += buildplan.next_build_orders(view, exp_ore, depleted)  # advance the build order / power
+    out += buildplan.next_build_orders(view, exp_ore, depleted, rusher=rusher)  # advance the build order / power
     out += expansion.orders(view) if expansion is not None else []
-    out += buildplan.defense_orders(view, under_attack=mode in (Mode.DEFEND_RUSH, Mode.DEFEND_BASE)
-                                    or scout.early_push_warning(view),
-                                    expansion_site=exp_def if expansion is not None else None, home=home)
+    under_attack = mode in (Mode.DEFEND_RUSH, Mode.DEFEND_BASE) or scout.early_push_warning(view) or threat
+    if not rusher or under_attack:   # testrush: the rusher builds turrets only when attacked
+        out += buildplan.defense_orders(view, under_attack=under_attack,
+                                        expansion_site=exp_def if expansion is not None else None, home=home)
     out += _economy_orders(view, harvest_orders)
     out += _rally_orders(view)
-    out += _production_orders(view, mode, has_scout=scout_id is not None)
+    out += _production_orders(view, mode, rusher=rusher, threat=threat)
     out += list(scout_orders)
     out += list(raid_orders)
-    stage = expansion.stage_override if expansion is not None else None
-    out += _army_orders(view, mode, scout_id, reserved=frozenset(raid_ids) | clearing_ids, advice=advice,
+    response, responders = home_response(view, mode, scout_id, frozenset(raid_ids) | clearing_ids)
+    out += response
+    stage = probe or (expansion.stage_override if expansion is not None else None)
+    out += _army_orders(view, mode, scout_id, reserved=frozenset(raid_ids) | clearing_ids | responders, advice=advice,
                         flank_via=flank_via, stage_override=stage, hunt=hunt, hunt_points=hunt_points)
     return out
 
@@ -142,7 +148,7 @@ def funds(view: View) -> float:
     return view.cash + view.ore
 
 
-def _production_orders(view: View, mode: Mode, *, has_scout: bool = True) -> list[dict]:
+def _production_orders(view: View, mode: Mode, *, rusher: bool = False, threat: bool = False) -> list[dict]:
     """Train units: harvesters first (unblocked if stuck behind tanks), then
     the scout vehicle, then an infantry-heavy army with tank support. Broke:
     one queue, one deep. DEFEND_RUSH: rifle spam. Every mode keeps training
@@ -180,13 +186,17 @@ def _production_orders(view: View, mode: Mode, *, has_scout: bool = True) -> lis
         if blocker is not None:
             out.insert(0, orders.cancel(blocker))
 
-    scout_vehicle = C.resolve(C.SCOUT_VEHICLES, view.available)
-    if not has_scout and has_factory and scout_vehicle and not short_harvesters \
-            and view.queued_count(scout_vehicle) == 0:
-        out.append(orders.train(scout_vehicle, count=1))
+    if rusher:   # testrush (TEST ONLY): units without pause, never held for the economy
+        from . import testrush
+        return out + testrush.rush_production(view)
 
-    if _economy_first(view):
-        return out  # money to the power/refinery/factory/harvester in production
+    # No infantry cap: units spend what the economy doesn't need. The build
+    # order (and buildings, harvesters, an MCV in production) is pre-funded —
+    # unless a rush is on its way or we are defending: then everything goes
+    # into the army.
+    reserve = 0.0 if (threat or mode in DEFENSIVE) else buildplan.build_reserve(view)
+    spare = funds(view) - reserve
+    unit_cost = lambda item: view.unit_costs.get(item, C.DEFAULT_UNIT_COST)  # noqa: E731
 
     # Short on money: one unit queue at a time, one item deep — harvesters
     # first (above), then tanks, then infantry — so money finishes something.
@@ -207,29 +217,19 @@ def _production_orders(view: View, mode: Mode, *, has_scout: bool = True) -> lis
     # Against a turtle (several known defenses, e.g. flame towers that shred
     # infantry): fewer riflemen per batch, a deeper tank queue, siege units.
     turtle = len(enemy_defenses(view)) >= C.TURTLE_DEFENSES
-    # The opening (no war factory yet) keeps a small guard only, like the
-    # pros: the money goes to refinery, refinery, power, war factory on time.
-    # (Match 654f1b2e: 13 infantry by 1:30, cash 0, the war factory and the
-    # third refinery late.) A rush is answered by DEFEND_RUSH above.
-    opening_room = None
-    if not has_factory and mode not in DEFENSIVE:
-        infantry = sum(1 for u in view.combat_units if u.type not in C.VEHICLE_TYPES)
-        opening_room = C.OPENING_INFANTRY - infantry - view.queued_count(rifle or "e1") - view.queued_count(rocket or "e3")
-    if opening_room is not None:
-        if has_barracks and rifle and opening_room > 0 and not view.queued_count(rifle):
-            out.append(orders.train(rifle, count=1))
-    elif has_barracks and rifle:
+    if has_barracks and rifle and spare >= unit_cost(rifle):
         ratio = C.RIFLE_TO_ROCKET if funds(view) >= C.ROCKET_RATIO_CREDIT_SWITCH else C.RIFLE_TO_ROCKET_EARLY
         if view.queued_count(rifle) < depth:
             out.append(orders.train(rifle, count=1))
-        if not broke and rocket and _should_add_rocket(view, ratio) and view.queued_count(rocket) < 1:
+        if not broke and rocket and _should_add_rocket(view, ratio) and view.queued_count(rocket) < 1 \
+                and spare >= unit_cost(rifle) + unit_cost(rocket):
             out.append(orders.train(rocket, count=1))
-    if has_factory and tank and not short_harvesters and not broke:
-        if view.queued_count(tank) < min(C.MAX_QUEUE_DEPTH, 1 + (1 if turtle else 0)):
+    if has_factory and tank and not short_harvesters and not broke and spare >= unit_cost(tank):
+        if view.queued_count(tank) < min(C.MAX_QUEUE_DEPTH, (2 if rich else 1) + (1 if turtle else 0)):
             out.append(orders.train(tank, count=1))
     # Siege units (V2 / artillery) once defenses are known: they outrange them.
     siege = C.resolve(C.SIEGE_UNITS, view.available)
-    if (siege and has_factory and not short_harvesters and not broke
+    if (siege and has_factory and not short_harvesters and not broke and spare >= unit_cost(siege)
             and len(enemy_defenses(view)) >= C.SIEGE_MIN_ENEMY_DEFENSES
             and len(view.units_of(C.SIEGE_UNITS)) + view.queued_count(siege) < C.SIEGE_MAX
             and view.queued_count(siege) == 0):
@@ -256,13 +256,6 @@ def ahead_in_queue(view: View, queue: str, item: str) -> str | None:
     if waiting and waiting[0] != item and item in waiting:
         return waiting[0]
     return None
-
-
-def _economy_first(view: View) -> bool:
-    """An economy item is in production and we have enough defenders: hold
-    army training so it gets the money."""
-    busy = any(view.queued_count(item) for item in C.ECONOMY_ITEMS)
-    return busy and len(view.combat_units) >= C.MIN_DEFENDERS and not scout.early_push_warning(view)
 
 
 def _should_add_rocket(view: View, ratio: int) -> bool:
@@ -306,7 +299,8 @@ def _army_orders(
         # With no enemy known the hunter aims the army, not the advisor (it
         # kept naming the razed enemy base for 5 minutes in match 0561274e),
         # and a big army sweeps several search points at once.
-        blind = not (view.enemy_buildings or view.enemy_units or view.known_enemy_buildings)
+        blind = not (view.enemy_buildings or view.enemy_units or view.known_enemy_buildings
+                     or any(a.type == C.MCV for a in view.known_enemy_units))
         if blind and hunt is not None:
             if flank_via is None:
                 groups = _hunt_groups(view, combat[:orders.MAX_UNITS_PER_ORDER], hunt_points or [hunt])
@@ -325,7 +319,7 @@ def _army_orders(
                 # Flank: round the side first, then on to the target.
                 return [orders.attack_move(units, list(flank_via)),
                         orders.attack_move(units, list(target), queued=True)]
-            return [orders.attack_move(units, list(target))]
+            return _concave_attack(view, units, target)
         # Blind and no spawns known: fall back to the server's ready-made order
         # (without the scout, which the server counts as a combat unit).
         if view.attack_now:
@@ -387,7 +381,9 @@ def _stage_forward(
     if stage is None:
         return []
     fighters = _fighters(view, scout_id, reserved)
-    if getattr(advice, "formation", "clump") == "concave":
+    # Massing (and holding at home) is always a concave facing the enemy's
+    # approach: every unit can fire into the middle where they arrive.
+    if len(fighters) >= 3:
         facing = getattr(advice, "stage_facing", None) or enemy_spawn_guess(view)
         return _concave_orders(view, fighters, stage, facing)
     r2 = C.STAGING_RADIUS_CELLS ** 2
@@ -498,6 +494,78 @@ def _advised_target(view: View, advice) -> tuple[int, int] | None:
     return None
 
 
+def home_response(view: View, mode: Mode, scout_id: int | None, reserved: frozenset) -> tuple[list[dict], set]:
+    """A small raid on our base or harvesters (enemies worth at most
+    ``SMALL_RAID_VALUE`` within ``HOME_RAID_RADIUS_CELLS`` of a yard or a
+    harvester of ours): the units at home — new ones included — kill it, the
+    weakest raider first, instead of walking past to the front. (Match
+    c2fec761: a low-health ranger harassed the base unanswered.) Bigger
+    threats are the defensive modes' job. Returns (orders, unit ids used)."""
+    from .guard import _at_home
+
+    if mode in DEFENSIVE or mode is Mode.RETREAT:
+        return [], set()
+    anchors = [b.cell for b in view.buildings if b.type == C.CONSTRUCTION_YARD and b.cell is not None]
+    anchors += [h.cell for h in view.units_of(C.HARVESTER) if h.cell is not None]
+    if view.base_center is not None:
+        anchors.append(view.base_center)
+    r2 = C.HOME_RAID_RADIUS_CELLS ** 2
+    raiders = [a for a in view.enemy_units if a.cell is not None and not a.wreck and a.id is not None
+               and a.type not in C.HARVESTER and any(dist2(a.cell, c) <= r2 for c in anchors)]
+    if not raiders:
+        return [], set()
+    cost = lambda a: view.unit_costs.get(a.type, C.DEFAULT_UNIT_COST)  # noqa: E731
+    value = sum(cost(a) for a in raiders)
+    if value > C.SMALL_RAID_VALUE:
+        return [], set()
+    target = min(raiders, key=lambda a: (a.hp if a.hp else 100))
+    home = sorted((u for u in _fighters(view, scout_id, reserved) if _at_home(view, u.cell)),
+                  key=lambda u: dist2(u.cell, target.cell))
+    picked, sent = [], 0.0
+    for u in home:
+        if sent >= C.RESPONSE_VALUE_RATIO * value and len(picked) >= C.RESPONSE_MIN_UNITS:
+            break
+        picked.append(u.id)
+        sent += cost(u)
+    if not picked:
+        return [], set()
+    return [orders.attack(picked[:orders.MAX_UNITS_PER_ORDER], target.id)], set(picked)
+
+
+def _concave_attack(view: View, units: list[int], target) -> list[dict]:
+    """Attack in ``ATTACK_GROUPS`` groups closing on ``target`` as a rough
+    semi-concave: the side groups aim ``ATTACK_GROUP_SPREAD_CELLS`` either
+    side of it, so the army arrives spread and every gun gets to fire,
+    instead of one column. Units go to the group on their own side (no
+    crossing over); a small army just attack-moves."""
+    if len(units) < C.ATTACK_GROUP_MIN_UNITS:
+        return [orders.attack_move(units, list(target))]
+    cells = {u.id: u.cell for u in view.combat_units if u.cell is not None}
+    mine = [cells[i] for i in units if i in cells]
+    if not mine:
+        return [orders.attack_move(units, list(target))]
+    cx, cy = sum(c[0] for c in mine) / len(mine), sum(c[1] for c in mine) / len(mine)
+    dx, dy = target[0] - cx, target[1] - cy
+    length = (dx * dx + dy * dy) ** 0.5 or 1.0
+    px, py = -dy / length, dx / length
+    ranked = sorted(units, key=lambda i: ((cells.get(i, (cx, cy))[0] - cx) * px + (cells.get(i, (cx, cy))[1] - cy) * py))
+    k = C.ATTACK_GROUPS
+    size = -(-len(ranked) // k)
+    out = []
+    for g in range(k):
+        ids = ranked[g * size:(g + 1) * size]
+        if not ids:
+            continue
+        side = (g - (k - 1) / 2) / max(1, (k - 1) / 2)          # -1 .. 1
+        spot = (round(target[0] + px * side * C.ATTACK_GROUP_SPREAD_CELLS),
+                round(target[1] + py * side * C.ATTACK_GROUP_SPREAD_CELLS))
+        if view.bounds is not None:
+            bx, by, bw, bh = view.bounds
+            spot = (min(max(spot[0], bx), bx + bw - 1), min(max(spot[1], by), by + bh - 1))
+        out.append(orders.attack_move(ids, list(spot)))
+    return out
+
+
 def _hunt_groups(view: View, units: list[int], points: list) -> list[dict] | None:
     """Split the hunt over several search points: each unit to the nearest
     point whose group still has room. None when the army is too small."""
@@ -569,6 +637,11 @@ def _attack_target(view: View, hunt: tuple[int, int] | None = None) -> tuple[int
         r2 = C.ATTACK_FOCUS_RADIUS_CELLS ** 2
         cluster = [a for a in seen if dist2(a.cell, nearest.cell) <= r2]
         return min(cluster, key=lambda a: (_priority(a.type), dist2(a.cell, view.base_center))).cell
+    # An enemy MCV we remember (a yard that packed up and drove off): the
+    # game isn't won until it dies too.
+    mcvs = [a for a in view.known_enemy_units if a.type == C.MCV and a.cell is not None]
+    if mcvs:
+        return min(mcvs, key=lambda a: dist2(a.cell, view.base_center)).cell
     # Nothing known: hunt for the last buildings (scout.Hunter) — not just
     # the enemy spawn, which may be ruins by now.
     return hunt or enemy_spawn_guess(view)

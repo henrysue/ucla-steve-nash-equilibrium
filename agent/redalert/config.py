@@ -37,6 +37,10 @@ ALL_BUILDING_TYPES = frozenset({
     "pbox", "hbox", "gun", "ftur", "tsla", "fake", "brik", "sbag", "fenc",
 })
 DEFAULT_UNIT_COST = 300            # when the rules give no cost
+KNOWN_COSTS = {                    # the skill guide's prices, when the rules give none
+    "powr": 300, "tent": 500, "barr": 500, "proc": 1400, "weap": 2000, "fix": 1200, "dome": 1000,
+    "harv": 1100, "mcv": 2500, "kenn": 200, "e1": 100, "e3": 300, "dog": 200,
+}
 
 # -- opening: the double-refinery build order (a repeated id = one more of it) -----------
 BUILD_ORDER = (
@@ -87,7 +91,6 @@ DEFENSE_CLUSTER_CELLS = 12         # turrets this close to the attack target def
 INFANTRY_PER_DEFENSE = 6           # attack defended ground with this many infantry per turret...
 INFANTRY_MASS_MIN = 15             # ...and at least this many...
 ARMOR_PER_DEFENSE = 3              # ...or this many tanks per turret (siege units count double)
-OPENING_INFANTRY = 5               # until the war factory: this many infantry, the money builds the economy
 
 # -- building placement ------------------------------------------------------------------------
 REFINERY_ORE_SEARCH_CELLS = 16     # ore this close steers refineries (and keeps power off its side)
@@ -101,7 +104,7 @@ EXIT_CLEAR_ROWS = 2                # rows kept clear in front of barracks / war 
 # fail (placement audit, match fd507a58).
 FOOTPRINTS = {
     "fact": (3, 3), "powr": (2, 3), "apwr": (3, 3), "tent": (2, 3), "barr": (2, 3),
-    "proc": (3, 3), "weap": (3, 3), "fix": (3, 3), "silo": (1, 1), "dome": (2, 3),
+    "proc": (3, 3), "weap": (3, 3), "fix": (3, 3), "silo": (1, 1), "dome": (2, 3), "kenn": (1, 1),
     "pbox": (1, 1), "gun": (1, 1), "ftur": (1, 1), "tsla": (1, 2),
 }
 DEFAULT_FOOTPRINT = (2, 2)
@@ -122,6 +125,9 @@ CHEESE_NEAR_BASE_CELLS = 18        # enemies this close to any of our yards are 
 CHEESE_MIN_ENEMY_UNITS = 2
 CHEESE_EXPIRE_SECONDS = 25.0       # after the threat was last seen
 CHEESE_WINDOW_SECONDS = 180.0      # a threat before this is a rush (rifle spam); later, DEFEND_BASE
+BASE_DEFEND_MIN_VALUE = 1500       # later, the army comes home only for a threat worth this...
+BASE_DEFEND_HOME_RATIO = 1.0       # ...and more than this x what already defends the base (units at home, turrets)
+BASE_DEFEND_EXPIRE_SECONDS = 10.0  # ...and goes back out this soon after the base is clear
 UNDER_ATTACK_FRESH_TICKS = 250     # an under_attack event counts for 10 s
 
 # -- attacking -----------------------------------------------------------------------------------
@@ -200,6 +206,37 @@ RAID_MIN_SIZE = 3
 RAID_UNIT_TYPES = ("e3", "e1", "jeep", "ftrk", "1tnk")   # rockets first: harvesters are armored
 RAID_COOLDOWN_SECONDS = 60.0
 RAID_EXPANSION_MAX_DEFENSES = 1    # raids skip targets with more defenses than this
+RAID_THREAT_RADIUS_CELLS = 7       # enemy fighters this close to the raid squad are defending: fight them first...
+RAID_OUTMATCH_RATIO = 1.0          # ...unless worth more than this x the squad: then it pulls back
+DISTRACTION_SECONDS = 30.0         # the raid has enemy fighters on it (or just pulled back): they are distracted...
+DISTRACTION_MIN_VALUE = 600        # ...when worth at least this
+MAIN_FIGHT_RADIUS_CELLS = 9        # enemies this close to the main army: it is in a fight (the raid joins as a second prong)
+SCOUT_FLEE_CELLS = 6               # the scout backs off from enemy fighters this close
+SCOUT_ALARM_SECONDS = 30.0         # a scout killed far forward early is an early-push alarm this long
+PRODUCTION_FORWARD_BIAS = 0.4      # barracks/factories grow sideways, this much toward the enemy
+# -- scouting and intel (scouting.py, intel.py) --
+SCOUT_UNIT_TYPES = ("dog", "e1")  # scouts: dogs (Soviet kennel) where we have them, else riflemen
+KENNEL = "kenn"                   # one kennel after the war factory, for dog scouts (Soviet only)
+EARLY_SCOUT_END_SECONDS = 180.0    # two scouts (left, right) round the back of their base in the first 3 minutes
+MID_PICKET_SECONDS = 300.0         # then picket posts across the approach...
+MID_PICKETS = 4                    # ...this many...
+PICKET_ALONG = 0.45                # ...this far toward the enemy...
+PICKET_SPREAD = 0.35               # ...spread this share of the base-to-base distance to each side
+BASE_CHECK_SECONDS = 150.0         # a picket runs round their base again this often
+CIRCUIT_RADIUS_CELLS = 11          # the round of their base: this far from their spawn...
+CIRCUIT_DEGREES = (80, 125, 170)   # ...at these angles from the side facing us, round to the back
+CIRCUIT_ARRIVED_CELLS = 3
+SCOUT_SNAP_CELLS = 6               # a post or waypoint walled in by terrain moves to a reachable cell this close
+SCOUT_WALK_STEPS = 250             # (walking steps searched from our base)
+INTEL_MIN_BUILDINGS = 3            # their opening is read once we know this many of their buildings
+RUSH_READ_SECONDS = 100.0          # one refinery but a war factory / 2nd barracks by now: a rush
+# -- committing to an attack --
+CONFIRM_SECONDS = 4.0              # an attack call is re-checked this long later, the army edging forward to see...
+CONFIRM_TRADE_BAND = 200           # ...only while kills - losses are this close to even (clearly ahead/behind: go at once)
+PROBE_FRACTION = 0.3               # ...to this share of the way from the massing point to the target
+ATTACK_GROUPS = 3                  # the army attacks in this many groups, a semi-concave...
+ATTACK_GROUP_SPREAD_CELLS = 5      # ...the side groups this far either side of the target
+ATTACK_GROUP_MIN_UNITS = 6         # ...once the army has this many units
 HOME_GUARD_SIZE = 2
 HOME_GUARD_TYPES = ("e1", "e3")
 GARRISON_SIZE = 4
@@ -276,6 +313,15 @@ RALLY_TOLERANCE_CELLS = 2
 # -- enemy memory ----------------------------------------------------------------------------------
 ENEMY_UNIT_MEMORY_SECONDS = 90.0   # forget an unseen enemy unit after this
 MEMORY_CLEAR_RADIUS_CELLS = 4      # or when we stand on its last cell and it isn't there
+ATTACK_STALL_SECONDS = 40.0        # attacking with no kills and nothing in sight this long: a stale target
+TRANSFORM_RADIUS_CELLS = 4         # an enemy MCV this close to a remembered yard: the yard packed up
+HOME_RAID_RADIUS_CELLS = 10        # enemies this close to a yard or harvester of ours are raiding us...
+SMALL_RAID_VALUE = 1500            # ...and if worth at most this, units at home deal with them
+RESPONSE_VALUE_RATIO = 2.0         # send at least this x the raiders' value...
+RESPONSE_MIN_UNITS = 2             # ...and at least this many units
+SECOND_FACTORY_SECONDS = 360.0     # a second war factory after this once FUNDS_RICH is banked
+STALL_FORGET_CELLS = 10            # ...forget remembered buildings this close to the army...
+STALL_IGNORE_ADVICE_SECONDS = 60.0 # ...and ignore the advisor's army target this long (the hunter leads)
 
 # -- models (off the hot path; never waited on) -------------------------------------------------------
 ADVISOR_INTERVAL_SECONDS = 6.0

@@ -266,7 +266,10 @@ def test_live_shape_prices_the_army_from_unit_costs():
 def test_live_shape_army_attacks_once_it_is_real():
     units = [{"id": i, "type": "1tnk", "x": 5, "y": 5, "hp": 100} for i in range(30, 33)]
     agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
-    state = GameState.from_mcp_state(_live_raw(_t=200.0, buildings=BASE, units=units))   # past the early hold
+    agent.choose_action(GameState.from_mcp_state(_live_raw(_t=196.0, buildings=BASE, units=units)),
+                        DecisionContext(session_id="s", tournament_id=None, game_type="red_alert", agent_id="me",
+                                        seat_position=0, game_config=LIVE_CONFIG))     # the attack call...
+    state = GameState.from_mcp_state(_live_raw(_t=200.0, buildings=BASE, units=units))   # ...confirmed 4 s on
     ctx = DecisionContext(session_id="s", tournament_id=None, game_type="red_alert", agent_id="me",
                           seat_position=0, game_config=LIVE_CONFIG)
     dec = agent.choose_action(state, ctx)
@@ -310,7 +313,7 @@ def test_harvesters_come_before_tanks():
 
 
 def test_a_queued_harvester_counts_toward_the_target():
-    v = _view(buildings=_ECON_BASE, units=_harvs(2),
+    v = _view(buildings=_ECON_BASE, units=_harvs(2), economy={"cash": 3000},
               production=[{"item": "harv", "queue": "Vehicle", "ready": False}])
     items = [x.get("item") for x in executor._production_orders(v, Mode.BUILD)]
     assert "harv" not in items and "1tnk" in items
@@ -344,38 +347,14 @@ def test_patrol_route_rings_the_map_from_our_corner():
     assert all(8 <= x <= 39 and 8 <= y <= 39 for x, y in route)
 
 
-def test_a_scout_vehicle_is_trained_once_harvesters_are_full():
-    v = _view(buildings=_ECON_BASE, units=_harvs(3),
-              available_production=["e1", "e3", "1tnk", "harv", "jeep"])
-    assert any(x.get("item") == "jeep" for x in executor._production_orders(v, Mode.BUILD, has_scout=False))
-    assert not any(x.get("item") == "jeep" for x in executor._production_orders(v, Mode.BUILD, has_scout=True))
-
-
-def test_patrol_claims_the_jeep_and_walks_the_ring():
-    jeep = {"id": 40, "type": "jeep", "x": 5, "y": 5, "hp": 100, "idle": True}
-    p = scout.Patrol()
-    v = _view(units=[jeep], _t=400.0)
-    p.update(v)
-    assert p.unit_id == 40
-    assert p.orders(v) == [{"cmd": "move", "units": [40], "to": [8, 8]}]
-    assert p.orders(_view(units=[jeep], _t=400.5)) == []        # idle flag lags: wait
-    assert p.orders(_view(units=[jeep], _t=403.0))[0]["to"] == [23, 8]  # next leg
-
-
-def test_a_rifle_scouts_until_a_vehicle_exists():
-    rifle = [{"id": 30, "type": "e1", "x": 5, "y": 5, "hp": 100, "idle": True}]
-    p = scout.Patrol()
-    p.update(_view(units=rifle, available_production=["e1", "jeep"]))
-    assert p.unit_id == 30  # don't wait for a jeep that may never be afforded
-    p.update(_view(units=rifle + [{"id": 40, "type": "jeep", "x": 5, "y": 5, "hp": 100}]))
-    assert p.unit_id == 40  # the rifle hands over to the vehicle
-
-
-def test_a_dead_scout_is_replaced():
-    p = scout.Patrol()
-    p.update(_view(units=[{"id": 40, "type": "jeep", "x": 5, "y": 5, "hp": 100}]))
-    p.update(_view(units=[{"id": 41, "type": "jeep", "x": 5, "y": 5, "hp": 100}]))
-    assert p.unit_id == 41
+def test_the_scout_corps_trains_a_scout_when_none_can_be_claimed():
+    from agent.redalert.scouting import ScoutCorps
+    corps = ScoutCorps()
+    v = _view(buildings=_ECON_BASE, available_production=["e1", "e3", "1tnk", "harv", "dog"])
+    corps.update(v)
+    assert corps.production(v) == [{"cmd": "train", "item": "dog", "count": 1}]      # dogs first
+    no_dogs = _view(buildings=_ECON_BASE, available_production=["e1", "e3", "1tnk", "harv"])
+    assert corps.production(no_dogs) == [{"cmd": "train", "item": "e1", "count": 1}]
 
 
 def test_the_scout_is_kept_out_of_the_army():
@@ -487,7 +466,7 @@ def test_match_log_records_samples_refusals_and_the_result(tmp_path):
     [jsonl] = tmp_path.glob("*.jsonl")
     kinds = [json.loads(line)["kind"] for line in jsonl.read_text(encoding="utf-8").splitlines()]
     assert kinds[0] == "start" and "sample" in kinds and "mode" in kinds and kinds[-1] == "end"
-    assert kinds.count("refused") == 2  # the batch refusal and the engine's later verdict
+    assert kinds.count("refused") >= 2  # the batch refusal (each order in it) and the engine's later verdict
     md = jsonl.with_suffix(".md").read_text(encoding="utf-8")
     assert "## Timeline" in md and "deploy (batch_refused): 1" in md
 
@@ -585,8 +564,9 @@ def test_retreat_attack_moves_back_to_the_staging_point():
 def test_the_agent_retreats_after_its_attack_goes_bad():
     units = [{"id": 30 + i, "type": "1tnk", "x": 38, "y": 38, "hp": 100} for i in range(3)]
     agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
+    agent.choose_action(_state(_t=396.0, buildings=BASE, units=units, military={"army_value": 2100}), CTX)
     agent.choose_action(_state(_t=400.0, buildings=BASE, units=units, military={"army_value": 2100}), CTX)
-    assert agent._mode is Mode.ALL_IN
+    assert agent._mode is Mode.ALL_IN                                       # confirmed 4 s later
     enemies = [{"id": 70 + i, "type": "1tnk", "x": 39, "y": 39, "hp": 100} for i in range(5)]
     dec = agent.choose_action(_state(_t=400.0, buildings=BASE, units=units, visible_enemies=enemies,
                                      military={"army_value": 2100, "visible_enemy_value": 3500}), CTX)
@@ -664,9 +644,20 @@ def test_an_opening_attack_is_still_a_rush():
 
 
 def test_the_threat_window_runs_from_the_last_sighting():
-    near = [{"id": 50, "type": "e1", "x": 7, "y": 7, "hp": 100}, {"id": 51, "type": "e1", "x": 8, "y": 8, "hp": 100}]
+    near = [{"id": 50 + i, "type": "3tnk", "x": 7, "y": 7, "hp": 100} for i in range(6)]   # a real threat
     assert brain.update_cheese_since(_view(_t=300.0, visible_enemies=near), 100.0) == 300.0
-    assert brain.update_cheese_since(_view(_t=310.0), 300.0) == 300.0  # one clear view doesn't end it
+    assert brain.update_cheese_since(_view(_t=305.0), 300.0) == 300.0  # one clear view doesn't end it
+    assert brain.update_cheese_since(_view(_t=311.0), 300.0) is None   # 10 s clear: back out (mid-game)
+
+
+def test_a_small_raid_mid_game_does_not_recall_the_army():
+    two = [{"id": 50, "type": "e1", "x": 7, "y": 7, "hp": 100}, {"id": 51, "type": "e1", "x": 8, "y": 8, "hp": 100}]
+    assert scout.detect_cheese(_view(_t=300.0, visible_enemies=two)) is None            # home units handle it
+    assert scout.detect_cheese(_view(_t=100.0, visible_enemies=two)) is not None        # early: a rush
+    six = [{"id": 50 + i, "type": "3tnk", "x": 7, "y": 7, "hp": 100} for i in range(6)]
+    assert scout.detect_cheese(_view(_t=300.0, visible_enemies=six)) is not None        # a real attack
+    guards = [{"id": 30 + i, "type": "3tnk", "x": 6, "y": 6, "hp": 100} for i in range(8)]
+    assert scout.detect_cheese(_view(_t=300.0, visible_enemies=six, units=guards)) is None   # home holds it
 
 
 def test_an_old_under_attack_event_is_not_a_fresh_threat():
@@ -675,12 +666,14 @@ def test_an_old_under_attack_event_is_not_a_fresh_threat():
     assert scout.detect_cheese(old) is None and scout.detect_cheese(fresh) is not None
 
 
-def test_army_training_pauses_while_an_economy_item_builds():
+def test_units_only_spend_what_the_economy_does_not_need():
     army = [{"id": 30 + i, "type": "e1", "x": 5, "y": 5, "hp": 100} for i in range(6)]
-    busy = _view(buildings=BASE, units=army, production=[{"item": "proc", "queue": "Building", "ready": False}])
-    assert executor._production_orders(busy, Mode.BUILD) == []
-    few = _view(buildings=BASE, units=army[:2], production=[{"item": "proc", "queue": "Building", "ready": False}])
-    assert any(o.get("item") == "e1" for o in executor._production_orders(few, Mode.BUILD))
+    q = [{"item": "proc", "queue": "Building", "ready": False, "progress": 0.25}]
+    tight = _view(buildings=BASE, units=army, production=q, economy={"cash": 1000})   # 1050 still owed + next step
+    assert not any(o.get("item") == "e1" for o in executor._production_orders(tight, Mode.BUILD))
+    flush = _view(buildings=BASE, units=army, production=q, economy={"cash": 3000})
+    assert any(o.get("item") == "e1" for o in executor._production_orders(flush, Mode.BUILD))
+    assert any(o.get("item") == "e1" for o in executor._production_orders(tight, Mode.BUILD, threat=True))
 
 
 # -- lessons from match 9a9cd98e + harvester raids ---------------------------
@@ -761,7 +754,7 @@ def test_raid_disbands_when_the_base_needs_defending():
 
 def test_the_army_leaves_the_raid_squad_alone():
     agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
-    state = _state(_t=400.0, buildings=BASE, units=_raid_army(4, 7), visible_enemies=[_ENEMY_HARV],  # 1 rifle scouts
+    state = _state(_t=400.0, buildings=BASE, units=_raid_army(4, 10), visible_enemies=[_ENEMY_HARV],  # 4 rifles scout
                    military={"army_value": 3000, "visible_enemy_value": 2500})   # massing, not attacking
     orders_ = agent.choose_action(state, CTX).action["orders"]
     raid = [o for o in orders_ if o.get("target") == 90]
@@ -1007,10 +1000,12 @@ def test_power_goes_to_the_back_and_off_the_ore_side():
     assert x < 10
 
 
-def test_war_factory_and_depot_face_the_front_off_the_ore_side():
+def test_war_factory_and_depot_go_to_the_side_off_the_ore_not_into_the_front():
     wx, wy = buildplan.placement_cell(_layout_view(), "weap")
-    assert (wx - 10) + (wy - 10) > 0           # toward the enemy (south-east)
-    assert wy - 10 > (wx - 10) * 0.5           # turned off the ore (north-east) side
+    assert (wy - 10) > (wx - 10)               # the side away from the ore (north-east)
+    assert (wx - 10) + (wy - 10) >= 0          # not behind the base
+    stage = scout.choke_cell(_layout_view())
+    assert (wx + 1 - stage[0]) ** 2 + (wy + 1 - stage[1]) ** 2 > 3 ** 2   # off the army's massing point
 
 
 def test_placement_keeps_a_gap_instead_of_cramming():
@@ -1094,6 +1089,7 @@ def test_model_hold_cannot_stop_an_overwhelming_attack():
 def test_the_army_commits_instead_of_flip_flopping():
     tanks = [{"id": 30 + i, "type": "1tnk", "x": 22, "y": 22, "hp": 100} for i in range(4)]
     agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
+    agent.choose_action(_state(_t=366.0, buildings=BASE, units=tanks, military={"army_value": 2800}), CTX)
     agent.choose_action(_state(_t=370.0, buildings=BASE, units=tanks, military={"army_value": 2800}), CTX)
     assert agent._mode is Mode.ALL_IN
     behind = {"army_value": 2800, "visible_enemy_value": 2500}   # edge 1.12: the policy would say BUILD
@@ -1243,10 +1239,10 @@ def test_saturated_refineries_get_another_refinery_not_more_trucks():
     assert buildplan.next_build_orders(v) == [{"cmd": "build", "item": "proc"}]
 
 
-def test_when_broke_only_one_unit_queue_gets_orders():
+def test_when_broke_the_build_order_keeps_its_money():
     v = _view(buildings=_ECON_BASE, units=_harvs(3), economy={"cash": 100, "ore": 0})
     items = [o.get("item") for o in executor._production_orders(v, Mode.BUILD)]
-    assert items == ["e1"]                                # one rifleman; no rockets, no tanks
+    assert items == []                                    # the next power plant comes first
     rich = _view(buildings=_ECON_BASE, units=_harvs(3), economy={"cash": 3000})
     assert "e3" in [o.get("item") for o in executor._production_orders(rich, Mode.BUILD)]
 
@@ -1412,7 +1408,8 @@ def test_the_army_escorts_the_mcv_instead_of_attacking():
     mcv = [{"id": 70, "type": "mcv", "x": 10, "y": 8, "hp": 100}]
     dec = agent.choose_action(_state(_t=300.0, buildings=BASE, units=tanks + mcv, military={"army_value": 4000}), CTX)
     assert agent._mode is Mode.BUILD
-    assert any(o.get("to") == [20, 8] and o["cmd"] == "attack_move" for o in dec.action["orders"])  # staging at the site
+    assert any(o["cmd"] == "attack_move" and (o["to"][0] - 20) ** 2 + (o["to"][1] - 8) ** 2 <= 5 ** 2
+               for o in dec.action["orders"])                                # a concave at the site
 
 
 def test_the_expansion_refinery_goes_beside_the_new_ore():
@@ -2194,7 +2191,10 @@ def test_an_overwhelming_army_splits_between_two_enemy_clusters():
     assert len(o) == 2 and {tuple(x["to"]) for x in o} == {(40, 40), (40, 10)}
     assert sorted(len(x["units"]) for x in o) == [5, 5]
     even = dataclasses.replace(v, enemy_army_value=10000.0)
-    assert len(executor._army_orders(even, Mode.ALL_IN)) == 1                 # not overwhelming: stay together
+    together = executor._army_orders(even, Mode.ALL_IN)                       # not overwhelming: one target...
+    centre = together[len(together) // 2]["to"]
+    assert all((x["to"][0] - centre[0]) ** 2 + (x["to"][1] - centre[1]) ** 2 <= 6 ** 2
+               for x in together)                                             # ...in a semi-concave round it
 
 
 # -- detecting a mined-out home field and switching to the expansion -----------------------------
@@ -2340,26 +2340,6 @@ def test_no_flanking_before_five_minutes():
     late = _view(_t=400.0, visible_enemies=center_threat, visible_enemy_buildings=their_base)
     assert agent._pick_route(early, None) is None
     assert agent._pick_route(late, None) is not None                       # guarded middle: flank later
-
-
-def _off_line(c):
-    """Distance from the straight base [4,4] -> enemy [40,40] line (the middle)."""
-    return abs(c[0] - c[1]) / 2 ** 0.5
-
-
-def test_early_scout_watches_their_base_from_a_flank_not_down_the_middle():
-    flank, lookout = scout.early_route(_view(_t=60.0))                     # base [4,4], enemy [40,40]
-    assert 10 ** 2 <= (lookout[0] - 40) ** 2 + (lookout[1] - 40) ** 2 <= 14 ** 2   # over the ground in front of their base
-    assert lookout[0] < 40 and lookout[1] < 40                            # on our side of it, where a push masses
-    assert _off_line(lookout) >= 2 and _off_line(flank) >= 8              # approached from the flank
-    other_flank, _ = scout.early_route(_view(_t=60.0), side=-1)
-    assert (flank[0] - flank[1]) * (other_flank[0] - other_flank[1]) < 0  # the other side
-    route = [flank, lookout]
-    p = scout.Patrol()
-    rifle = [{"id": 30, "type": "e1", "x": 5, "y": 5, "hp": 100, "idle": True}]
-    v = _view(_t=60.0, units=rifle)
-    p.update(v)
-    assert p.orders(v)[0]["to"] == list(route[0])                          # out along the flank first
 
 
 def test_an_early_push_is_spotted_and_we_hold_at_home():
@@ -2754,10 +2734,10 @@ def test_broke_and_trading_even_overrides_an_advisor_wait():
     assert e.state == "scouting"
 
 
-def test_army_training_waits_for_the_expansion_mcv():
+def test_the_expansion_mcv_is_pre_funded():
     units = [{"id": 30 + i, "type": "e1", "x": 10, "y": 10, "hp": 100} for i in range(8)]
-    v = _view(buildings=BASE, units=units, production=[{"item": "mcv", "queue": "Vehicle"}])
-    assert executor._economy_first(v)
+    v = _view(buildings=BASE, units=units, production=[{"item": "mcv", "queue": "Vehicle", "progress": 0.2}])
+    assert buildplan.build_reserve(v) >= 0.8 * 2500                      # what is left of the MCV is set aside
 
 
 # -- 654f1b2e: finish a dominated enemy; no MCV for a field our base reaches ------------------------
@@ -2821,36 +2801,12 @@ def test_an_undefended_target_needs_no_mass():
     assert brain.can_break_defenses(v)
 
 
-def test_the_opening_keeps_a_small_guard_until_the_war_factory():
-    four = [{"id": 30 + i, "type": "e1", "x": 10, "y": 10, "hp": 100} for i in range(4)]
-    o = executor._production_orders(_view(buildings=BASE, units=four), Mode.BUILD)
-    assert [x for x in o if x.get("item") == "e1"] == [{"cmd": "train", "item": "e1", "count": 1}]
-    five = four + [{"id": 40, "type": "e1", "x": 10, "y": 10, "hp": 100}]
-    assert not [x for x in executor._production_orders(_view(buildings=BASE, units=five), Mode.BUILD)
-                if x.get("item") in ("e1", "e3")]
-    rush = executor._production_orders(_view(buildings=BASE, units=five), Mode.DEFEND_RUSH)
-    assert any(x.get("item") == "e1" for x in rush)                # a rush is still answered
-    factory = BASE + [{"id": 12, "type": "weap", "x": 4, "y": 8}]
-    assert any(x.get("item") == "e1" for x in executor._production_orders(_view(buildings=factory, units=five), Mode.BUILD))
-
-
-def test_a_dead_rifle_scout_is_replaced_later_on_the_other_flank():
-    p = scout.Patrol()
-    rifles = [{"id": 30 + i, "type": "e1", "x": 5, "y": 5, "hp": 100, "idle": True} for i in range(3)]
-    p.update(_view(_t=60.0, units=rifles))
-    first = p.unit_id
-    flank_a = p.orders(_view(_t=60.0, units=rifles))[0]["to"]
-    left = [u for u in rifles if u["id"] != first]
-    p.update(_view(_t=70.0, units=left))
-    assert p.unit_id is None                                               # no new rifle thrown in yet
-    p.update(_view(_t=165.0, units=left))
-    assert p.unit_id is not None and p.unit_id != first
-    flank_b = p.orders(_view(_t=165.0, units=left))[0]["to"]
-    assert (flank_a[0] - flank_a[1]) * (flank_b[0] - flank_b[1]) < 0      # the other flank
-    q = scout.Patrol()
-    q.update(_view(_t=60.0, units=rifles[:1]))
-    q.update(_view(_t=61.0, units=[{"id": 50, "type": "jeep", "x": 5, "y": 5, "hp": 100, "idle": True}]))
-    assert q.unit_id == 50                                                 # vehicles are claimed at once
+def test_no_infantry_cap_only_the_build_order_reserve():
+    many = [{"id": 30 + i, "type": "e1", "x": 10, "y": 10, "hp": 100} for i in range(14)]
+    rich = _view(buildings=BASE, units=many, economy={"cash": 2500})
+    assert any(x.get("item") == "e1" for x in executor._production_orders(rich, Mode.BUILD))   # 14 and counting
+    rush = executor._production_orders(_view(buildings=BASE, units=many, economy={"cash": 150}), Mode.DEFEND_RUSH)
+    assert any(x.get("item") == "e1" for x in rush)                # a rush is answered whatever the reserve
 
 
 # -- one army: commit together or retreat together (fd507a58: the garrison pulled troops out of an attack)
@@ -2878,7 +2834,8 @@ def test_no_squad_claims_during_an_attack_and_raiders_join_it():
     r = Raid()
     r.unit_ids, r._formed_size = [30, 31, 32], 3
     r.update(dataclasses.replace(v, enemy_units=read(_raw(visible_enemies=[_ENEMY_HARV])).enemy_units), Mode.ALL_IN, None)
-    assert r.unit_ids == []                                         # the raiders go with the attack
+    assert r.unit_ids == [30, 31, 32]                               # the raid stays: it is the second prong
+    assert r.orders(v, main_fight=(30, 30)) == [{"cmd": "attack_move", "units": [30, 31, 32], "to": [30, 30]}]
 
 
 # -- the observation reports a building's centre; placement takes its top-left (fd507a58 audit) -----
@@ -2967,3 +2924,302 @@ def test_units_stepping_aside_are_left_out_of_army_orders():
     first = moved[0]["units"]                                               # the step-aside order comes first
     later = [i for x in moved[1:] for i in x["units"]]
     assert first and not set(first) & set(later), (first, later)            # nobody walks them back
+
+
+# -- TEST ONLY: the self-play sparring rusher (agent/redalert/testrush.py; remove with it) -----------
+
+from agent.redalert import testrush  # noqa: E402
+
+
+def _ctx(seat, tournament=None, session="spar-1"):
+    return DecisionContext(session_id=session, tournament_id=tournament, game_type="red_alert",
+                           agent_id="me", seat_position=seat)
+
+
+def test_the_rusher_wakes_only_against_ourselves_in_a_test_match(monkeypatch, tmp_path):
+    monkeypatch.setenv("RA_TEST_RUSH", "1")
+    monkeypatch.setattr(testrush, "_MARKER_DIR", tmp_path)
+    seat0, seat1 = testrush.SelfPlayRusher(), testrush.SelfPlayRusher()
+    assert not seat1.active(_ctx(1))                       # alone so far: not known to be self-play
+    assert not seat0.active(_ctx(0))                       # seat 0 sees seat 1: self-play, but it defends
+    assert seat1.active(_ctx(1))                           # seat 1 sees seat 0: it rushes
+    other = testrush.SelfPlayRusher()
+    assert not other.active(_ctx(1, tournament="t-1", session="spar-1"))   # never in a tournament game
+
+
+def test_the_rusher_can_be_turned_off_or_moved(monkeypatch, tmp_path):
+    monkeypatch.setattr(testrush, "_MARKER_DIR", tmp_path)
+    monkeypatch.setenv("RA_TEST_RUSH", "0")
+    a, b = testrush.SelfPlayRusher(), testrush.SelfPlayRusher()
+    a.active(_ctx(0, session="spar-2")); assert not b.active(_ctx(1, session="spar-2"))
+    monkeypatch.setenv("RA_TEST_RUSH", "1")
+    monkeypatch.setenv("RA_TEST_RUSH_SEAT", "0")
+    c, d = testrush.SelfPlayRusher(), testrush.SelfPlayRusher()
+    d.active(_ctx(1, session="spar-3"))
+    assert c.active(_ctx(0, session="spar-3"))
+
+
+def test_the_rusher_masses_a_ball_then_pushes_until_it_is_spent():
+    rifles = [{"id": 30 + i, "type": "e1", "x": 10, "y": 10, "hp": 100} for i in range(12)]
+    v = _view(_t=130.0, buildings=BASE, units=rifles, military={"army_value": 1200})
+    r = testrush.SelfPlayRusher()
+    assert r.mode(v, None) is Mode.BUILD                                       # 1200: still massing
+    assert r.mode(dataclasses.replace(v, army_value=2600), None) is Mode.ALL_IN   # the ball launches
+    assert r.mode(dataclasses.replace(v, army_value=1300), None) is Mode.ALL_IN   # pushing: 43% of 2600 left
+    assert r.mode(dataclasses.replace(v, army_value=900), None) is Mode.BUILD     # spent: re-mass
+    assert r.mode(dataclasses.replace(v, army_value=1600), None) is Mode.BUILD    # not the next ball yet...
+    late = dataclasses.replace(v, game_seconds=215.0, army_value=1600)
+    assert r.mode(late, None) is Mode.ALL_IN                                   # ...but by 3:30 it goes anyway
+    assert brain.choose_mode(v, cheese_since=None) is Mode.BUILD               # our own agent holds
+
+
+def test_the_rusher_produces_without_pause_and_builds_barracks():
+    rifles = [{"id": 30 + i, "type": "e1", "x": 10, "y": 10, "hp": 100} for i in range(12)]
+    q2 = [{"item": "e1", "queue": "Infantry", "ready": False}] * 2
+    v = _view(_t=130.0, buildings=BASE, units=rifles, production=q2)
+    assert any(x.get("item") == "e1" for x in executor._production_orders(v, Mode.BUILD, rusher=True))   # 3 deep
+    assert not any(x.get("item") == "e1" for x in executor._production_orders(v, Mode.BUILD))            # ours: capped
+    blds = BASE + [{"id": 13, "type": "proc", "x": 9, "y": 9}, {"id": 14, "type": "powr", "x": 1, "y": 1}]
+    o = buildplan.next_build_orders(_view(buildings=blds, economy={"cash": 2000}), rusher=True)
+    assert o == [{"cmd": "build", "item": "tent"}]                             # a second barracks right away
+
+
+# -- c2fec761: legal growth spots, no stall on stale targets, memory follows a moving yard, home responders
+
+from agent.redalert.memory import EnemyMemory  # noqa: E402
+
+_NO_AREA_T = {"pbox", "hbox", "gun", "ftur", "tsla", "agun", "sam"}
+
+
+def _real_gap(v, item, spot):
+    nw, nh = C.FOOTPRINTS.get(item, (2, 2))
+    r = (spot[0], spot[1], spot[0] + nw - 1, spot[1] + nh - 1)
+    gaps = []
+    for b in v.buildings:
+        if b.type in _NO_AREA_T:
+            continue
+        w, h = C.FOOTPRINTS.get(b.type, (2, 2))
+        q = (b.cell[0], b.cell[1], b.cell[0] + w - 1, b.cell[1] + h - 1)
+        gaps.append(max(max(q[0] - r[2], r[0] - q[2]) - 1, max(q[1] - r[3], r[1] - q[3]) - 1))
+    return min(gaps)
+
+
+def test_grown_buildings_are_always_one_cell_from_a_building_even_on_a_diagonal():
+    blds = [{"id": 10, "type": "fact", "x": 30, "y": 30}, {"id": 11, "type": "powr", "x": 27, "y": 30}]
+    v = _view(buildings=blds, base_center=[31, 31])
+    for bearing in ((-0.707, -0.707), (0.707, 0.707), (1.0, 0.0), (0.0, -1.0), (-0.6, 0.8)):
+        for item in ("barr", "weap", "powr", "fix"):
+            spot = buildplan.grow_spot(v, bearing, item)
+            assert spot is not None and _real_gap(v, item, spot) == 1, (bearing, item, spot)
+
+
+def test_a_stalled_attack_forgets_stale_buildings_and_drops_the_advisor_target():
+    from agent.redalert.agent import RedAlertAgent
+    a = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
+    a._mode = Mode.ALL_IN
+    army = [{"id": 30 + i, "type": "3tnk", "x": 22, "y": 44, "hp": 100} for i in range(6)]
+    ghost = [{"id": 90, "type": "powr", "x": 29, "y": 44, "hp": 100}]           # destroyed, still remembered
+    a._memory.update(_view(_t=500.0, visible_enemy_buildings=ghost))
+    for t in (520.0, 545.0):
+        a._break_stall(_view(_t=t, units=army, military={"kills_cost": 42900}))
+    assert [b.id for b in a._memory.buildings] == [90]                           # not stalled long enough yet
+    a._break_stall(_view(_t=562.0, units=army, military={"kills_cost": 42900}))
+    assert a._memory.buildings == []                                             # 42 s, no kills: forgotten
+    adv = ra_advisor.parse_advice({**_ANSWER, "army_target": [23, 44]}, _view(), 100.0)
+    assert a._army_advice(adv, False, _view(_t=570.0)).army_target is None       # the hunter leads a while
+    assert a._army_advice(adv, False, _view(_t=700.0)).army_target is not None
+    assert a._army_advice(adv, True, _view(_t=700.0)).army_target is None        # finishing: rules aim
+
+
+def test_memory_keeps_a_building_where_we_last_saw_it_and_follows_a_packed_up_yard():
+    m = EnemyMemory()
+    m.update(_view(_t=100.0, visible_enemy_buildings=[{"id": 90, "type": "fact", "x": 40, "y": 40, "hp": 100}]))
+    m.update(_view(_t=110.0, visible_enemy_buildings=[{"id": 90, "type": "fact", "x": 41, "y": 40, "hp": 100}]))
+    assert [b.cell for b in m.buildings] == [(41, 40)]                          # refreshed to where we saw it now
+    m.update(_view(_t=120.0, visible_enemies=[{"id": 95, "type": "mcv", "x": 42, "y": 41, "hp": 100}]))
+    assert m.buildings == [] and [u.type for u in m.units] == ["mcv"]           # packed up: follow the MCV
+    v = dataclasses.replace(_view(buildings=BASE), known_enemy_units=m.units)
+    assert executor._attack_target(v) == (42, 41)                               # and hunt it down
+    m.update(_view(_t=130.0, visible_enemy_buildings=[{"id": 99, "type": "fact", "x": 43, "y": 41, "hp": 100}]))
+    assert [u.type for u in m.units] == [] and [b.id for b in m.buildings] == [99]   # deployed again
+
+
+def test_units_at_home_kill_a_small_raid_while_the_army_is_out():
+    ranger = [{"id": 70, "type": "jeep", "x": 9, "y": 10, "hp": 20}]
+    home = [{"id": 30, "type": "e3", "x": 10, "y": 10, "hp": 100}, {"id": 31, "type": "e1", "x": 11, "y": 11, "hp": 100}]
+    away = [{"id": 40 + i, "type": "3tnk", "x": 38, "y": 38, "hp": 100} for i in range(6)]
+    v = _view(_t=600.0, buildings=BASE, units=home + away, visible_enemies=ranger)
+    o, ids = executor.home_response(v, Mode.ALL_IN, None, frozenset())
+    assert o == [{"cmd": "attack", "units": [30, 31], "target": 70}] and ids == {30, 31}
+    army = executor._army_orders(v, Mode.ALL_IN, reserved=frozenset(ids))
+    assert not any(set(x["units"]) & ids for x in army)                         # the army leaves them to it
+    big = [{"id": 70 + i, "type": "3tnk", "x": 9, "y": 10, "hp": 100} for i in range(6)]       # 1800 > 1500
+    assert executor.home_response(_view(buildings=BASE, units=home, visible_enemies=big), Mode.ALL_IN, None, frozenset()) == ([], set())
+
+
+def test_a_mid_game_bank_buys_a_second_war_factory_and_a_deeper_tank_queue():
+    v = _view(_t=400.0, buildings=_ECON_BASE, units=_harvs(6), economy={"cash": 400, "ore": 3000},
+              available_production=["powr", "tent", "proc", "weap", "e1", "e3", "1tnk", "harv"])
+    assert any(o.get("item") == "weap" for o in buildplan.next_build_orders(v))
+    early = dataclasses.replace(v, game_seconds=300.0)
+    assert not any(o.get("item") == "weap" for o in buildplan.next_build_orders(early))
+    q = [{"item": "1tnk", "queue": "Vehicle", "ready": False}]
+    assert any(o.get("item") == "1tnk" for o in executor._production_orders(dataclasses.replace(v, production=q), Mode.BUILD))
+
+
+# -- 5aea2632 (vs Ryanxhuang): raid tactics, two-pronged attack, scout survival, early guard ---------
+
+def _raid_with(units, enemies, t=400.0):
+    r = Raid()
+    r.unit_ids, r._formed_size = [u["id"] for u in units], len(units)
+    return r, _view(_t=t, buildings=BASE, units=units, visible_enemies=enemies)
+
+
+_RAIDERS = [{"id": 30 + i, "type": "e3", "x": 30, "y": 30, "hp": 100} for i in range(4)]
+_THEIR_HARV = {"id": 90, "type": "harv", "x": 31, "y": 31, "hp": 100}
+
+
+def test_the_raid_kills_defenders_before_harvesters():
+    rifle = {"id": 80, "type": "e1", "x": 32, "y": 30, "hp": 40}
+    r, v = _raid_with(_RAIDERS, [_THEIR_HARV, rifle])
+    assert r.situation(v)[0] == "fight"
+    assert r.orders(v) == [{"cmd": "attack", "units": [30, 31, 32, 33], "target": 80}]
+    r2, v2 = _raid_with(_RAIDERS, [_THEIR_HARV])
+    assert r2.orders(v2) == [{"cmd": "attack", "units": [30, 31, 32, 33], "target": 90}]   # undefended: the truck
+
+
+def test_an_outmatched_raid_pulls_back_fighting_and_marks_their_army_distracted():
+    tanks = [{"id": 80 + i, "type": "3tnk", "x": 32, "y": 31, "hp": 100} for i in range(6)]
+    r, v = _raid_with(_RAIDERS, [_THEIR_HARV] + tanks)
+    assert r.situation(v)[0] == "outmatched"
+    o = r.orders(v)
+    assert o[0]["cmd"] == "attack_move" and o[0]["to"] == list(scout.choke_cell(v))
+    assert r.distracting(v) and not r.distracting(dataclasses.replace(v, game_seconds=440.0))
+
+
+def test_a_distracted_enemy_army_opens_the_centre_for_our_main_army():
+    ours = [{"id": 40 + i, "type": "3tnk", "x": 10, "y": 10, "hp": 100} for i in range(8)]
+    theirs = [{"id": 80 + i, "type": "3tnk", "x": 30, "y": 30, "hp": 100} for i in range(6)]
+    v = _view(_t=400.0, buildings=BASE + [{"id": 12, "type": "weap", "x": 4, "y": 8}], units=ours,
+              visible_enemies=theirs, military={"army_value": 2400, "visible_enemy_value": 2000})
+    assert brain.choose_mode(v, cheese_since=None, prev_mode=Mode.BUILD) is Mode.BUILD        # edge 1.2: hold
+    assert brain.choose_mode(v, cheese_since=None, prev_mode=Mode.BUILD, distraction=True) is Mode.ALL_IN
+    weaker = dataclasses.replace(v, units=v.units[:4])
+    assert brain.choose_mode(weaker, cheese_since=None, prev_mode=Mode.BUILD, distraction=True) is Mode.BUILD
+
+
+# -- intel, the scout corps, the build-order reserve, semi-concave attacks, look before committing ---
+
+from agent.redalert.intel import EnemyIntel  # noqa: E402
+from agent.redalert.scouting import ScoutCorps  # noqa: E402
+
+
+def _their_base(*types):
+    return [{"id": 80 + i, "type": t, "x": 36 + (i % 3) * 3, "y": 36 + (i // 3) * 3, "hp": 100} for i, t in enumerate(types)]
+
+
+def test_one_refinery_and_a_war_factory_early_reads_as_a_rush():
+    i = EnemyIntel()
+    i.update(_view(_t=110.0, visible_enemy_buildings=_their_base("fact", "powr", "tent", "proc", "weap")))
+    assert i.opening() == "rush" and i.rushing(_view(_t=110.0)) and not i.rushing(_view(_t=400.0))
+    j = EnemyIntel()
+    j.update(_view(_t=110.0, visible_enemy_buildings=_their_base("fact", "powr", "tent", "proc", "proc")))
+    assert j.opening() == "economy"
+    k = EnemyIntel()
+    k.update(_view(_t=110.0, visible_enemy_buildings=_their_base("fact", "powr")))
+    assert k.opening() is None                                               # haven't seen enough yet
+
+
+def test_two_early_scouts_round_the_back_of_their_base_left_and_right():
+    corps = ScoutCorps()
+    v = dataclasses.replace(_view(_t=60.0), bounds=(0, 0, 96, 96))         # base [4,4], enemy [40,40], room behind
+    left, right = corps.circuit(v, 1), corps.circuit(v, -1)
+    assert left[0] != right[0] and left[1] != right[1]                      # one each side
+    for route in (left, right):
+        back = route[-1]
+        assert 8 ** 2 <= (back[0] - 40) ** 2 + (back[1] - 40) ** 2 <= 13 ** 2       # round their base...
+        assert (back[0] - 4) ** 2 + (back[1] - 4) ** 2 > (40 - 4) ** 2 + (40 - 4) ** 2 - 300   # ...at its far side
+    rifles = [{"id": 30 + i, "type": "e1", "x": 5, "y": 5, "hp": 100, "idle": True} for i in range(3)]
+    v = _view(_t=60.0, units=rifles)
+    corps.update(v)
+    assert set(corps.roles) == {"left", "right"} and corps._circling == {"left", "right"}
+    near = [{"id": 80, "type": "e1", "x": 6, "y": 6, "hp": 100}]
+    o = corps.orders(dataclasses.replace(v, enemy_units=read(_raw(visible_enemies=near)).enemy_units))
+    assert {tuple(x["to"]) for x in o} == {left[0], right[0]}                # no backing off on the circuit
+
+
+def test_after_the_circuit_a_scout_holds_a_picket_post_and_backs_off_from_fighters():
+    corps = ScoutCorps()
+    corps.roles = {"left": 30}
+    post = corps.post(_view(_t=400.0), "left")
+    at_post = [{"id": 30, "type": "e1", "x": post[0], "y": post[1], "hp": 100, "idle": True}]
+    near = [{"id": 80, "type": "e1", "x": post[0] + 2, "y": post[1] + 2, "hp": 100}]
+    o = corps.orders(_view(_t=400.0, units=at_post, visible_enemies=near))
+    assert o and o[0]["cmd"] == "move" and o[0]["to"] != list(post)          # backs off toward home
+    posts = [corps.post(_view(_t=400.0), r) for r in ("left", "p0", "p1", "right")]
+    assert len(set(posts)) == 4                                              # spread across the approach
+
+
+def test_mid_game_pickets_and_a_regular_base_check():
+    corps = ScoutCorps()
+    many = [{"id": 30 + i, "type": "e1", "x": 5, "y": 5, "hp": 100, "idle": True} for i in range(14)]
+    corps.update(_view(_t=400.0, units=many))
+    assert set(corps.roles) == {"left", "right", "p0", "p1"}
+    assert corps._circling                                                    # a base check started
+    corps._circling.clear()
+    corps.update(_view(_t=450.0, units=many))
+    assert not corps._circling                                                # not again until 150 s later
+    corps.update(_view(_t=551.0, units=many))
+    assert corps._circling
+
+
+def test_a_scout_killed_out_front_raises_the_alarm():
+    corps = ScoutCorps()
+    corps.roles = {"left": 30}
+    corps.update(_view(_t=100.0, units=[{"id": 30, "type": "e1", "x": 30, "y": 30, "hp": 100}]))
+    corps.update(_view(_t=105.0))
+    assert corps.alarm(_view(_t=110.0)) and not corps.alarm(_view(_t=140.0))
+
+
+def test_a_kennel_follows_the_war_factory_when_dogs_exist():
+    done = [{"id": 10, "type": "fact"}, {"id": 11, "type": "powr"}, {"id": 12, "type": "barr"}, {"id": 13, "type": "proc"},
+            {"id": 14, "type": "proc"}, {"id": 15, "type": "powr"}, {"id": 16, "type": "weap"}, {"id": 17, "type": "proc"},
+            {"id": 18, "type": "fix"}]
+    v = _view(buildings=done, economy={"cash": 300}, available_production=["powr", "barr", "proc", "weap", "kenn", "dog", "e1"])
+    assert buildplan.next_build_orders(v) == [{"cmd": "build", "item": "kenn"}]
+
+
+def test_the_reserve_covers_what_is_owed_and_the_next_step():
+    q = [{"item": "proc", "queue": "Building", "ready": False, "progress": 0.5}]
+    v = _view(buildings=[{"id": 10, "type": "fact"}, {"id": 11, "type": "powr"}, {"id": 12, "type": "tent"}], production=q)
+    assert buildplan.build_reserve(v) == 700 + 1400                           # half the refinery + the second refinery
+
+
+def test_the_army_attacks_in_a_semi_concave_of_groups():
+    units = [{"id": 30 + i, "type": "e1", "x": 20 + (i % 4), "y": 20 + i // 4, "hp": 100} for i in range(9)]
+    v = _view(_t=400.0, buildings=BASE, units=units, visible_enemy_buildings=[{"id": 90, "type": "fact", "x": 40, "y": 40, "hp": 100}])
+    o = executor._army_orders(v, Mode.ALL_IN)
+    assert len(o) == 3 and all(x["cmd"] == "attack_move" for x in o)
+    spots = [tuple(x["to"]) for x in o]
+    assert len(set(spots)) == 3 and sorted(len(x["units"]) for x in o) == [3, 3, 3]
+
+
+def test_an_attack_call_on_even_trades_is_checked_again_before_committing():
+    tanks = [{"id": 30 + i, "type": "3tnk", "x": 10, "y": 10, "hp": 100} for i in range(6)]
+    ahead = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
+    ahead.choose_action(_state(_t=400.0, buildings=BASE, units=tanks,
+                               military={"army_value": 5000, "visible_enemy_value": 1000, "kills_cost": 3000}), CTX)
+    assert ahead._mode is Mode.ALL_IN                                         # 3000 up on trades: no second look
+    agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
+    strong = {"army_value": 5000, "visible_enemy_value": 1000}
+    dec = agent.choose_action(_state(_t=400.0, buildings=BASE, units=tanks, military=strong), CTX)
+    assert agent._mode is not Mode.ALL_IN and agent._confirm_at == 400.0      # looking first
+    probe = agent._probe_point(read(_raw(_t=400.0, buildings=BASE, units=tanks)))
+    assert probe is not None and any(x["cmd"] == "attack_move" and abs(x["to"][0] - probe[0]) <= 4
+                                     for x in dec.action["orders"])           # edging forward to see
+    worse = {"army_value": 5000, "visible_enemy_value": 4800}                 # the fog lifts: it's even
+    agent.choose_action(_state(_t=402.0, buildings=BASE, units=tanks, military=worse), CTX)
+    assert agent._mode is not Mode.ALL_IN and agent._confirm_at is None       # called off
+    agent.choose_action(_state(_t=440.0, buildings=BASE, units=tanks, military=strong), CTX)   # past the mode dwell
+    agent.choose_action(_state(_t=444.5, buildings=BASE, units=tanks, military=strong), CTX)
+    assert agent._mode is Mode.ALL_IN                                         # still strong 4 s on: go

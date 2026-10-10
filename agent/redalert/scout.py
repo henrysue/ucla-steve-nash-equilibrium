@@ -65,6 +65,9 @@ def detect_cheese(view: View) -> dict | None:
     """
     near = enemy_threat_near_base(view)
     forward_mcv = any(a.type in (C.MCV, C.CONSTRUCTION_YARD) for a in near)
+    if (not forward_mcv and view.game_seconds >= C.CHEESE_WINDOW_SECONDS
+            and not _base_needs_army(view, near)):
+        return None   # a raid the home units and turrets can handle: the army stays on task
     if forward_mcv or len(near) >= C.CHEESE_MIN_ENEMY_UNITS:
         return {
             "kind": "forward_mcv" if forward_mcv else "unit_rush",
@@ -76,30 +79,22 @@ def detect_cheese(view: View) -> dict | None:
     return None
 
 
-def early_route(view: View, side: int = 1) -> list[tuple[int, int]]:
-    """Before 5:00 the scout shuttles between a waypoint out on one flank and
-    a lookout over the ground just in front of the enemy's main base — where
-    their army masses before an early push, the thing we most need to see.
-    (A lookout off to the side watched their natural instead: match 159f4f11
-    never raised an early-push warning.) The flank keeps it off the middle,
-    where enemies moving through the choke killed rifle scouts one after
-    another (match fd507a58: six in 3.5 minutes). ``side`` (+1 / -1) picks
-    the flank."""
-    from .observe import enemy_spawn_guess
-
-    base, enemy = view.base_center, enemy_spawn_guess(view)
-    if base is None or enemy is None:
-        return patrol_route(view)
-    dx, dy = base[0] - enemy[0], base[1] - enemy[1]
-    length = (dx * dx + dy * dy) ** 0.5 or 1.0
-    ux, uy = dx / length, dy / length               # from their base toward ours
-    px, py = -uy * side, ux * side                  # sideways
-    bow = C.SCOUT_FLANK_FRACTION * length
-    mid = _along(base, enemy, 0.5)
-    flank = _open_cell(view, (mid[0] + px * bow, mid[1] + py * bow))
-    s, k = C.EARLY_SCOUT_STANDOFF_CELLS, C.EARLY_SCOUT_SIDE_CELLS
-    lookout = _open_cell(view, (enemy[0] + ux * s + px * k, enemy[1] + uy * s + py * k))
-    return [flank, lookout]
+def _base_needs_army(view: View, near: list) -> bool:
+    """After the opening, call the army home only for a real threat: worth
+    ``BASE_DEFEND_MIN_VALUE`` and more than what already defends the base
+    (our units near it and our turrets). Two stragglers used to recall a
+    winning attack every time (match feba5f26: attack, recall, park 40-120 s,
+    attack again, six times against a rusher's stream of reinforcements)."""
+    cost = lambda a: view.unit_costs.get(a.type, C.DEFAULT_UNIT_COST)  # noqa: E731
+    threat = sum(cost(a) for a in near)
+    if threat < C.BASE_DEFEND_MIN_VALUE:
+        return False
+    yards = our_yards(view)
+    r2 = C.CHEESE_NEAR_BASE_CELLS ** 2
+    home = sum(cost(u) for u in view.combat_units
+               if u.cell is not None and any(dist2(u.cell, y) <= r2 for y in yards))
+    turrets = sum(cost(b) for b in view.buildings if b.type in C.DEFENSES and not b.wreck)
+    return threat > C.BASE_DEFEND_HOME_RATIO * (home + turrets)
 
 
 def _open_cell(view: View, cell) -> tuple[int, int]:
@@ -270,82 +265,6 @@ def patrol_route(view: View) -> list[tuple[int, int]]:
             after = min(range(len(ring)), key=lambda i: dist2(ring[i], stop))
             ring.insert(after + 1, stop)
     return ring
-
-
-class Patrol:
-    """One scout that loops :func:`patrol_route` for the whole match.
-
-    Keeps the scout's id across views (a dead scout is replaced by the next
-    claim) and which waypoint it is heading for. The army code leaves the
-    scout's id alone. ``move`` rather than ``attack_move``: the scout is there
-    to see and to pick up crates, not to fight.
-    """
-
-    def __init__(self) -> None:
-        self.unit_id: int | None = None
-        self._leg = 0
-        self._last_leg_at: float | None = None
-        self.visit: tuple[int, int] | None = None   # a one-off look (expansion site)
-        self._side = 1                               # the flank the early route takes
-        self._rifle_lost_at: float | None = None     # when the last scout died
-
-    def update(self, view: View) -> None:
-        """Keep the current scout if it is alive, else claim a new one. A
-        rifle scout hands over to a vehicle as soon as we have one."""
-        current = next((u for u in view.units if u.id == self.unit_id and not u.wreck), None)
-        if current is None and self.unit_id is not None:
-            # The scout died: the next one takes the other flank, and a rifle
-            # is replaced only after SCOUT_REPLACE_SECONDS (each one sent into
-            # the same enemies is a rifleman thrown away).
-            self._side = -self._side
-            self._rifle_lost_at = view.game_seconds
-            self.unit_id = None
-        if current is None or (current.type not in C.SCOUT_VEHICLES and self._vehicle(view) is not None):
-            rested = self._rifle_lost_at is None or view.game_seconds - self._rifle_lost_at >= C.SCOUT_REPLACE_SECONDS
-            self.unit_id = self._claim(view, rifle_ok=rested)
-            self._last_leg_at = None
-
-    def orders(self, view: View) -> list[dict]:
-        """Send the scout to its next waypoint once it is idle (arrived, or
-        stuck short of an unreachable waypoint, which it then skips)."""
-        from . import orders
-
-        scout = next((u for u in view.units if u.id == self.unit_id), None)
-        if scout is not None and self.visit is not None:
-            if scout.cell is not None and dist2(scout.cell, self.visit) <= 36:
-                self.visit = None          # looked: back to the loop
-            else:
-                return [orders.move([scout.id], list(self.visit))]
-        route = early_route(view, self._side) if view.game_seconds < C.EARLY_SCOUT_SECONDS else patrol_route(view)
-        if scout is None or not route or not scout.idle:
-            return []
-        if self._last_leg_at is not None and view.game_seconds - self._last_leg_at < C.SCOUT_MIN_LEG_SECONDS:
-            return []
-        target = route[self._leg % len(route)]
-        self._leg += 1
-        self._last_leg_at = view.game_seconds
-        return [orders.move([scout.id], list(target))]
-
-    @staticmethod
-    def _vehicle(view: View) -> int | None:
-        for kind in C.SCOUT_VEHICLES:
-            units = [u for u in view.units_of(kind) if u.id is not None]
-            if units:
-                return units[0].id
-        return None
-
-    @classmethod
-    def _claim(cls, view: View, rifle_ok: bool = True) -> int | None:
-        """A fast vehicle when we have one, else a rifle. (It used to wait
-        for a vehicle once one could be trained; in match e4caa28c no money
-        came for it and exploration stalled at ~35% for the last 6 minutes.)"""
-        vehicle = cls._vehicle(view)
-        if vehicle is not None:
-            return vehicle
-        if not rifle_ok:
-            return None
-        rifles = [u for u in view.units_of(C.SCOUT_FALLBACK) if u.id is not None]
-        return rifles[0].id if rifles else None
 
 
 class Hunter:

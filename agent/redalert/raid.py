@@ -12,6 +12,16 @@ goes after them:
 3. else a known enemy refinery, where harvesters unload -> ``attack_move``;
 4. else the enemy's ore field from the map layout -> ``attack_move``.
 
+Before any of that, the fight in front of it (:meth:`Raid.situation`):
+enemy fighters within ``RAID_THREAT_RADIUS_CELLS`` are defending, so the
+squad kills them first (weakest first) and only then the harvesters; if they
+are worth more than ``RAID_OUTMATCH_RATIO`` x the squad, it pulls back,
+fighting, to our staging point. Either way it has drawn their army: for
+``DISTRACTION_SECONDS`` the main army may attack down the centre
+(brain.py), and once the main army is in a fight the squad attack-moves into
+it — the second prong. (A lone raider used to keep shooting a harvester while
+infantry shot it, and die.)
+
 The squad forms only after ``RAID_START_SECONDS``, only when it has a target,
 and only if ``MIN_DEFENDERS`` stay with the army. It is released back to the
 army when it has lost half its members, has no target, or the base needs
@@ -33,6 +43,7 @@ class Raid:
         self._formed_size = 0
         self._released_at: float | None = None
         self._advice = None
+        self._drawing_at: float | None = None   # last time enemy fighters were on the squad
 
     def update(self, view: View, mode: Mode, scout_id: int | None, advice=None, taken: set = frozenset()) -> None:
         """Drop dead members; release or form the squad."""
@@ -41,8 +52,8 @@ class Raid:
         self.unit_ids = [i for i in self.unit_ids if i in alive]
         if self.unit_ids:
             lost_half = len(self.unit_ids) * 2 <= self._formed_size
-            # An attack (ALL_IN) takes the raiders along: commit together.
-            if (mode in DEFENSIVE or mode is Mode.RETREAT or mode is Mode.ALL_IN or lost_half
+            # In an attack the squad stays: it is the second prong (orders()).
+            if (mode in DEFENSIVE or mode is Mode.RETREAT or lost_half
                     or _target(view, self._members(view), self._advice) is None):
                 self._release(view)
             return
@@ -54,14 +65,46 @@ class Raid:
         members = self._members(view)
         return _target(view, members, self._advice) if members else None
 
-    def orders(self, view: View) -> list[dict]:
+    def situation(self, view: View) -> tuple[str, list[Actor], float]:
+        """("none" | "clear" | "fight" | "outmatched", the enemy fighters on
+        the squad, their value)."""
+        members = self._members(view)
+        if not members:
+            return "none", [], 0.0
+        centre = _centroid(members)
+        r2 = C.RAID_THREAT_RADIUS_CELLS ** 2
+        threats = [a for a in view.enemy_units if a.cell is not None and not a.wreck and a.id is not None
+                   and a.type not in C.HARVESTER and dist2(a.cell, centre) <= r2]
+        if not threats:
+            return "clear", [], 0.0
+        cost = lambda a: view.unit_costs.get(a.type, C.DEFAULT_UNIT_COST)  # noqa: E731
+        theirs, ours = sum(cost(a) for a in threats), sum(cost(u) for u in members)
+        return ("outmatched" if theirs > C.RAID_OUTMATCH_RATIO * ours else "fight"), threats, theirs
+
+    def distracting(self, view: View) -> bool:
+        """Enemy fighters have been on the squad recently: their army is busy."""
+        return self._drawing_at is not None and view.game_seconds - self._drawing_at <= C.DISTRACTION_SECONDS
+
+    def orders(self, view: View, main_fight: tuple[int, int] | None = None) -> list[dict]:
         members = self._members(view)
         if not members:
             return []
+        ids = [u.id for u in members]
+        state, threats, value = self.situation(view)
+        if state != "clear" and value >= C.DISTRACTION_MIN_VALUE:
+            self._drawing_at = view.game_seconds
+        if state == "outmatched":
+            from .scout import choke_cell
+            back = choke_cell(view) or view.base_center
+            return [orders.attack_move(ids, list(back))] if back else []
+        if state == "fight":
+            weakest = min(threats, key=lambda a: (a.hp if a.hp else 100, dist2(a.cell, _centroid(members))))
+            return [orders.attack(ids, weakest.id)]
+        if main_fight is not None:
+            return [orders.attack_move(ids, list(main_fight))]   # the second prong
         target = _target(view, members, self._advice)
         if target is None:
             return []
-        ids = [u.id for u in members]
         if isinstance(target, int):
             return [orders.attack(ids, target)]
         return [orders.attack_move(ids, list(target))]

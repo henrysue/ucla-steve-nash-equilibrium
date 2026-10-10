@@ -32,7 +32,7 @@ def _count_built_and_queued(view: View, type_ids) -> int:
 
 
 def next_build_orders(view: View, expansion_ore: tuple[int, int] | None = None,
-                      depleted: frozenset = frozenset()) -> list[dict]:
+                      depleted: frozenset = frozenset(), rusher: bool = False) -> list[dict]:
     """Zero or one production order that advances the build order this view.
 
     Returns a list (0 or 1 orders) so the executor can concatenate it with
@@ -65,6 +65,10 @@ def next_build_orders(view: View, expansion_ore: tuple[int, int] | None = None,
             return [orders.cancel(blocker)]
         # If power is queued/placing, fall through — don't stall other logic.
 
+    if rusher:   # testrush (TEST ONLY): the sparring rusher's own build
+        from . import testrush
+        return testrush.rush_build(view)
+
     # Interrupt 2a: a new expansion yard without a refinery -> one by its ore.
     if expansion_ore is not None:
         proc = _available(view, C.REFINERY)
@@ -82,7 +86,10 @@ def next_build_orders(view: View, expansion_ore: tuple[int, int] | None = None,
             if _count_built_and_queued(view, C.BARRACKS) < (C.MAX_BARRACKS if very else barracks_target(view)):
                 return [orders.build(rax)]
         weap = _available(view, C.WAR_FACTORY)
-        cap = C.MAX_WAR_FACTORIES_VERY_RICH if very else C.MAX_WAR_FACTORIES
+        # A second war factory once money piles up mid-game: the bank is
+        # production we failed to build (match c2fec761 sat on 3000-5700).
+        banked = money >= C.FUNDS_RICH and view.game_seconds >= C.SECOND_FACTORY_SECONDS
+        cap = C.MAX_WAR_FACTORIES_VERY_RICH if (very or banked) else C.MAX_WAR_FACTORIES
         if weap and _count_built_and_queued(view, (C.WAR_FACTORY,)) < cap:
             return [orders.build(weap)]
 
@@ -119,10 +126,49 @@ def next_build_orders(view: View, expansion_ore: tuple[int, int] | None = None,
         if silo and view.queued_count(silo) == 0:
             return [orders.build(silo)]
 
-    # Walk the build order; queue the first step we don't yet have enough of.
-    # The k-th time an id appears, we want k of it (two REFINERY steps = two).
+    step = walk_build_order(view, C.BUILD_ORDER)
+    if step:
+        return step
+    # A kennel once the war factory is up (Soviet: dogs, the best scouts).
+    kennel = _available(view, C.KENNEL)
+    if kennel and view.has_building(C.WAR_FACTORY) and not _count_built_and_queued(view, (C.KENNEL,)):
+        return [orders.build(kennel)]
+    return []
+
+
+def build_reserve(view: View) -> float:
+    """Money the economy still needs, which units mustn't spend: what is left
+    to pay on buildings, harvesters and an MCV in production, plus the next
+    build-order step not started yet. The pros' build order runs on time
+    because its money is set aside; the rest goes into units (no infantry
+    cap)."""
+    cost = lambda item: view.unit_costs.get(item) or C.KNOWN_COSTS.get(item, C.DEFAULT_UNIT_COST)  # noqa: E731
+    owed = 0.0
+    for p in view.production:
+        item = str(p.get("item") or "").lower()
+        if p.get("ready") or not item:
+            continue
+        if _is_building(view, item) or item in C.HARVESTER or item == C.MCV:
+            progress = p.get("progress")
+            done = float(progress) if isinstance(progress, (int, float)) and not isinstance(progress, bool) else 0.0
+            owed += cost(item) * max(0.0, 1.0 - done)
+    nxt = 0.0
     seen: dict = {}
     for step in C.BUILD_ORDER:
+        seen[_ids(step)] = want = seen.get(_ids(step), 0) + 1
+        if _count_built_and_queued(view, _ids(step)) >= want:
+            continue
+        resolved = _available(view, step) or (step if isinstance(step, str) else step[0])
+        nxt = cost(resolved)
+        break
+    return owed + nxt
+
+
+def walk_build_order(view: View, build_order) -> list[dict]:
+    """Queue the first step of ``build_order`` we don't yet have enough of.
+    The k-th time an id appears, we want k of it (two REFINERY steps = two)."""
+    seen: dict = {}
+    for step in build_order:
         seen[_ids(step)] = want = seen.get(_ids(step), 0) + 1
         resolved = _available(view, step)
         if resolved is None:
@@ -275,11 +321,18 @@ def placement_cell(view: View, item: str, defense_at: tuple[int, int] | None = N
     enemy = _unit(base, enemy_spawn_guess(view))
     if enemy is None:
         return None
+    # Barracks, war factory and depot grow out to the side, a little forward:
+    # the front is where the army masses (match 5aea2632: four barracks
+    # asked for beside the massing point, all moved home — units on the spot).
+    side = (-enemy[1], enemy[0])
+    if ore is not None and side[0] * ore[0] + side[1] * ore[1] > 0:
+        side = (-side[0], -side[1])                 # the side away from the ore
+    flank = _blend(side, enemy, C.PRODUCTION_FORWARD_BIAS)
     if item in C.BARRACKS:
-        return grow_spot(view, enemy, item, near=home)
+        return grow_spot(view, flank, item, near=home)
     if item in (C.WAR_FACTORY, C.SERVICE_DEPOT):
-        return grow_spot(view, _blend(enemy, ore, -C.ORE_SIDE_AVOIDANCE) if ore else enemy, item, near=home)
-    if item in (C.POWER_PLANT, C.ADV_POWER_PLANT, C.SILO, C.RADAR_DOME):
+        return grow_spot(view, flank, item, near=home)
+    if item in (C.POWER_PLANT, C.ADV_POWER_PLANT, C.SILO, C.RADAR_DOME, C.KENNEL):
         back = (-enemy[0], -enemy[1])
         return grow_spot(view, _blend(back, ore, -1.0) if ore else back, item, near=home)
     return None
@@ -426,10 +479,14 @@ def _in_bounds(view: View, item: str, cell) -> bool:
 
 
 def grow_spot(view: View, bearing, item: str, near=None, skip_types=()) -> tuple[int, int] | None:
-    """Top-left cell for ``item`` just outside the frontmost building along
-    ``bearing`` (a unit vector), one free cell from it: inside OpenRA's
-    placement reach, so the engine uses it. Slides sideways along that edge
-    if the spot is taken. ``None`` (engine default) when nothing fits."""
+    """Top-left cell for ``item`` exactly one free cell from one of our
+    buildings (inside OpenRA's placement reach, so the engine uses it), as far
+    along ``bearing`` (a unit vector) as possible without drifting far to the
+    side. Every candidate is legal by construction: stepping out along a
+    diagonal and rounding put spots two cells out, past the reach, and the
+    engine moved them home (match c2fec761: 14 of 26 placements). ``near``
+    grows one particular base (an expansion). A spot no unit stands on wins.
+    ``None`` (engine default) when nothing fits."""
     ours = [(b.type, b.cell) for b in view.buildings
             if b.cell is not None and not b.wreck and b.type not in skip_types and b.type not in _NO_AREA]
     if near is not None:   # grow one particular base (an expansion), not the whole footprint
@@ -437,29 +494,30 @@ def grow_spot(view: View, bearing, item: str, near=None, skip_types=()) -> tuple
     if not ours or bearing is None:
         return None
     ux, uy = bearing
-
-    def centre(kind, cell):
-        w, h = _footprint(kind)
-        return cell[0] + (w - 1) / 2, cell[1] + (h - 1) / 2
-
-    kind, cell = max(ours, key=lambda b: centre(*b)[0] * ux + centre(*b)[1] * uy)
-    cx, cy = centre(kind, cell)
-    w, h = _footprint(kind)
     nw, nh = _footprint(item)
-    # From the front building's centre to the new one's: half of each
-    # footprint along the bearing, plus one free cell.
-    reach = (abs(ux) * w + abs(uy) * h) / 2 + (abs(ux) * nw + abs(uy) * nh) / 2 + C.BUILDING_GAP_CELLS
-    px, py = -uy, ux
+    origin = near or view.base_center
+    if origin is None:
+        origin = (sum(c[0] for _, c in ours) / len(ours), sum(c[1] for _, c in ours) / len(ours))
+    gap = C.BUILDING_GAP_CELLS
+    scored: dict = {}
+    for kind, cell in ours:
+        x0, y0, x1, y1 = _rect(kind, cell)
+        for sx in range(x0 - nw - gap, x1 + gap + 2):
+            for sy in range(y0 - nh - gap, y1 + gap + 2):
+                # exactly ``gap`` free cells from this building (Chebyshev)
+                if max(x0 - (sx + nw - 1), sx - x1, y0 - (sy + nh - 1), sy - y1) - 1 != gap:
+                    continue
+                ox, oy = sx + (nw - 1) / 2 - origin[0], sy + (nh - 1) / 2 - origin[1]
+                scored[(sx, sy)] = -(ox * ux + oy * uy - 0.5 * abs(oy * ux - ox * uy))
     occupied = _occupied(view)
-    fits = []
-    for side in (0, 1, -1, 2, -2, 3, -3):
-        ncx, ncy = cx + ux * reach + px * side * 2, cy + uy * reach + py * side * 2
-        spot = (round(ncx - (nw - 1) / 2), round(ncy - (nh - 1) / 2))
-        if _in_bounds(view, item, spot) and not _clashes(item, spot, view):
-            fits.append(spot)
-    # A slot no unit stands on first; else the first that fits anyway.
-    free = [s for s in fits if not any(c in occupied for c in _cells(item, s))]
-    return (free or fits or [None])[0]
+    fallback = None
+    for spot in sorted(scored, key=scored.get):
+        if not _in_bounds(view, item, spot) or _clashes(item, spot, view):
+            continue
+        if not any(c in occupied for c in _cells(item, spot)):
+            return spot
+        fallback = fallback or spot
+    return fallback
 
 
 def _beside_ore(view: View, ore, item: str, near=None, avoid: frozenset = frozenset()) -> tuple[int, int] | None:

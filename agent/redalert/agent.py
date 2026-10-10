@@ -22,6 +22,8 @@ from altruagent import WAIT, DecisionContext, GameState, WithReasoning
 from altruagent.console import print_line
 
 from . import brain, buildplan, executor, micro, orders, scout, squadlead
+from . import testrush  # TEST ONLY (self-play sparring rusher): remove before the tournament
+from . import intel, scouting
 from .expand import Expansion
 from .expand import enemy_expansions as _enemy_expansions
 from .guard import Garrison, HomeGuard
@@ -63,7 +65,9 @@ class RedAlertAgent:
         self._army_sent: dict[str, tuple[float, frozenset]] = {}
         # build/train item -> when we last sent it (until production shows it).
         self._production_sent: dict[str, float] = {}
-        self._patrol = scout.Patrol()
+        self._patrol = scouting.ScoutCorps()
+        self._intel = intel.EnemyIntel()
+        self._confirm_at: float | None = None   # when an attack call was first made (confirmed CONFIRM_SECONDS later)
         self._memory = EnemyMemory()
         self._raid = Raid()
         self._guard = HomeGuard()
@@ -73,6 +77,9 @@ class RedAlertAgent:
         self._hunter = scout.Hunter()
         self._placing: dict = {}   # item -> {"asked", "t", "known"}: where we asked to place it
         self._sold_at = float("-inf")
+        self._kills_seen = (0.0, 0.0)               # (kills_cost, game time it last changed)
+        self._ignore_advice_until = float("-inf")   # advisor's army target ignored until (stall breaker)
+        self._rusher = testrush.SelfPlayRusher()   # testrush: TEST ONLY
         self._clearing: dict = {}   # building item -> game time its spot was first found occupied
         self._harvest = HarvestManager()
         # Per-match review log (off unless a log directory is configured).
@@ -114,23 +121,49 @@ class RedAlertAgent:
         # Track the cheese window (sets/expires defensively; strategy hole #3).
         self._cheese_since = brain.update_cheese_since(view, self._cheese_since)
 
-        self._patrol.update(view)
+        self._intel.update(view)
+        self._patrol.update(view, taken={*self._raid.unit_ids, *self._guard.unit_ids, *self._garrison.unit_ids})
+        threat = self._patrol.alarm(view) or self._intel.rushing(view)
         advice = self._poll_advisor(view)
         prev_mode = self._mode
         hunting = self._hunter.hunting(view)
+        self._break_stall(view)
         self._mode = brain.choose_mode(
             view, cheese_since=self._cheese_since, model_pref=_POSTURE.get(getattr(advice, "posture", None)),
             prev_mode=prev_mode, scout_id=self._patrol.unit_id,
             losing_trades=self._losing_trades(view), retreated_at=self._retreated_at,
             retreat_army=self._retreat_army, hunting=hunting,
+            alarm=threat, distraction=self._raid.distracting(view),
         )
+        # testrush (TEST ONLY): against ourselves in a test match, one seat rushes.
+        rushing = self._rusher.active(context)
+        if rushing:
+            forced = self._rusher.mode(view, self._cheese_since)
+            if forced is not None:
+                self._mode = forced
         # Defend the haul: while the expansion MCV is on the road, the army
         # escorts it instead of attacking (safety modes still win).
-        self._expansion.update(view, self._mode, advice, ore_running_out=self._harvest.home_depleted(view))
+        if not rushing:   # testrush: the rusher never expands
+            self._expansion.update(view, self._mode, advice, ore_running_out=self._harvest.home_depleted(view))
         if self._expansion.escorting and self._mode is Mode.ALL_IN and not brain.must_attack(view) and not hunting:
             self._mode = Mode.BUILD
         if self._expansion.scout_target is not None and self._patrol.visit is None:
             self._patrol.visit = self._expansion.scout_target
+        # Look before committing: while trades are about even, a fresh attack
+        # call is re-checked CONFIRM_SECONDS later as the army edges forward
+        # and sees more through the fog; it goes ahead only if the numbers
+        # still say so. Once confirmed, the attack is fully committed.
+        even = abs(view.kills_cost - view.deaths_cost) <= C.CONFIRM_TRADE_BAND
+        if (self._mode is Mode.ALL_IN and prev_mode is not Mode.ALL_IN and even
+                and not (rushing or hunting or brain._catching_up(view))):
+            if self._confirm_at is None:
+                self._confirm_at = view.game_seconds
+            if view.game_seconds - self._confirm_at < C.CONFIRM_SECONDS:
+                self._mode = prev_mode
+        elif self._mode is not Mode.ALL_IN:
+            self._confirm_at = None
+        if self._mode is Mode.ALL_IN:
+            self._confirm_at = None
         # Commit: no BUILD <-> ALL_IN flip within MODE_MIN_DWELL_SECONDS.
         if ({prev_mode, self._mode} == {Mode.BUILD, Mode.ALL_IN}
                 and view.game_seconds - self._mode_since < C.MODE_MIN_DWELL_SECONDS):
@@ -139,7 +172,8 @@ class RedAlertAgent:
             self._mode_since = view.game_seconds
             if self._mode is Mode.ALL_IN:
                 self._attack_army = view.army_value
-                self._flank_via = self._pick_route(view, advice)
+                # While the raid squad holds their army, straight down the centre.
+                self._flank_via = None if self._raid.distracting(view) else self._pick_route(view, advice)
                 self._attacks += 1
             else:
                 self._flank_via = None
@@ -149,12 +183,16 @@ class RedAlertAgent:
             self._retreat_army = view.army_value
         self._game_seconds = view.game_seconds
 
-        self._raid.update(view, self._mode, self._patrol.unit_id, advice, taken=set(self._guard.unit_ids))
-        self._guard.update(view, self._mode, {self._patrol.unit_id, *self._raid.unit_ids})
+        self._raid.update(view, self._mode, self._patrol.unit_id, advice,
+                          taken={*self._guard.unit_ids, *self._patrol.unit_ids})
+        self._guard.update(view, self._mode, {*self._patrol.unit_ids, *self._raid.unit_ids})
         self._garrison.update(view, self._mode, self._expansion,
-                              {self._patrol.unit_id, *self._raid.unit_ids, *self._guard.unit_ids})
+                              {*self._patrol.unit_ids, *self._raid.unit_ids, *self._guard.unit_ids})
         self._matchlog.observe(raw, view, self._mode, context, extra={
-            "scout": self._patrol.unit_id, "raid_squad": len(self._raid.unit_ids),
+            "scout": self._patrol.unit_id, "scouts": dict(self._patrol.roles),
+            "enemy_opening": self._intel.opening(), "threat": threat,
+            "confirming": self._confirm_at is not None,
+            "raid_squad": len(self._raid.unit_ids),
             "home_guard": len(self._guard.unit_ids),
             # Confirms the live game_config carries the map picture.
             "map_ore_cells": len(view.ore_cells), "enemy_ore_field": enemy_ore_field(view),
@@ -174,13 +212,14 @@ class RedAlertAgent:
             "home_depleted": self._harvest.home_depleted(view),
             "early_push_warning": scout.early_push_warning(view),
             "hunting": hunting,
+            "test_rusher": rushing,   # testrush
             "active_base": self._active_base(view),
             "harvester_acts": dict(Counter(h.act for h in view.units_of(C.HARVESTER) if h.act)),
             "unstuck": self._unstick.unstuck,
             "enemy_expansions": _enemy_expansions(view),
             "advice": getattr(advice, "posture", None), "advisor_calls": getattr(self._advisor, "calls", 0),
         })
-        squads = {self._patrol.unit_id, *self._raid.unit_ids, *self._guard.unit_ids, *self._garrison.unit_ids}
+        squads = {*self._patrol.unit_ids, *self._raid.unit_ids, *self._guard.unit_ids, *self._garrison.unit_ids}
         micro_orders, micro_ids = micro.plan(view, self._mode, frozenset(squads), scout.choke_cell(view))
         hunt = self._hunter.targets(view, C.HUNT_GROUPS) if self._mode is Mode.ALL_IN else []
         sell = buildplan.sell_for_income(view)
@@ -190,17 +229,21 @@ class RedAlertAgent:
             sell = None
         planned = ([sell] if sell else []) + executor.plan(
             view, self._mode,
-            scout_id=self._patrol.unit_id, scout_orders=self._patrol.orders(view),
-            raid_ids=[*self._raid.unit_ids, *self._guard.unit_ids, *self._garrison.unit_ids, *micro_ids],
+            scout_id=self._patrol.unit_id, scout_orders=self._patrol.orders(view) + self._patrol.production(view),
+            raid_ids=[*self._raid.unit_ids, *self._guard.unit_ids, *self._garrison.unit_ids, *micro_ids,
+                      *self._patrol.unit_ids],
             raid_orders=(self._raid_orders(view) + self._guard.orders(view)
                          + self._garrison_orders(view) + micro_orders),
-            advice=advice,
+            advice=self._army_advice(advice, hunting, view),
             flank_via=self._flank_via, expansion=self._expansion,
             hunt=hunt[0] if hunt else None, hunt_points=hunt,
             harvest_orders=self._harvest.orders(view),
             depleted=frozenset(self._harvest.depleted()),
             home=self._active_base(view),
             clearing=self._clearing,
+            rusher=rushing,   # testrush
+            threat=threat,
+            probe=self._probe_point(view),
         ) + self._unstick.orders(view) + executor.stance_orders(
             view, self._mode, {*self._guard.unit_ids, *self._garrison.unit_ids})
         now = self._clock()
@@ -256,11 +299,44 @@ class RedAlertAgent:
         for lead in self._leads.values():
             lead.close()
 
+    def _probe_point(self, view):
+        """While an attack call waits for confirmation: a point a little way
+        from the massing point toward the target, where the army edges to see."""
+        if self._confirm_at is None:
+            return None
+        stage = scout.choke_cell(view)
+        target = executor._attack_target(view)
+        if stage is None or target is None:
+            return None
+        f = C.PROBE_FRACTION
+        return (round(stage[0] + (target[0] - stage[0]) * f), round(stage[1] + (target[1] - stage[1]) * f))
+
+    def _main_fight(self, view):
+        """Where the main army is fighting (ALL_IN, enemies near it), else None."""
+        if self._mode is not Mode.ALL_IN:
+            return None
+        squads = {*self._patrol.unit_ids, *self._raid.unit_ids, *self._guard.unit_ids, *self._garrison.unit_ids}
+        army = [u.cell for u in view.combat_units if u.cell is not None and u.id not in squads]
+        if not army:
+            return None
+        centre = (sum(c[0] for c in army) / len(army), sum(c[1] for c in army) / len(army))
+        r2 = C.MAIN_FIGHT_RADIUS_CELLS ** 2
+        near = [a.cell for a in view.enemy_units if a.cell is not None and not a.wreck
+                and a.type not in C.HARVESTER and dist2(a.cell, centre) <= r2]
+        return min(near, key=lambda c: dist2(c, centre)) if near else None
+
     def _raid_orders(self, view) -> list[dict]:
-        """The raid squad's orders: its Haiku lead's call when fresh and
-        usable, else the raid rules."""
+        """The raid squad's orders. The fight in front of it comes first and
+        is the rules' call, not the lead's: defenders before harvesters, pull
+        back when outmatched, join the main army's fight as a second prong.
+        Otherwise its Haiku lead's call when fresh and usable, else the rules."""
         lead = self._leads.get("raid")
         ids = list(self._raid.unit_ids)
+        fight = self._main_fight(view)
+        if ids and (self._raid.situation(view)[0] in ("fight", "outmatched") or fight is not None):
+            if lead is not None:
+                lead.poll(view, [], "")
+            return self._raid.orders(view, fight)
         if lead is not None and ids:
             d = lead.poll(view, ids, "Hunt enemy harvesters and weakly defended expansions; avoid defenses.",
                           {"rules_target": self._raid.target(view)})
@@ -314,7 +390,7 @@ class RedAlertAgent:
         if view.game_seconds - self._mode_since > C.FLANK_MAX_SECONDS:
             self._flank_via = None
             return
-        army = [u.cell for u in view.combat_units if u.cell is not None and u.id != self._patrol.unit_id]
+        army = [u.cell for u in view.combat_units if u.cell is not None and u.id not in self._patrol.unit_ids]
         if army:
             cx = sum(c[0] for c in army) / len(army)
             cy = sum(c[1] for c in army) / len(army)
@@ -365,6 +441,40 @@ class RedAlertAgent:
         lost, killed = view.deaths_cost - deaths0, view.kills_cost - kills0
         floor = max(C.TRADE_LOSS_MIN, C.TRADE_LOSS_ARMY_SHARE * self._attack_army)
         return lost >= floor and lost > C.TRADE_LOSS_RATIO * killed
+
+    def _break_stall(self, view) -> None:
+        """An attack that kills nothing for ``ATTACK_STALL_SECONDS`` with no
+        enemy in sight is parked on a stale target: forget the remembered
+        buildings around the army and let the hunter lead for a while. (Match
+        c2fec761: from 10:00 a 50-unit army sat at the razed enemy main, held
+        there by the advisor's target and buildings remembered 5-10 cells off,
+        while the enemy's last building stood 15 cells away.)"""
+        kills, since = self._kills_seen
+        if view.kills_cost != kills:
+            self._kills_seen = (view.kills_cost, view.game_seconds)
+            return
+        if self._mode is not Mode.ALL_IN or view.enemy_units or view.enemy_buildings:
+            self._kills_seen = (kills, view.game_seconds) if self._mode is not Mode.ALL_IN else self._kills_seen
+            return
+        if view.game_seconds - since < C.ATTACK_STALL_SECONDS:
+            return
+        army = [u.cell for u in view.combat_units if u.cell is not None]
+        if army:
+            centre = (sum(c[0] for c in army) / len(army), sum(c[1] for c in army) / len(army))
+            self._memory.forget_near(centre, C.STALL_FORGET_CELLS)
+        self._ignore_advice_until = view.game_seconds + C.STALL_IGNORE_ADVICE_SECONDS
+        self._kills_seen = (kills, view.game_seconds)
+
+    def _army_advice(self, advice, hunting: bool, view):
+        """The advice the army follows: without its army target while we
+        finish a razed enemy (the rules walk onto each remembered building,
+        which clears stale ones) or after a stall."""
+        if advice is None or getattr(advice, "army_target", None) is None:
+            return advice
+        if hunting or view.game_seconds < self._ignore_advice_until:
+            import dataclasses
+            return dataclasses.replace(advice, army_target=None)
+        return advice
 
     def _note_placements(self, view, sent: list[dict]) -> None:
         """Remember where each building was asked for (placement audit)."""

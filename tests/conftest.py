@@ -22,3 +22,6 @@ def _no_match_logs_from_tests(monkeypatch):
     monkeypatch.setenv("VGC_CARD_SETS", "")
     # And per-opponent style memory (data/opponent_styles.json).
     monkeypatch.setenv("VGC_OPPONENT_STYLES", "")
+    # And the Red Alert self-play test rusher (agent/redalert/testrush.py):
+    # off, so tests never write marker files or turn a seat into a rusher.
+    monkeypatch.setenv("RA_TEST_RUSH", "0")

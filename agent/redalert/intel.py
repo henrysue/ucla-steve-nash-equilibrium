@@ -1,0 +1,49 @@
+"""What our scouts have learned about the enemy: their opening.
+
+Pros open with two refineries (1:00 and 1:38) before the war factory. An
+opponent with one refinery but a war factory or a second barracks by
+``RUSH_READ_SECONDS`` has spent the second refinery's money on an army:
+an early rush is coming. Two refineries is the economic opening. The read
+needs a look at their base (``INTEL_MIN_BUILDINGS`` buildings known); a rush
+read holds until ``EARLY_PUSH_WINDOW_SECONDS`` unless a second refinery
+turns up.
+"""
+
+from __future__ import annotations
+
+from collections import Counter
+
+from . import config as C
+from .observe import View
+
+
+class EnemyIntel:
+    def __init__(self) -> None:
+        self._rush = False
+        self._economy = False
+
+    @staticmethod
+    def buildings(view: View) -> Counter:
+        """Enemy building types we see or remember (by id, no wrecks)."""
+        seen = {a.id: a.type for a in list(view.known_enemy_buildings) + list(view.enemy_buildings)
+                if a.id is not None and not a.wreck}
+        return Counter(seen.values())
+
+    def update(self, view: View) -> None:
+        c = self.buildings(view)
+        if sum(c.values()) < C.INTEL_MIN_BUILDINGS:
+            return
+        procs = c.get(C.REFINERY, 0)
+        rax = sum(c.get(b, 0) for b in C.BARRACKS)
+        if procs >= 2:
+            self._economy, self._rush = True, False
+        elif (view.game_seconds >= C.RUSH_READ_SECONDS and procs <= 1 and not self._economy
+              and (c.get(C.WAR_FACTORY, 0) or rax >= 2)):
+            self._rush = True
+
+    def opening(self) -> str | None:
+        return "rush" if self._rush else "economy" if self._economy else None
+
+    def rushing(self, view: View) -> bool:
+        """An early rush read, still in the early window."""
+        return self._rush and view.game_seconds < C.EARLY_PUSH_WINDOW_SECONDS

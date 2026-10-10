@@ -100,7 +100,15 @@ cell from the base are silently moved next to the construction yard.
 - Once their base is nearly razed (we knew 6+ enemy buildings, now 3 or fewer) and we lead, finish them: no protect-lead or hold; with none known the hunter aims the army and a big army sweeps 3 points at once (0561274e idled on ruins for 6 minutes).
 - The advisor's army target counts only with a known enemy within 10 cells of it (b7fcbd4e: its stale target kept a 40k army 10 cells from the enemy's last building for 5 minutes).
 - Stop buying refineries for an expansion after 2 have been moved home.
-- One army: an attack takes the raiders along, and guards/garrisons claim no one during it and only units at home otherwise, never from the front (fd507a58: the garrison walked troops out of a winning attack).
+- One army: guards/garrisons claim no one during an attack and only units at home otherwise, never from the front (fd507a58). The raid squad is the one exception: the second prong.
+- Raid squad: defenders before harvesters (weakest first); outmatched -> pull back fighting. While it draws their army, our main army attacks down the centre if our units outweigh theirs; once the main army is in a fight, the raid attack-moves into it (5aea2632 vs Ryanxhuang).
+- The scout backs off from enemy fighters; killed past the middle before 6:00, it raises the early-push alarm for 30 s (5aea2632: died ~2:00, no warning, push at 2:17).
+- No infantry cap: units spend only what the economy doesn't need (buildings, harvesters, an MCV in production plus the next build-order step are pre-funded); a read rush, an alarm or defending drops the reserve.
+- Intel: one refinery but a war factory or 2nd barracks by 1:40 = a rush (pros have two refineries); it lifts the reserve, holds the army home and puts turrets up.
+- Scouting: two scouts round the back of their base (left, right) in the first 3 minutes, no backing off — the buildings are worth the scout; then picket posts across the approach, 4 from 5:00 (spare units or trained: dogs where possible, a kennel after the war factory), a base check every 2.5 minutes. Posts and waypoints snap to cells we can walk to.
+- Mass in a concave; attack in three groups closing on the target as a semi-concave.
+- Look before committing: while trades are about even (kills - losses within 200), an attack call is re-checked 4 s later as the army edges forward to see; clearly ahead or behind, it goes at once. Once confirmed, fully committed (the dwell and retreat rules apply as usual).
+- Barracks, factories and depots grow to the side away from the ore, slightly forward; the front is the army's (5aea2632: four barracks beside the massing point moved home).
 - The early scout goes out along a flank, never down the middle, to a lookout over the ground in front of their base where a push masses (159f4f11's side lookout watched their natural and never warned); a dead rifle scout is replaced after 90 s, on the other flank.
 - Queues: at most 2 deep per unit type, 1 unit per order: money finishes units instead of spreading over many.
 - Nothing is built within 3 cells of the massing point, and if a building or rock ends up there the point moves to the nearest clear cell (159f4f11: barracks asked for on the army's spot four times, moved home each time).
@@ -111,6 +119,12 @@ cell from the base are silently moved next to the construction yard.
 - Never ask for a building where units stand: OpenRA moves it to the main yard (a1329ceb). A free spot is preferred; if ours stand on the chosen one, they step aside (fighters attack-move) and the placement waits up to 5 s, those units sitting out other orders meanwhile.
 - The observation reports a building's centre cell; placement takes the top-left. Read as corners, every spot right of or below a building was 2 cells out and moved home (fd507a58 placement audit: each successful place landed at asked + (1, 1)). observe.py converts our buildings to top-left.
 - OpenRA's adjacency: a new building within 1 free cell of a building that extends the buildable area; turrets don't. Power plants, barracks and domes are 2x3 (a bib row).
+- Growth spots are chosen only among cells exactly 1 free cell from a building (legal by construction); stepping out along a diagonal and rounding put them 2 out (c2fec761: 14 of 26 moved home).
+- An attack with no kills and nothing in sight for 40 s is parked on a stale target: forget remembered buildings around the army, ignore the advisor's target for 60 s. While finishing, the advisor never aims the army (c2fec761: 50 units sat on ruins while the last building stood 15 cells away).
+- Memory follows a yard that packs up into an MCV (and an MCV that deploys); a remembered enemy MCV is a target.
+- A small raid (worth 1500 or less) near a yard or harvester is attacked by units at home, the weakest raider first, even while the army is out.
+- After 3:00 the army is recalled only for a threat worth 1500+ that outweighs the units at home and the turrets, and goes back out 10 s after the base is clear (feba5f26: two stragglers recalled a winning attack six times, the army parked 40-120 s each time).
+- Stored ore is spent before cash: a frozen cash figure with ore piling up is an unspent bank. With 2500+ banked after 6:00: a second war factory and a 2-deep tank queue.
 
 ## Sources
 
@@ -121,3 +135,11 @@ cell from the base are silently moved next to the construction yard.
 - https://sharoma.com/ral/logistics.htm
 - 9 RAGL/ladder replays (`ora-replays/`, not committed): build timings,
   refinery-heavy economy, infantry-heavy armies, expansion to the natural at ~4:45.
+
+## TEST ONLY — remove before the tournament
+
+- `testrush.py`: in a self-play test match (no tournament id, both seats on this machine), seat 1 rushes —
+  a rush build (2 refineries, 3 barracks, war factory), units without pause (infantry 3 deep, tanks 2),
+  no expansion or turrets; it masses a ball and launches at 2500 (or 1500 by 3:30), pushes until the army
+  is below 40% of its launch value, then re-masses — to test our scouting, early-push warning and defenses. `RA_TEST_RUSH=0` turns it off, `RA_TEST_RUSH_SEAT`
+  picks the seat. Remove the module and every line marked "testrush" (agent.py, executor.py, tests).

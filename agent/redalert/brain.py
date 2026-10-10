@@ -24,6 +24,8 @@ def choose_mode(
     retreated_at: float | None = None,
     retreat_army: float | None = None,
     hunting: bool = False,
+    alarm: bool = False,
+    distraction: bool = False,
 ) -> Mode:
     """The posture for this view.
 
@@ -35,7 +37,9 @@ def choose_mode(
     ``losing_trades`` whether the recent exchange is going badly (agent.py
     measures it), ``retreated_at`` the game time of the last retreat and
     ``retreat_army`` our army value then (no new attack until it has grown).
-    ``hunting``: their base is razed (scout.Hunter.hunting).
+    ``hunting``: their base is razed (scout.Hunter.hunting). ``alarm``: our
+    scout was killed forward early (an early push may be coming).
+    ``distraction``: our raid squad has drawn enemy fighters (raid.py).
     """
     if not view.ok:
         return Mode.OPEN
@@ -51,7 +55,7 @@ def choose_mode(
 
     # Safety rail 2b: an early push is coming (the scout saw it massing):
     # hold at home, don't walk into it; pull back if already out.
-    if scout.early_push_warning(view):
+    if scout.early_push_warning(view) or alarm:
         pulling_back = prev_mode in AGGRESSIVE or (prev_mode is Mode.RETREAT and not _regrouped(view, scout_id))
         return Mode.RETREAT if pulling_back else Mode.BUILD
 
@@ -102,6 +106,11 @@ def choose_mode(
     early = view.game_seconds < C.EARLY_ATTACK_SECONDS and not view.has_building(C.WAR_FACTORY)
     if early:
         can_attack = False
+    # Their army is busy with our raid squad and our units outweigh theirs
+    # (units only, no buildings): the main army goes down the centre now.
+    if (distraction and not can_attack and not early and _has_real_army(view) and not cooling_down
+            and our_unit_value(view) > enemy_unit_value(view) and (behind_late or can_break_defenses(view))):
+        can_attack = True
     policy_choice = Mode.ALL_IN if can_attack else Mode.BUILD
 
     # The model may push an attack (with a real army, not while behind) or hold
@@ -183,6 +192,19 @@ def _dominant(view: View) -> bool:
             and view.kills_cost - view.deaths_cost >= C.FINISH_MIN_LEAD)
 
 
+def our_unit_value(view: View) -> float:
+    """Our combat units' value (no buildings)."""
+    return sum(view.unit_costs.get(u.type, C.DEFAULT_UNIT_COST) for u in view.combat_units)
+
+
+def enemy_unit_value(view: View) -> float:
+    """The enemy combat units we see or remember (no buildings, harvesters or MCV)."""
+    skip = set(C.HARVESTER) | {C.MCV}
+    seen = {a.id: a for a in list(view.known_enemy_units) + list(view.enemy_units)
+            if a.id is not None and not a.wreck and a.type not in skip}
+    return sum(view.unit_costs.get(a.type, C.DEFAULT_UNIT_COST) for a in seen.values())
+
+
 def can_break_defenses(view: View) -> bool:
     """No ground turrets guard the attack target, or our army can take them:
     ``INFANTRY_PER_DEFENSE`` infantry per turret (``INFANTRY_MASS_MIN`` at
@@ -240,6 +262,7 @@ def update_cheese_since(view: View, cheese_since: float | None) -> float | None:
         return view.game_seconds
     if cheese_since is None:
         return None
-    if view.game_seconds - cheese_since >= C.CHEESE_EXPIRE_SECONDS:
+    expire = C.CHEESE_EXPIRE_SECONDS if view.game_seconds < C.CHEESE_WINDOW_SECONDS else C.BASE_DEFEND_EXPIRE_SECONDS
+    if view.game_seconds - cheese_since >= expire:
         return None  # threat never materialized / was repelled: back to normal
     return cheese_since
