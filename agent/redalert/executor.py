@@ -71,7 +71,27 @@ def plan(
     stage = (expansion.stage_override if expansion is not None else None) or probe
     out += _army_orders(view, mode, scout_id, reserved=frozenset(raid_ids) | clearing_ids | responders, advice=advice,
                         flank_via=flank_via, stage_override=stage, hunt=hunt, hunt_points=hunt_points)
-    return out
+    return _keep_clear(out, placed, clearing_ids)
+
+
+def _keep_clear(out: list[dict], placed: list[dict], clearing_ids: set) -> list[dict]:
+    """Units stepping off a building's spot get no other order this view —
+    not from harvesting, a squad, micro or the army — or they walk straight
+    back onto it and the building is moved home (match 14a78c43: expansion
+    refineries and a silo spot moved home again and again)."""
+    if not clearing_ids:
+        return out
+    keep = {id(o) for o in placed}
+    cleaned = []
+    for o in out:
+        units = o.get("units")
+        if id(o) in keep or not isinstance(units, list) or not set(units) & clearing_ids:
+            cleaned.append(o)
+            continue
+        rest = [u for u in units if u not in clearing_ids]
+        if rest:
+            cleaned.append({**o, "units": rest})
+    return cleaned
 
 
 # -- economy -----------------------------------------------------------------

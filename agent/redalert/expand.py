@@ -587,17 +587,21 @@ def choose_site(view: View, exclude=()) -> tuple[tuple[int, int], tuple[int, int
 
 
 def walkable_site(view: View, ore, base, field=None) -> tuple[int, int] | None:
-    """A deploy spot with room to unfold that WALKS to the field's ore in
-    ``EXPAND_SITE_WALK_STEPS`` (not across a cliff), nearest our base.
-    ``field``: the field's ore cells (default: ore around ``ore``)."""
+    """A deploy spot with room to unfold that WALKS to the field's ore: as
+    close to the field as leaves room for its refinery (``EXPAND_SITE_MIN_STEPS``
+    or more walking steps, at most ``EXPAND_SITE_WALK_STEPS``; not across a
+    cliff), the side nearer our base breaking ties. Nearest our base used to
+    win, and expansion yards unfolded beside the main base, the field at the
+    edge of their reach (match 14a78c43: both seats' naturals). ``field``: the
+    field's ore cells (default: ore around ``ore``)."""
     from .terrain import field_cells, walk_distances
 
     field = field or field_cells(view, ore, C.EXPAND_CLUSTER_CELLS * 1.5) or [ore]
     walk = walk_distances(view, field, C.EXPAND_SITE_WALK_STEPS)
-    spots = [c for c, d in walk.items() if 2 <= d <= C.EXPAND_SITE_WALK_STEPS and has_room(c, view)]
+    spots = [c for c, d in walk.items() if C.EXPAND_SITE_MIN_STEPS <= d <= C.EXPAND_SITE_WALK_STEPS and has_room(c, view)]
     if not spots:
         return None
-    return min(spots, key=lambda c: (dist2(c, base), walk[c]))
+    return min(spots, key=lambda c: (walk[c], dist2(c, base)))
 
 
 def _toward(cell, target, cells: float, view: View) -> tuple[int, int]:

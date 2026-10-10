@@ -108,6 +108,10 @@ cell from the base are silently moved next to the construction yard.
 - Once their base is nearly razed (we knew 6+ enemy buildings, now 3 or fewer) and we lead, finish them: no protect-lead or hold; with none known the hunter aims the army and a big army sweeps 3 points at once (0561274e idled on ruins for 6 minutes).
 - The advisor's army target counts only with a known enemy within 10 cells of it (b7fcbd4e: its stale target kept a 40k army 10 cells from the enemy's last building for 5 minutes).
 - Placement: one candidate source (legal spots, exactly one free cell from a building that extends the buildable area), roles only score; no building on the army's lanes, the massing area or a refinery's road to its ore; a spot with units on or beside it loses (a2952a6d: legal spots on truck routes were moved home). The old "avoid"/"give up after 2 moves" nets are gone (no moves in 4 games since the centre-cell fix).
+- The build radius (lobby "buildradius"): a building's centre within 13 cells of a construction yard's; beyond 16 cells every placement was moved home (audit of six games).
+- Every finished Building/Defense-queue item is placed, known id or not (14a78c43: an unplaced kennel blocked the Building queue for the rest of the game, 9600 banked).
+- Units stepping off a building's spot get no other order that view, from any part of the agent.
+- An expansion deploys as close to its field as leaves room for the refinery (4-8 walking steps), not nearest our base (14a78c43: both naturals unfolded beside the main base).
 - Hunting the last buildings: idle scouts each sweep one of the hunter's search points while the army takes what they find.
 - One army: guards/garrisons claim no one during an attack and only units at home otherwise, never from the front (fd507a58). The raid squad is the one exception: the second prong.
 - Raid squad: defenders before harvesters (weakest first); outmatched -> pull back fighting. While it draws their army, our main army attacks down the centre if our units outweigh theirs; once the main army is in a fight, the raid attack-moves into it (5aea2632 vs Ryanxhuang).

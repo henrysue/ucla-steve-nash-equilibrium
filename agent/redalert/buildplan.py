@@ -206,7 +206,7 @@ def placement_orders(
     seen: set[str] = set()
     for entry in view.production:
         item = str(entry.get("item") or "").lower()
-        if entry.get("ready") and item and item not in seen and _is_building(view, item):
+        if entry.get("ready") and item and item not in seen and _is_building(view, item, entry.get("queue")):
             if item == C.REFINERY and expansion_ore is not None:
                 # The expansion's refinery: beside its ore (never on it), else
                 # grown from the expansion's own buildings toward the ore.
@@ -554,7 +554,22 @@ def legal_spots(view: View, item: str, near=None, skip_types=()) -> list[tuple[i
             for sy in range(y0 - nh - gap, y1 + gap + 2):
                 if max(x0 - (sx + nw - 1), sx - x1, y0 - (sy + nh - 1), sy - y1) - 1 == gap:
                     found.add((sx, sy))
-    spots = sorted(s for s in found if _in_bounds(view, item, s) and not _clashes(item, s, view))
+    # The build radius (the lobby's "buildradius"): the building's centre
+    # within BUILD_RADIUS_CELLS of one of our construction yards. Placements
+    # farther out were all moved home (placement audit over six games:
+    # beyond 16 cells of a yard every one, 14-16 about half).
+    yards = []
+    for b in view.buildings:
+        if b.type == C.CONSTRUCTION_YARD and b.cell is not None and not b.wreck:
+            w, h = _footprint(b.type)
+            yards.append((b.cell[0] + (w - 1) / 2, b.cell[1] + (h - 1) / 2))
+    r2 = C.BUILD_RADIUS_CELLS ** 2
+
+    def in_radius(s):
+        c = (s[0] + (nw - 1) / 2, s[1] + (nh - 1) / 2)
+        return not yards or any(dist2(c, y) <= r2 for y in yards)
+
+    spots = sorted(s for s in found if in_radius(s) and _in_bounds(view, item, s) and not _clashes(item, s, view))
     if len(_SPOTS) > 64:
         _SPOTS.clear()
     _SPOTS[key] = (view, spots)                # holding the view keeps its id from being reused
@@ -875,13 +890,15 @@ def _ids(step):
     return (step,) if isinstance(step, str) else tuple(step)
 
 
-def _is_building(view: View, item: str) -> bool:
-    """Whether a ready queue item is a building (placed) vs a unit (auto-exits).
+def _is_building(view: View, item: str, queue: str | None = None) -> bool:
+    """Whether a ready queue item is a building (it waits to be placed) vs a
+    unit (it leaves the factory by itself).
 
-    We treat the known building ids as buildings; everything else (units) does
-    not need a place order. Robust to unknown ids: default to not-a-building so
-    we never emit a spurious place for a unit.
-    """
-    building_ids = {C.CONSTRUCTION_YARD, C.POWER_PLANT, C.ADV_POWER_PLANT,
-                    C.REFINERY, C.SILO, C.WAR_FACTORY, C.SERVICE_DEPOT, C.RADAR_DOME, *C.BARRACKS, *C.DEFENSES}
-    return item in building_ids
+    Anything finished in the Building or Defense queue is a building, and so
+    is any known building id. A finished building nobody places blocks its
+    queue for good (match 14a78c43: a kennel, missing from a hand-kept list,
+    sat unplaced from 4:05 and stalled power, barracks, refineries and the war
+    factory for the rest of the game with 9600 in the bank)."""
+    if str(queue or "").lower() in ("building", "defense"):
+        return True
+    return item in C.ALL_BUILDING_TYPES

@@ -3339,3 +3339,34 @@ def test_one_seat_can_play_without_models_for_an_ab_test(monkeypatch):
     c = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0, advisor_factory=lambda log, on_advice: Off())
     c.choose_action(_state(_t=60.0, buildings=BASE), t)
     assert c._advisor is not None                                            # never in a tournament game
+
+
+def test_every_finished_building_gets_placed_even_an_unlisted_one():
+    # 14a78c43: a finished kennel was never placed and stalled the Building queue for the rest of the game.
+    blds = [{"id": 10, "type": "fact", "x": 10, "y": 10}]
+    for item, queue in (("kenn", "Building"), ("mystery", "Building"), ("sam", "Defense")):
+        v = _view(buildings=blds, production=[{"item": item, "queue": queue, "ready": True}])
+        o = buildplan.placement_orders(v)
+        assert [x["item"] for x in o if x["cmd"] == "place"] == [item], (item, o)
+    unit = _view(buildings=blds, production=[{"item": "e1", "queue": "Infantry", "ready": True}])
+    assert buildplan.placement_orders(unit) == []                                  # units leave by themselves
+
+
+# -- 14a78c43: the build radius; units clearing a spot get no other order ------------------------
+
+def test_no_spot_beyond_the_build_radius_of_a_yard():
+    chain = [{"id": 10, "type": "fact", "x": 4, "y": 4}] + [
+        {"id": 11 + i, "type": "powr", "x": 8 + 3 * i, "y": 4} for i in range(6)]       # a wall of plants out east
+    v = _view(buildings=chain, base_center=[5, 5])
+    spots = buildplan.legal_spots(v, "powr")
+    assert spots and all(((sx + 0.5 - 5) ** 2 + (sy + 1 - 5) ** 2) ** 0.5 <= C.BUILD_RADIUS_CELLS for sx, sy in spots)
+    assert max(sx for sx, _ in spots) < 8 + 3 * 5                            # nothing grown off the far end
+
+
+def test_units_clearing_a_spot_get_no_other_order_in_the_batch():
+    out = executor._keep_clear(
+        [{"cmd": "attack_move", "units": [40, 41], "to": [20, 20]}, {"cmd": "harvest", "units": [40]},
+         {"cmd": "attack_move", "units": [41, 42], "to": [30, 30]}],
+        placed=[], clearing_ids={41})
+    assert out == [{"cmd": "attack_move", "units": [40], "to": [20, 20]}, {"cmd": "harvest", "units": [40]},
+                   {"cmd": "attack_move", "units": [42], "to": [30, 30]}]
