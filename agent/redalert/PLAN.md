@@ -54,6 +54,9 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
   worth 600+ at the base (89356b51: two scouts flipped both armies to defend).
 - **Placement**: a spot the engine moved a building from is skipped for 3
   minutes (89356b51: one legal-looking expansion refinery spot failed three times).
+- **Turrets**: the first faces the road in (scout.approach_cell: the cell 12
+  from the base that is the shortest walk from the enemy spawn), as close to
+  that line as a legal spot allows; the rest fan out to either side.
 - **Economy**: trucks come with refineries (target = refineries + 2); more
   refineries over time; expand right after the service depot (~4:45), up to 3
   times, sooner when ore runs out. Money bands: broke = one queue; rich =

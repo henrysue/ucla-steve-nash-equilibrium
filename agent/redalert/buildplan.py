@@ -332,8 +332,10 @@ def placement_cell(view: View, item: str, defense_at: tuple[int, int] | None = N
 
         threats = [a.cell for a in enemy_threat_near_base(view) if a.cell is not None]
         prefer = min(threats, key=lambda c: dist2(c, base)) if threats else None
-        # The advisor may pick the side, but only one facing the enemy.
-        enemy = enemy_spawn_guess(view)
+        # Facing the road in; the advisor may pick the side, but only one facing the enemy.
+        from .scout import approach_cell
+
+        enemy = approach_cell(view) if home is None else enemy_spawn_guess(view)
         if defense_at is not None and _within_degrees(base, defense_at, enemy, C.DEFENSE_SIDE_MAX_DEGREES):
             prefer = defense_at
         return perimeter_spot(view, base, enemy, item, prefer=prefer, strict=False, near=home)
@@ -628,7 +630,7 @@ def _pick(view: View, item: str, spots, score) -> tuple[int, int] | None:
     return min(spots, key=rank)
 
 
-def grow_spot(view: View, bearing, item: str, near=None, skip_types=()) -> tuple[int, int] | None:
+def grow_spot(view: View, bearing, item: str, near=None, skip_types=(), side_weight: float = 0.5) -> tuple[int, int] | None:
     """A legal spot (:func:`legal_spots`) as far along ``bearing`` (a unit
     vector) as possible without drifting far to the side: the base grows in
     the wanted direction building by building. ``None`` (engine default)
@@ -647,7 +649,7 @@ def grow_spot(view: View, bearing, item: str, near=None, skip_types=()) -> tuple
 
     def score(spot):
         ox, oy = spot[0] + (nw - 1) / 2 - origin[0], spot[1] + (nh - 1) / 2 - origin[1]
-        return -(ox * ux + oy * uy - 0.5 * abs(oy * ux - ox * uy))
+        return -(ox * ux + oy * uy - side_weight * abs(oy * ux - ox * uy))
 
     return _pick(view, item, spots, score)
 
@@ -706,7 +708,10 @@ def perimeter_spot(view: View, base: tuple[int, int], toward, item: str = "pbox"
         angle = base_angle + math.radians(deg)
         # Grow from base buildings only: growing from the last turret chained
         # turrets out toward the enemy one past another.
-        spot = grow_spot(view, (math.cos(angle), math.sin(angle)), item, near=near, skip_types=C.DEFENSES)
+        # Close to the slot's line beats far forward: a turret beside the
+        # road in covers it, one far out to the side covers nothing.
+        spot = grow_spot(view, (math.cos(angle), math.sin(angle)), item, near=near, skip_types=C.DEFENSES,
+                         side_weight=C.DEFENSE_SIDE_WEIGHT)
         if spot is None:
             continue
         fallback = fallback or spot
@@ -739,6 +744,10 @@ def defense_orders(view: View, under_attack: bool, expansion_site: tuple[int, in
     # Once the main base's ore is gone, its turrets stop and the active base
     # (``home``, an expansion) gets a full fan instead.
     base = home or view.base_center
+    if home is None:
+        from .scout import approach_cell
+
+        enemy = approach_cell(view)
     if base is None:
         return []
     r2 = C.DEFENSE_MAIN_RADIUS_CELLS ** 2

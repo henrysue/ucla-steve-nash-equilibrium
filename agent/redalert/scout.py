@@ -231,6 +231,23 @@ def _enemy_side(view: View):
     return None
 
 
+def approach_cell(view: View):
+    """Where a frontal attack reaches our base: the cell about
+    ``APPROACH_RING_CELLS`` from it that is the shortest walk from the enemy
+    spawn — the road in, not the straight line across cliffs. The first
+    turret faces it (it catches units sent in one by one). Falls back to the
+    enemy side."""
+    from .terrain import walk_distances
+
+    base, enemy = view.base_center, _enemy_side(view)
+    if base is None or enemy is None or not view.blocked_cells:
+        return enemy
+    walk = walk_distances(view, [tuple(enemy)], C.APPROACH_MAX_STEPS)
+    r = C.APPROACH_RING_CELLS
+    ring = [c for c in walk if (r - 1) ** 2 <= dist2(c, base) <= (r + 1) ** 2]
+    return min(ring, key=lambda c: (walk[c], dist2(c, enemy))) if ring else enemy
+
+
 def _along(a, b, fraction: float) -> tuple[int, int]:
     return (round(a[0] + (b[0] - a[0]) * fraction), round(a[1] + (b[1] - a[1]) * fraction))
 

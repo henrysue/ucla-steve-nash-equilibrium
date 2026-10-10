@@ -147,3 +147,20 @@ def test_scout_circuits_and_posts_are_reachable_on_real_maps(path):
             assert point in walk, (side, point)
     for role in ("left", "p0", "p1", "right"):
         assert corps.post(view, role) in walk, role
+
+
+@pytest.mark.parametrize("path", FIXTURES, ids=[p.stem for p in FIXTURES])
+def test_the_first_turret_faces_the_road_in(path):
+    import math
+
+    fx = _load(path)
+    state = dict(fx["states"][2])
+    state["buildings"] = [b for b in state["buildings"] if b[0] not in NO_AREA]   # no turret yet
+    view = _view(fx, state, path.stem)
+    base = tuple(fx["base_center"])
+    road = scout.approach_cell(view)
+    assert road in terrain.walk_distances(view, [base], 60)                       # on the way in
+    spot = buildplan.placement_cell(view, "ftur")
+    assert _legal(view, "ftur", spot) is None
+    bearing = lambda c: math.degrees(math.atan2(c[1] - base[1], c[0] - base[0]))  # noqa: E731
+    assert abs((bearing(spot) - bearing(road) + 180) % 360 - 180) <= 35, (spot, road)
