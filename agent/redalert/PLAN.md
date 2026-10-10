@@ -1,261 +1,123 @@
-# Red Alert Agent — Design Plan
+# Red Alert agent
 
-A new agent for the `red_alert` game: **hyper-aggressive, fast-executing, and
-tuned to win the 20-minute tiebreak** rather than a drawn-out late game. It
-lives in `agent/redalert/` and is entirely separate from the VGC strategist.
+How it plays, why, and where things live. Numbers are in `config.py`.
 
-Status: **PLAN — awaiting approval before implementation.**
+## The game
 
----
+Real time, 25 ticks/s, the server asks about 5 times a second. A move is a
+batch of orders. Win by destroying every enemy building and the MCV; at the
+time limit (20 min in tournaments) the tiebreak is `kills_cost - deaths_cost`,
+then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redalert
 
-## 1. The win condition decides everything
+## Design
 
-From `GAMES.md`:
+- **Rules play every view** (no model on the hot path): `agent.py` reads the
+  state, `brain.py` picks a Mode, `executor.py` builds one order batch.
+- **Models advise off the hot path**: the advisor (`advisor.py`, Sonnet) sets
+  posture, targets, staging, formation, defense side and expansion timing every
+  ~6 s; Haiku squad leads (`squadlead.py`) direct the raid squad and the
+  garrison every ~4 s. Advice is validated and expires; safety rules win.
+- **Logs**: `matchlog.py` writes a JSONL and a summary per match to
+  `matchlogs/` (samples every 15 s, mode changes, refusals, model advice).
 
-- You win outright by destroying every enemy building **and** their MCV.
-- Otherwise, at the **time limit (10–20 min, set per match)** — or after 10 min
-  of mutual inactivity — a **tiebreak** decides:
-  1. higher **`kills_cost - deaths_cost`** (value destroyed minus value lost),
-  2. then higher **`assets_value`** (what you still own).
-- Real time: 25 ticks/s, the world never waits, the runtime asks us again
-  ~5×/s. **Thinking time is pure loss.**
+| Module | Role |
+|---|---|
+| `observe.py` | Typed, defensive view of the state and game config (map, ore, costs) |
+| `memory.py` | Enemies seen through the fog |
+| `brain.py` | Mode: OPEN, BUILD, ALL_IN, RETREAT, DEFEND_RUSH, DEFEND_BASE, PROTECT_LEAD |
+| `buildplan.py` | What to build next and where to place it |
+| `executor.py` | Production, economy, army orders, rally points, stances |
+| `scout.py` | Base threats, staging point, patrol, hunting the last buildings |
+| `raid.py` / `guard.py` | Harvester raids; home guard and expansion garrison |
+| `expand.py` | Our expansions; enemy expansion sites |
+| `harvest.py` | Harvesters steered to fields that still have ore |
+| `micro.py` / `movement.py` | Focus fire, pull back damaged units; unstick units |
+| `orders.py` | Order builders and shape checks |
 
-**Implication (the whole strategy in one line):** we do **not** need to kill
-everything. We need, by the clock, a **positive trade differential and an asset
-lead**. That rewards: cheap-but-efficient units that trade up, relentless
-pressure on the enemy army/economy, keeping our own losses cheap, and never
-stalling. It explicitly does **not** reward map control, expansions,
-veterancy, or tech-switch late games.
+## Strategy
 
----
+- **Opening**: power, barracks, refinery, refinery, power, war factory,
+  refinery, service depot (the pros' double-refinery order: refineries
+  1:00 / 1:38, war factory 2:40, depot 3:50); only 5 infantry until the war factory.
+- **Economy**: trucks come with refineries (target = refineries + 2); more
+  refineries over time; expand right after the service depot (~4:45), up to 3
+  times, sooner when ore runs out. Money bands: broke = one queue; rich =
+  spend harder.
+- **Army**: infantry-heavy (about 3 riflemen per rocket soldier) from up to 5
+  barracks, tanks as support from one war factory.
+- **Fighting**: mass on our side of the map, attack with an edge, flank when
+  the middle is guarded, target power then production, focus fire, retreat
+  from losing fights (fighting back when pressed), hunt the last buildings.
+- **Squads**: roaming scout, harvester raid squad, home guard at the power
+  plants, garrison at the newest expansion (joins pushes once it's complete).
+- **End**: protect a real lead in the last 2 minutes (any lead in the last
+  minute); when behind in the last 3 minutes, attack regardless.
+- **Late game**: radar dome ~7:00; 2-4 siege units (V2 / artillery) once enemy
+  defenses are known, shelling defenses first; against 3+ defenses, fewer
+  riflemen per batch and more tanks (flame towers shred infantry). No tech
+  centre, mammoths, aircraft or superweapons: they don't pay off in 20 minutes.
 
-## 2. What we take from the strategy guides (selective extraction)
+## Platform limits
 
-The DVOID guide and the OpenRA/C&C community guides are written for a skilled
-human in an open-ended ladder game. We take the parts that serve *our* goal and
-reject the rest.
+No capture order (no engineer captures, no oil derricks), no mine laying, no
+order to send a unit into a repair bay. Placement hints farther than about a
+cell from the base are silently moved next to the construction yard.
 
-**Adopt:**
-- **Streamlined opening build order** (DVOID 2022), trimmed to one base:
-  `Deploy MCV → Power Plant → Barracks → Refinery → War Factory → (Power/2nd
-  Refinery as economy allows)`.
-- **"Mass cheap units over static base defense"** — DVOID's own point that extra
-  rifles defend as well as a static defense. We skip base-defense micro.
-- **Rifle:Rocket ratio ≈ 5:1** (8:1 very early) for a cheap, self-sufficient
-  army with anti-armor/anti-air coverage.
-- **"Attack is the best defense."** The guide's thesis is ours.
-- **Harvest the *nearest* ore** (DVOID: order ore trucks to the closest ore).
-- **Coarse formation: tanks in front, infantry behind** when attack-moving —
-  as a one-shot grouping, not continuous concave micro.
-- **Scout to read intentions early.**
+## Lessons from matches
 
-**Reject (too slow / wrong goal for a 20-min aggro agent):**
-- Multiple expansions, 7 barracks, Con-yard walking, second-MCV expansions.
-- Veterancy preservation, repair-before-death micro.
-- Engineer+Thief refinery captures, oil-derrick capture phase, Grenadier drops.
-- V2/Artillery hold-fire sniping, Mig indirect-route runs, Iron Curtain /
-  Demo-truck stalemate breakers, concrete walls + mines.
-- Elaborate concave formations, reserve flanking, air micro.
+- A ready-but-unplaced building counts as pending (else it is built twice).
+- Never skip ahead in the build order; wait at the first unmet step.
+- Power plants can't wait behind a big building in the one-at-a-time queue.
+- A needed harvester can't wait behind tanks in the vehicle queue.
+- Cap refineries; ask for an expansion's refinery once, not every view.
+- Only attacks in the opening are rushes; later, defend without dropping the economy.
+- Mass (and rally new units) just in front of the base, between the harvesters and the enemy: 8 cells out from base+ore, 3 if enemies are near; never send units one by one into contested ground.
+- Every combat order is an attack-move, retreats and pull-backs included: a plain move let units be shot in the back without answering. Plain moves only for the MCV and the scout.
+- No all-in before 3:00 and a war factory: early sightings show a fraction of the enemy (b7fcbd4e: both seats traded their opening army at 1:05).
+- Broke with no harvester: sell a spare building (dome, depot, defenses, extra production) to buy one.
+- Retreat on a losing exchange, but not in the first 15 s of a fight.
+- After a retreat, regrow before attacking the same defenses again (2 min at most).
+- An MCV needs a 3x3 clear block; a stuck or slow MCV deploys where it stands.
+- An MCV escort must never freeze the army when an attack is needed.
+- With no enemy known, hunt; don't idle on the ruins of their base.
+- Protect a lead only when ahead on kills - deaths.
+- Turrets form an even fan facing the enemy, grown from base buildings (not from each other); no free slot, no turret.
+- Harvesters leave a mined-out field for one with ore; a bare harvest order leaves them idle at home.
+- Throttle *requests* for an expansion's refinery/turret, never their *placement*: a finished one always goes to the expansion.
+- Keep fields staffed by refinery share, not only when home runs dry.
+- Don't protect a lead against a beaten enemy (2.5x their known army): keep killing; split the army between their two nearest bases.
+- When broke, the last money goes to units, not to another turret in front of the attackers.
+- Depletion: a field with harvesters around but none mining for 45 s is mined out (harvesters search rather than idle).
+- Once home is mined out, the newest expansion with live ore becomes the active base: new buildings and a 3-turret fan go there.
+- Far ore never rules out a refinery when we're ahead: the base crawls toward it.
+- No building may cover ore or blocked terrain: OpenRA refuses it and silently drops it at the main yard (why expansion refineries kept landing at home).
+- Harvesting distances are walking steps, not straight lines: a cliff between a refinery and ore means its trucks go elsewhere (terrain.py; blocked cells come from the map legend).
+- An expansion's refinery is placed only beside that expansion's own buildings; when the engine moves one home anyway, that spot is marked off-limits for the next one.
+- An expansion counts as ours when a NEW yard appears near the planned site, even several cells off it (0561274e lost track of one and never built its refinery).
+- Expand to the natural first: the nearest unmined field by walking, not the richest (b7fcbd4e walked past a natural 16 cells behind the base).
+- Buildings stand only on clear ground: rough ground, beach and road/bridge are walkable but unbuildable, and a footprint there is moved home.
+- At most 3 refineries per field; the next one goes to a field with room, or the base crawls toward one.
+- Once their base is nearly razed (we knew 6+ enemy buildings, now 3 or fewer) and we lead, finish them: no protect-lead or hold; with none known the hunter aims the army and a big army sweeps 3 points at once (0561274e idled on ruins for 6 minutes).
+- The advisor's army target counts only with a known enemy within 10 cells of it (b7fcbd4e: its stale target kept a 40k army 10 cells from the enemy's last building for 5 minutes).
+- Stop buying refineries for an expansion after 2 have been moved home.
+- One army: an attack takes the raiders along, and guards/garrisons claim no one during it and only units at home otherwise, never from the front (fd507a58: the garrison walked troops out of a winning attack).
+- The early scout goes out along a flank, never down the middle, to a lookout over the ground in front of their base where a push masses (159f4f11's side lookout watched their natural and never warned); a dead rifle scout is replaced after 90 s, on the other flank.
+- Queues: at most 2 deep per unit type, 1 unit per order: money finishes units instead of spreading over many.
+- Nothing is built within 3 cells of the massing point, and if a building or rock ends up there the point moves to the nearest clear cell (159f4f11: barracks asked for on the army's spot four times, moved home each time).
+- Attack into turrets only with 6 infantry per turret (15+) or 3 tanks per turret (siege x2); 2 known turrets tilt production to tanks/artillery (654f1b2e: three losing attacks into flame towers).
+- Expansion MCVs go only to fields beyond 16 cells of our yards; nearer fields get refineries from the base (654f1b2e wasted a yard 8 cells from home).
+- Dominant (kills >= 2x losses, lead >= 5000) with no real enemy army: finish them, no protect-lead (654f1b2e won 59k-26k on time instead of outright).
+- Broke (under 600 for 45 s) while trading even or better: the next expansion goes 60 s after the last (not 150), past an advisor "wait"; army training pauses for the MCV.
+- Never ask for a building where units stand: OpenRA moves it to the main yard (a1329ceb). A free spot is preferred; if ours stand on the chosen one, they step aside (fighters attack-move) and the placement waits up to 5 s, those units sitting out other orders meanwhile.
+- The observation reports a building's centre cell; placement takes the top-left. Read as corners, every spot right of or below a building was 2 cells out and moved home (fd507a58 placement audit: each successful place landed at asked + (1, 1)). observe.py converts our buildings to top-left.
+- OpenRA's adjacency: a new building within 1 free cell of a building that extends the buildable area; turrets don't. Power plants, barracks and domes are 2x3 (a bib row).
 
----
+## Sources
 
-## 3. Architecture: hybrid (fast executor + thinking brain)
-
-Two layers, so routine play is instant and only genuine *decisions* cost a
-model call.
-
-### 3a. Deterministic executor (the hot path — no model call)
-A fast state machine that runs on **every** view and handles everything
-routine, emitting orders directly:
-- **Build-order progression**: deploy MCV; queue/place the next building when
-  the current one is ready and we can afford it; add power when
-  `power_drained` approaches `power_provided`.
-- **Economy**: keep harvesters harvesting the nearest ore; (optionally) one
-  extra harvester/refinery for income; never float excessive cash — convert to
-  army.
-- **Production**: train rifles/rockets at the Barracks and tanks at the War
-  Factory at the target ratio, up to an affordability cap.
-- **Scouting**: send the two scouts out once (see §5).
-- **Standing attack cadence**: when the army is at/above the current attack
-  threshold, issue the server's ready-made `legal_actions.attack_now`
-  (optionally retargeted) at the enemy base/nearest enemy.
-
-The executor is pure functions over the observation. It is the "actions
-executed as fast as possible" half, and it is what plays if the brain is slow,
-errors, or is on cooldown — so **a model failure never stalls the game** (same
-hard rule as the VGC agent).
-
-### 3b. Thinking brain (the slow path — a throttled model call)
-The LLM is **not** called every view. It is called only when a **decision**
-actually arises, and its output sets a small, structured **policy/mode** the
-executor then executes quickly. The brain decides things like:
-- **Cheese response**: scout reports enemy MCV/units inbound or an unexpectedly
-  empty/forward enemy base → switch to `DEFEND_RUSH` mode (spam cheapest attack
-  units, rally them home, hit the cheese as it arrives).
-- **Attack vs. hold**: given relative army value / positioning, is a push
-  favorable? → `ALL_IN` vs. `BUILD` vs. `HARASS`.
-- **Composition shift**: infantry-heavy early → tank-heavy once the War Factory
-  is online and economy supports it.
-- **Endgame-by-clock**: with a trade/asset lead and the clock low, switch to
-  `PROTECT_LEAD` (preserve assets, avoid bad trades, deny the enemy cheap
-  kills) to lock the tiebreak.
-
-**Throttling (keeps it fast + cheap):** the brain is invoked at most once every
-N seconds (e.g. 3–5s) **and** immediately on a *trigger event* (scout sees
-cheese, `under_attack` event, War Factory finishes, army crosses a size
-threshold, clock enters the final window). Between calls the executor just runs
-the last policy. This mirrors the example agent's `MAX_CALLS`/backoff cost
-guard. A model error → keep the current mode, back off, keep executing.
-
-### 3c. Modes (the brain's output; the executor's input)
-A tiny enum the brain sets and the executor obeys:
-- `OPEN` — run the build order, start economy, send scouts.
-- `BUILD` — macro up the deathball (default mid-game).
-- `DEFEND_RUSH` — cheese detected: mass cheapest units, rally home, kill the rush.
-- `ALL_IN` — commit the deathball to an attack-move on the enemy base.
-- `HARASS` — send a detachment at enemy harvesters/economy (cheap trade-ups).
-- `PROTECT_LEAD` — clock low and ahead: preserve assets, avoid bad trades.
-
-Transitions are the brain's job; execution is the executor's. This is the clean
-seam that makes it both "fast" and "thinking."
-
----
-
-## 4. Phased game plan (timeline)
-
-Costs/build-times are read at runtime from `available_production` /
-`game_config.rules` — **never hard-coded** (the server is authoritative). The
-item ids below (`powr`, `tent`/`barr`, `proc`, `weap`, `e1`, `e3`, light/medium
-tank) are confirmed against the example agent and resolved from
-`available_production` each match.
-
-**Phase 0 — Opening (0:00–~1:30):**
-Deploy MCV → `fact`. Build `powr` → `barr`/`tent` → `proc` → `weap`, placing
-each as it readies, next to the base. Start the harvester on the nearest ore.
-Begin training rifles immediately once the Barracks is up (they are our
-anti-cheese insurance).
-
-**Phase 1 — Scout + anti-cheese read (~0:30–~3:00):**
-As soon as a cheap unit exists, execute §5 scouting. Brain evaluates the scout
-report; if cheese → `DEFEND_RUSH`, else `BUILD`.
-
-**Phase 2 — Infantry bridge (~1:00–~4:00):**
-Pump rifles (+rockets ~8:1 → 5:1) for a cheap early army that both defends and
-can punish a passive opponent. This is where a cheese-prone or passive LLM
-opponent loses if it over-commits or stalls.
-
-**Phase 3 — Tank-centric deathball (~3:00–~15:00):**
-Once `weap` is online and economy supports it, make **tanks the core** of the
-deathball (rockets mixed for anti-armor/air, rifles as cheap screen). Tanks
-trade *up* against infantry, which is exactly what wins the
-`kills_cost - deaths_cost` tiebreak. **20 minutes is ample** — tanks roll by
-~3–4 min and reach deathball numbers by ~6–8 min, leaving 12+ min to apply
-pressure.
-
-**Phase 4 — Pressure & protect the lead (~8:00–20:00):**
-Attack-move the deathball at the enemy (tanks front, infantry back). Trade
-favorably, retreat from clearly-losing fights (don't feed the enemy cheap
-`kills_cost`). As the clock enters its final window with a lead →
-`PROTECT_LEAD`: stop taking bad trades, keep assets alive, coast to the
-tiebreak.
-
----
-
-## 5. Scouting & cheese defense (your step 2)
-
-**Two scouts, sent once, cheap:**
-1. **Infantry at a choke point** — park one rifle on the natural approach to our
-   base (map geometry from `map.spawns` / `map.bounds`), stance `defend`/`hold`,
-   as a tripwire + view range. Replaced if killed (cheap).
-2. **Light vehicle** (jeep/APC/light tank, whatever is cheapest/fastest from
-   `available_production`) toward the **enemy spawn guess**
-   (`choose_enemy_spawn`) for speed and information.
-
-**What counts as cheese (deterministic signals the executor flags for the brain):**
-- Enemy **MCV or combat units detected near our base / on our side of the map**
-  early (base-move or unit rush).
-- Enemy base **not where expected / looks packed up** (MCV rush / base-move).
-- An early `under_attack` event before we have an army.
-
-**Reaction (brain → `DEFEND_RUSH`):** build the **cheapest attack units as fast
-as possible** (rifles, +rockets vs. vehicles), rally them **home**, and kill the
-rush as it arrives (defender's advantage + our view-range tripwire). No static
-defense micro. Once the cheese is dead or doesn't materialize → back to `BUILD`.
-Because most RTS LLM bots are weak to cheese, this early read is also where *we*
-can punish *their* over-extension — so `DEFEND_RUSH` naturally flows into a
-counter-attack when the enemy army is spent.
-
----
-
-## 6. Robustness (the agent must never stall or forfeit)
-
-Mirrors the VGC agent's hard rule — a model/parse problem costs decision
-quality, never a legal move:
-- **Executor is the floor.** If the brain errors, times out, or is on cooldown,
-  the executor keeps running the last mode. The game never waits on the model.
-- **`WAIT` when truly nothing to do**, exactly as the example agent does.
-- **Order hygiene** reused from the example agent: validate every order's shape
-  before sending; feed `on_action_result` refusals back; never resend a batch
-  refused as a whole; drop an order refused repeatedly for the same reason;
-  don't over-queue buildings; re-read unit ids every view (ids change/die).
-- **Idempotent build order**: progression keyed off the *observed* state
-  (what's built/queued), not a script counter — so a refused/retried order or a
-  killed building self-corrects.
-- **Cost guard**: cap total model calls per match (~a few hundred, far below the
-  example's 2400 since we call far less often), with error backoff.
-
----
-
-## 7. Proposed module layout (`agent/redalert/`)
-
-```
-agent/redalert/
-  __init__.py
-  agent.py          # create_agent(); RedAlertAgent.choose_action / on_action_result
-  executor.py       # deterministic state machine -> order batches (hot path)
-  brain.py          # throttled LLM call -> Mode + targets (slow path)
-  modes.py          # Mode enum + the policy each mode implies
-  observe.py        # typed reads of observation: economy, army, buildings, scouts, cheese signals
-  orders.py         # order builders + shape validation (adapted from examples/llm/redalert.py)
-  buildplan.py      # the build order as data, progressed off observed state
-  scout.py          # scout dispatch + cheese detection
-  config.py         # item ids resolved from available_production; thresholds, ratios, timings
-```
-
-Reuses, not reinvents, the example agent's proven order-schema handling,
-prompt-sizing, and refusal-feedback machinery.
-
----
-
-## 8. Testing approach (offline, like VGC)
-
-The sandbox has no network for deps and no live RA server, so (as with VGC)
-verification is **deterministic offline tests** against synthesized
-observations:
-- Build-order progression picks the right next building given a state.
-- Economy keeps harvesters on nearest ore; adds power when drained.
-- Cheese detector fires on MCV-near-base / early-under-attack and *not* on
-  normal states (no false positives — a false cheese alarm would wreck tempo).
-- Mode→orders mapping (e.g. `DEFEND_RUSH` trains cheapest units + rallies home;
-  `ALL_IN` emits an attack-move at the enemy base).
-- Robustness: brain error/timeout → executor still returns a legal batch;
-  nothing-to-do → `WAIT`; refused orders aren't resent.
-- Order shape validation (adapted from the example agent's tests).
-
-A live match remains the real test (unverifiable here) — called out explicitly,
-as with VGC.
-
----
-
-## 9. Open questions / assumptions to confirm
-
-1. **Tank timing (answered):** infantry-first, tanks the deathball core by
-   mid-game; 20 min is ample. Assumed OK unless you want infantry-heavier for
-   even more cost-efficiency vs. weak bots.
-2. **One base only** (no expansions) — assumed, per "simple & robust." One extra
-   refinery for income is the most macro we'll do.
-3. **Brain cadence** (every ~3–5s + on triggers) — a starting value, tunable.
-4. **Faction-agnostic**: build order uses faction-resolved ids
-   (`tent` vs `barr`, Allied vs Soviet tank ids) read from
-   `available_production`, so it plays either faction the match assigns.
-```
+- Platform guide: https://api.altruagent-game.com/skill/redalert
+- https://github.com/OpenRA/OpenRA/wiki/How-to-be-a-better-OpenRA-player
+- https://github.com/OpenRA/OpenRA/wiki/The-New-Players-Guide-to-OpenRA
+- https://forum.openra.net/viewtopic.php?p=313702 (Multiplayer Guide 2022)
+- https://sharoma.com/ral/logistics.htm
+- 9 RAGL/ladder replays (`ora-replays/`, not committed): build timings,
+  refinery-heavy economy, infantry-heavy armies, expansion to the natural at ~4:45.

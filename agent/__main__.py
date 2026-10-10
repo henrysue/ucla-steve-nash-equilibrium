@@ -237,6 +237,15 @@ def _build_parser() -> argparse.ArgumentParser:
     # notice instead of an argparse error; hidden from --help.
     mode.add_argument("--claim", nargs="?", const="", metavar="TOKEN", help=argparse.SUPPRESS)
     parser.add_argument(
+        "--show-reasoning",
+        action="store_true",
+        help=(
+            "send each decision's one-line reasoning to the platform, where spectators (and the "
+            "opponent) can read it, instead of a neutral 'Move submitted.' "
+            "(same as VGC_PUBLIC_REASONING=1)"
+        ),
+    )
+    parser.add_argument(
         "--agent",
         metavar="MODULE[:FACTORY]",
         help=f"agent factory to use (default: {DEFAULT_AGENT_SPEC})",
@@ -252,6 +261,9 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("argument --match: not allowed with argument --check-tournament")
     if args.match and args.claim is not None:
         parser.error("argument --match: not allowed with argument --claim")
+    if args.show_reasoning:
+        # Match workers are spawned processes: they inherit this environment.
+        os.environ["VGC_PUBLIC_REASONING"] = "1"
 
     if args.check_tournament:
         return _check_tournament(args.agent or DEFAULT_AGENT_SPEC)

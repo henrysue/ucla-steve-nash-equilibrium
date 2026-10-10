@@ -42,19 +42,7 @@ from pathlib import Path
 
 DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 DEFAULT_CSV = DATA_DIR / "vgc_2025_reg_i_draft_doubles.csv"
-DEFAULT_ARCHETYPES = DATA_DIR / "vgc_2025_reg_i_archetypes.json"
 
-# How many archetypes a single turn's prompt may carry. The reference goes
-# into a battle prompt on a 55 s clock, so the matcher returns at most this
-# many — the closest matches — and never the whole file. Keeping the prompt
-# small is a speed requirement, not a nicety: a bigger prompt is a slower
-# model call and a slower turn.
-MAX_ARCHETYPES_SHOWN = 2
-# A restricted-core hit is worth more than a signal-member hit: in a
-# dual-restricted format the restricted pair is what names the archetype.
-_CORE_WEIGHT = 2
-_SIGNAL_WEIGHT = 1
-_MIN_ARCHETYPE_SCORE = 2  # one restricted core, or two signal members
 
 # Short keys, because the real headers are long and these go into prompts
 # under a clock. Each maps to candidate column names, most current first; a
@@ -72,7 +60,9 @@ _SHARED_FIELDS: dict[str, tuple[str, ...]] = {
     "type1": ("Primary Type",),
     "type2": ("Secondary Type",),
     "speed": ("Spe",),
-    RESTRICTED: ("Restricted Legendary?",),
+    # Reg I: restricted legendaries. Champions (Reg M-C): Megas. Either way
+    # only one belongs in the four brought (one Mega Evolves per battle).
+    RESTRICTED: ("Restricted Legendary?", "Mega?"),
     "required_item": ("Required Item", "Mega Stone"),
     "tier": ("Usage Tier",),
     "usage_pct": ("Usage %*",),
@@ -111,6 +101,17 @@ _HIDDEN = frozenset({BASE_SPECIES})
 
 _TRUTHY = frozenset({"yes", "y", "true", "1"})
 
+# Role-text phrases that mark a support job. Speed control is tagged
+# separately, and "Trick Room" is left out because attackers' rows say
+# "under Trick Room" (Ursaluna) without setting it.
+_SUPPORT_WORDS = (
+    "support", "fake out", "intimidate", "rage powder", "follow me", "prankster", "reflect",
+    "light screen", "spore", "parting shot", "helping hand", "snarl", "will-o-wisp", "taunt",
+    "encore", "pollen puff", "tailwind",
+)
+_SPEED_WORDS = ("tailwind", "icy wind", "electroweb", "thunder wave", "speed control")
+_SPEED_MOVES = frozenset({"tailwind", "trickroom", "icywind", "electroweb", "thunderwave"})
+
 
 def species_id(name: str) -> str:
     """Showdown's id form: lowercase, punctuation and spaces stripped."""
@@ -136,15 +137,13 @@ def _resolve(fields: dict[str, tuple[str, ...]], available: list[str]) -> dict[s
 class MetaTable:
     """Indexed access to the reference table."""
 
-    def __init__(self, rows: list[dict], archetypes: list[dict] | None = None) -> None:
+    def __init__(self, rows: list[dict]) -> None:
         columns = list(rows[0].keys()) if rows else []
         self._draft = _resolve(_DRAFT_FIELDS, columns)
         self._battle = _resolve(_BATTLE_FIELDS, columns)
         self._name = self._draft.get(SPECIES, "Pokemon")
         self._base = self._draft.get(BASE_SPECIES)
-        # Team-level archetypes are optional prior knowledge: a missing or
-        # malformed file simply means no archetype notes, never an error.
-        self._archetypes = [a for a in (archetypes or []) if isinstance(a, dict) and a.get("name")]
+        self.source: str | None = None
 
         self._rows: dict[str, dict] = {}
         self._by_base: dict[str, dict] = {}
@@ -161,6 +160,11 @@ class MetaTable:
 
     def __len__(self) -> int:
         return len(self._rows)
+
+    def coverage(self, names: list[str]) -> float:
+        """Share of ``names`` this table has a row for (0 when none given)."""
+        names = [n for n in names if n]
+        return sum(self.row(n) is not None for n in names) / len(names) if names else 0.0
 
     @property
     def columns(self) -> dict[str, str]:
@@ -215,6 +219,98 @@ class MetaTable:
         if row is None:
             return []
         return [t for t in (self._value(row, "type1"), self._value(row, "type2")) if t and t.lower() != "none"]
+
+    def base_stats(self, species: str | None) -> dict[str, int] | None:
+        """Base HP/Atk/Def/SpA/SpD/Spe, or ``None`` if unlisted or incomplete."""
+        row = self.row(species)
+        if row is None:
+            return None
+        stats = {}
+        for key in ("hp", "atk", "def", "spa", "spd", "speed"):
+            try:
+                stats["spe" if key == "speed" else key] = int(self._value(row, key))
+            except ValueError:
+                return None
+        return stats
+
+    def card_set(self, species: str | None) -> dict | None:
+        """The exact draft-card set; a plain table has none (cards.CardTable does)."""
+        return None
+
+    def common_item(self, species: str | None) -> str:
+        """The table's most common held item, or ``""``."""
+        row = self.row(species)
+        return self._value(row, "common_item") if row is not None else ""
+
+    def offense(self, species: str | None) -> int | None:
+        """The higher of base Attack and Special Attack, or ``None`` if unlisted."""
+        row = self.row(species)
+        if row is None:
+            return None
+        stats = []
+        for key in ("atk", "spa"):
+            try:
+                stats.append(int(self._value(row, key)))
+            except ValueError:
+                pass
+        return max(stats) if stats else None
+
+    def roles(self, species: str | None, moves: list[str] | None = None) -> dict:
+        """Coarse team-building tags: support, attacker, speed_control, fake_out.
+
+        Usage rankings are topped by supports, because every real team runs
+        one or two; drafting down the list builds a team of four supports
+        and no way to win. These tags let the draft and the bring count
+        roles. ``moves`` (a card's real moveset) beats the table's guesses.
+        """
+        row = self.row(species)
+        role = self._value(row, "role").lower() if row is not None else ""
+        known = {species_id(m) for m in (moves if moves is not None else self.common_moves(species))}
+        support_hits = sum(word in role for word in _SUPPORT_WORDS)
+        offense = self.offense(species) or 0
+        return {
+            "support": support_hits >= 1,
+            # One support trick on a strong body (Rillaboom's Fake Out, Iron
+            # Hands') is still an attacker; Incineroar's three are not.
+            "attacker": offense >= 110 and support_hits <= 1,
+            "speed_control": any(word in role for word in _SPEED_WORDS) or bool(known & _SPEED_MOVES),
+            "fake_out": "fakeout" in known or "fake out" in role,
+        }
+
+    def field(self, species: str | None, key: str) -> str:
+        """One reference field by short key ("support_moves", "role"...), or ``""``."""
+        row = self.row(species)
+        return self._value(row, key) if row is not None else ""
+
+    def base_species(self, species: str | None) -> str:
+        """The species id a form belongs to (urshifurapidstrike -> urshifu),
+        for the species clause; the name's own id when the table is silent."""
+        row = self.row(species)
+        base = self._value(row, BASE_SPECIES) if row is not None and self._base else ""
+        return species_id(base or species or "")
+
+    def abilities(self, species: str | None) -> list[str]:
+        """Ability names a species can have, from the table, or ``[]``."""
+        row = self.row(species)
+        if row is None:
+            return []
+        names = []
+        for part in self._value(row, "abilities").split("|"):
+            name = part.split(":", 1)[0].replace("(Hidden)", "").strip()
+            if name:
+                names.append(name)
+        return names
+
+    def common_moves(self, species: str | None) -> list[str]:
+        """The table's most common moves for a species, or ``[]`` if unlisted.
+
+        Prior knowledge only: what this opponent's Pokemon usually runs, not
+        what this one has revealed.
+        """
+        row = self.row(species)
+        if row is None:
+            return []
+        return [move.strip() for move in self._value(row, "common_moves").split("/") if move.strip()]
 
     def is_restricted(self, species: str | None) -> bool:
         """Whether this is a restricted legendary under the loaded format."""
@@ -328,75 +424,43 @@ class MetaTable:
                 links[name] = partners
         return links
 
-    # -- team-level archetypes ------------------------------------------------
 
-    def _species_match(self, wanted: list[str], seen: list[str]) -> list[str]:
-        """Which ``wanted`` species are present in ``seen``, matched by EXACT
-        form, not base species.
-
-        Deliberately stricter than ``names_mentioned``: an archetype is
-        defined by a *specific* restricted (Calyrex-Shadow is a different
-        archetype from Calyrex-Ice; Urshifu-Rapid-Strike from
-        Urshifu-Single-Strike), so collapsing forms to their base would
-        surface the wrong archetype — worse than surfacing none. ``seen`` is
-        normalized to Showdown ids once; each ``wanted`` must match one of
-        those ids exactly.
-        """
-        seen_ids = {species_id(name) for name in seen if isinstance(name, str)}
-        return [name for name in wanted if isinstance(name, str) and species_id(name) in seen_ids]
-
-    def archetype_notes(self, opponent_species: list[str]) -> list[dict]:
-        """Team archetypes the opponent's revealed Pokémon match (prior knowledge).
-
-        Scores each archetype by how much of its restricted core and signal
-        members are present among ``opponent_species``, keeps those at or
-        above ``_MIN_ARCHETYPE_SCORE`` (one restricted core hit, or two
-        signal hits), and returns at most ``MAX_ARCHETYPES_SHOWN`` of them,
-        best first. Each returned note is compact and carries the
-        crit-independent counterplay — the structural answers that do not
-        depend on a critical hit or a high roll — plus its provenance.
-
-        Returns ``[]`` when nothing matches or no archetype file was loaded,
-        so the caller shows nothing rather than guessing.
-        """
-        seen = [name for name in dict.fromkeys(opponent_species) if isinstance(name, str) and name]
-        if not seen or not self._archetypes:
-            return []
-
-        scored: list[tuple[int, int, dict]] = []
-        for index, archetype in enumerate(self._archetypes):
-            cores = [c for c in archetype.get("restricted_core") or [] if isinstance(c, str)]
-            signals = [s for s in archetype.get("signal_members") or [] if isinstance(s, str)]
-            core_hits = self._species_match(cores, seen)
-            signal_hits = self._species_match(signals, seen)
-            score = _CORE_WEIGHT * len(core_hits) + _SIGNAL_WEIGHT * len(signal_hits)
-            if score >= _MIN_ARCHETYPE_SCORE:
-                # Negative index as a stable tiebreak so file order (which is
-                # Worlds placing order) decides ties, deterministically.
-                scored.append((score, -index, _archetype_brief(archetype, core_hits, signal_hits)))
-
-        scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
-        return [brief for _, _, brief in scored[:MAX_ARCHETYPES_SHOWN]]
+@lru_cache(maxsize=8)
+def load(path: str) -> MetaTable:
+    """One table by path (cached), or an empty table if it cannot be read."""
+    try:
+        with Path(path).open(encoding="utf-8-sig", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+    except (OSError, csv.Error, UnicodeDecodeError):
+        rows = []
+    found = MetaTable(rows)
+    found.source = str(path)
+    return found
 
 
-def _archetype_brief(archetype: dict, core_hits: list[str], signal_hits: list[str]) -> dict:
-    """A prompt-sized view of a matched archetype, counterplay included."""
-    counters = [
-        {"line": c.get("line", ""), "why": c.get("why", "")}
-        for c in archetype.get("counterplay") or []
-        if isinstance(c, dict) and c.get("crit_independent") is True and c.get("line")
-    ]
-    brief = {
-        "name": archetype.get("name", ""),
-        "matched_restricteds": core_hits,
-        "game_plan": archetype.get("game_plan", ""),
-        "decisive_wincon": archetype.get("decisive_wincon", ""),
-        "crit_independent_counterplay": counters,
-        "source": archetype.get("source", ""),
-    }
-    if signal_hits:
-        brief["matched_support"] = signal_hits
-    return brief
+def known_tables() -> list[str]:
+    """Every reference table in ``data/`` (one per format)."""
+    try:
+        return [str(p) for p in sorted(DATA_DIR.glob("*.csv"))]
+    except OSError:
+        return []
+
+
+def best_table(names: list[str], current: MetaTable, *, margin: float = 0.25) -> MetaTable:
+    """The table whose format matches these species, if clearly better.
+
+    The server's draft pool decides the format, not our configuration: a
+    Champions (Reg M-C) pool read against the Reg I table loses its Megas'
+    stats, roles and partners. Switch only when another table covers at
+    least ``margin`` more of the species actually on offer.
+    """
+    best, best_cover = current, current.coverage(names)
+    for path in known_tables():
+        candidate = load(path)
+        cover = candidate.coverage(names)
+        if cover >= best_cover + margin:
+            best, best_cover = candidate, cover
+    return best
 
 
 @lru_cache(maxsize=1)
@@ -408,7 +472,6 @@ def table() -> MetaTable:
     unreadable table yields an empty one rather than an error: the agent
     plays without the reference, it just plays less informed.
     """
-    archetypes = _load_archetypes()
     for path in _candidate_paths():
         try:
             with path.open(encoding="utf-8-sig", newline="") as handle:
@@ -416,28 +479,10 @@ def table() -> MetaTable:
         except (OSError, csv.Error, UnicodeDecodeError):
             continue
         if rows:
-            return MetaTable(rows, archetypes)
-    return MetaTable([], archetypes)
-
-
-def _load_archetypes() -> list[dict]:
-    """Load the optional team-archetype file (``VGC_ARCHETYPES_CSV`` overrides).
-
-    Archetypes are a bonus layer on top of the per-Pokémon table. A missing,
-    unreadable, or malformed file yields an empty list and the agent plays
-    without archetype notes — exactly as it does without the CSV.
-    """
-    override = os.environ.get("VGC_ARCHETYPES_JSON")
-    path = Path(override) if override else DEFAULT_ARCHETYPES
-    if not path.exists():
-        return []
-    try:
-        with path.open(encoding="utf-8-sig") as handle:
-            data = json.load(handle)
-    except (OSError, ValueError, UnicodeDecodeError):
-        return []
-    archetypes = data.get("archetypes") if isinstance(data, dict) else data
-    return archetypes if isinstance(archetypes, list) else []
+            found = MetaTable(rows)
+            found.source = str(path)
+            return found
+    return MetaTable([])
 
 
 def _candidate_paths() -> list[Path]:

@@ -96,7 +96,9 @@ runner calls it after every `play_action` with the server's answer, or with
 `{"error": <code>, "detail": <message>}` when the server refused the move
 and the runner recovered. That is how an agent learns that a move it sent
 was refused, for any game. It is optional; a plain function agent never
-needs it.
+needs it. Likewise `on_match_end(final_state, context)`, called once with the
+terminal `GameState` (carrying `final_result`) so an agent can record how the
+match ended; an exception there is logged, not raised, since the match is over.
 
 `state_version` (MCP's optimistic-concurrency counter) is entirely
 runner-owned: taken from the same read that produced `state.legal_actions`
@@ -499,6 +501,17 @@ def _report_result(hook, result: dict, context: DecisionContext) -> None:
         ) from exc
 
 
+def _finish(choose_action: Any, final: GameState, context: DecisionContext, log: Callable[[str], None]) -> GameState:
+    """Hand the terminal state to the agent's optional ``on_match_end``."""
+    hook = getattr(choose_action, "on_match_end", None)
+    if callable(hook):
+        try:
+            hook(final, context)
+        except Exception as exc:  # noqa: BLE001 - the match is already over
+            log(f"on_match_end raised {exc!r} for session {context.session_id!r}; ignored.")
+    return final
+
+
 def _with_game_config(game: Any, context: DecisionContext) -> DecisionContext:
     """``context`` with ``game_config`` from ``get_game_config``, fetched once
     and best-effort: a server or session without it leaves ``None``."""
@@ -861,7 +874,7 @@ def run_game(
     while True:
         if state.is_terminal:
             result = read(game.get_result)
-            return _terminal_game_state(state, result)
+            return _finish(choose_action, _terminal_game_state(state, result), context, log)
 
         if state.raw.get("eliminated"):
             state = wait(state, _last_message_seq(state))
@@ -950,7 +963,7 @@ def run_game(
                 if decision is RESIGN:
                     result = game.resign()
                     if not _resign_left_game_running(result):
-                        return _terminal_game_state(state, result)
+                        return _finish(choose_action, _terminal_game_state(state, result), context, log)
                     left_the_game = True
                 else:
                     # Only passed when the contestant supplied one, so agents

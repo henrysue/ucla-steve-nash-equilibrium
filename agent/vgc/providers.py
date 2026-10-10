@@ -31,6 +31,7 @@ from __future__ import annotations
 import inspect
 import json
 import os
+import time
 from typing import Protocol
 
 import httpx
@@ -39,6 +40,11 @@ DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
 MAX_TOKENS = 8_000  # a payoff matrix and a few labels; thinking is billed separately
+# The effort value that means "answer without thinking". Battle turns use it:
+# with thinking on, a turn took 13-40 s and timed out on 2 of 7 in the
+# 2026-10-09 match. Thinking is billed and timed, never shown, so its only
+# value is answer quality, and a timed-out answer has none.
+NO_THINKING = "none"
 
 
 class ProviderError(RuntimeError):
@@ -89,6 +95,9 @@ class AnthropicProvider:
             )
         self.model = model
         self.last_reasoning: str | None = None
+        # Some models reject disabled thinking (Sonnet 5.5, Opus 5.5, Fable).
+        # Learned on the first 400 and remembered, so it costs one call.
+        self._thinking_off_ok = True
         self._anthropic = anthropic
         # No api_key argument means the SDK resolves ANTHROPIC_API_KEY, then
         # ANTHROPIC_AUTH_TOKEN, then an `ant auth login` profile.
@@ -103,23 +112,18 @@ class AnthropicProvider:
         system = [message["content"] for message in messages if message.get("role") == "system"]
         turns = [message for message in messages if message.get("role") != "system"]
         self.last_reasoning = None
+        started = time.monotonic()
+        thinking_off = effort == NO_THINKING and self._thinking_off_ok
         try:
-            response = self._client.with_options(timeout=timeout, max_retries=0).messages.create(
-                model=self.model,
-                max_tokens=MAX_TOKENS,
-                system="\n\n".join(system) or self._anthropic.NOT_GIVEN,
-                messages=turns,
-                # "summarized" is what makes the reasoning auditable. It is
-                # free: thinking happens and is billed identically under
-                # every display setting, and the default ("omitted") just
-                # returns empty thinking text. The raw chain of thought is
-                # never exposed on any model, so this is the most we can log.
-                thinking={"type": "adaptive", "display": "summarized"},
-                output_config={
-                    "effort": effort,
-                    "format": {"type": "json_schema", "schema": schema},
-                },
-            )
+            try:
+                response = self._create(system, turns, schema, timeout, effort, thinking_off)
+            except self._anthropic.BadRequestError:
+                if not thinking_off:
+                    raise
+                # This model needs thinking on: use the least of it, now and after.
+                self._thinking_off_ok = False
+                left = timeout - (time.monotonic() - started)
+                response = self._create(system, turns, schema, left, effort, False)
         except self._anthropic.APIStatusError as exc:
             raise ProviderError(f"Claude request failed (HTTP {exc.status_code})") from None
         except self._anthropic.APIError as exc:
@@ -136,6 +140,28 @@ class AnthropicProvider:
         self.last_reasoning = _thinking_text(response) or None
         text = next((block.text for block in response.content if block.type == "text"), "")
         return _as_object(text, "Claude")
+
+    def _create(self, system: list[str], turns: list[dict], schema: dict, timeout: float, effort: str, thinking_off: bool):
+        if thinking_off:
+            thinking = {"type": "disabled"}
+        else:
+            # "summarized" is what makes the reasoning auditable. It is
+            # free: thinking happens and is billed identically under every
+            # display setting, and the default ("omitted") just returns
+            # empty thinking text. The raw chain of thought is never
+            # exposed on any model, so this is the most we can log.
+            thinking = {"type": "adaptive", "display": "summarized"}
+        return self._client.with_options(timeout=timeout, max_retries=0).messages.create(
+            model=self.model,
+            max_tokens=MAX_TOKENS,
+            system="\n\n".join(system) or self._anthropic.NOT_GIVEN,
+            messages=turns,
+            thinking=thinking,
+            output_config={
+                "effort": "low" if effort == NO_THINKING else effort,
+                "format": {"type": "json_schema", "schema": schema},
+            },
+        )
 
 
 class OpenAIProvider:

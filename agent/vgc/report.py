@@ -12,8 +12,8 @@ operator instead:
   or aggregated across matches.
 
 Each record carries what was decided *and why*: the model's own reasoning,
-the candidate lines, the payoff matrix, the equilibrium, the opponent-model
-posterior and the cheese verdict, the action actually sent, and the cost in
+the opponent prediction, our ranked answers to it, the action
+actually sent, and the cost in
 attempts and seconds. Fallbacks are recorded too — "the model timed out" is
 the single most important thing an audit can tell you about a bad move.
 
@@ -32,181 +32,42 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .nash import Equilibrium, Exploitation
-from .opponent import CheeseCheck
-
-MIXED_WEIGHT = 0.10  # a row this heavy counts as genuinely part of the mix
 REASONING_LOG_LIMIT = 4_000  # per decision, in the log; prompts are unaffected
 
 
 @dataclass
 class Analysis:
-    """One matrix decision's reasoning, ready to render."""
+    """One battle turn: the opponent prediction and our best answers to it."""
 
     turn: str
     state_summary: str
-    threats: str
-    row_labels: list[str]
-    col_labels: list[str]
-    matrix: list[list[float]]
-    equilibrium: Equilibrium
-    chosen_row: int
-    recommendation: str  # "EQUILIBRIUM" or "EXPLOIT"
-    slot_descriptions: list[str] = field(default_factory=list)
-    cheese: CheeseCheck | None = None
-    exploitation: Exploitation | None = None
-    predicted_col_mix: list[float] | None = None
-    key_assumption: str = ""
-    pruned: str = ""
+    prediction: dict  # foe -> {action, target, move, confidence, why}
+    source: str  # "model" or "code"
+    code_guess: dict
+    lines: list = field(default_factory=list)  # [(value, description)], best first; the first is played
 
     def render(self) -> str:
-        parts = [
-            f"### {self.turn} Analysis",
-            "",
-            f"**State summary:** {self.state_summary or '(not supplied)'}",
-            f"**Threats & win conditions:** {self.threats or '(not supplied)'}",
-        ]
-        if self.pruned:
-            parts.append(f"**Pruned:** {self.pruned}")
-        parts += ["", "**Payoff matrix** (our win probability):", "", self._matrix_table()]
-
-        tree = self._mermaid()
-        if tree:
-            parts += ["", "**Game tree:**", "", tree]
-
-        parts += [
-            "",
-            "**Nash equilibrium**",
-            f"- Our mix: {self._mix(self.equilibrium.row_mix, self.row_labels)}",
-            f"- Opponent mix: {self._mix(self.equilibrium.col_mix, self.col_labels)}",
-            f"- Game value: {self.equilibrium.value:.3f}",
-        ]
-
-        if self.cheese is not None:
-            posterior = (
-                self._mix(self.predicted_col_mix, self.col_labels)
-                if self.predicted_col_mix is not None
-                else "(none)"
-            )
-            met = "Yes" if self.cheese.exploit else f"No - {'; '.join(self.cheese.reasons)}"
-            parts += [
-                "",
-                "**Opponent model check**",
-                f"- Situation type: {self.cheese.situation}",
-                f"- Observations: {self.cheese.observations}, modal: {self.cheese.modal_category or 'n/a'} "
-                f"{self.cheese.modal_probability:.2f} (entropy {self.cheese.posterior_entropy:.2f} vs "
-                f"equilibrium {self.cheese.equilibrium_entropy:.2f})",
-                f"- Predicted opponent mix: {posterior}",
-                f"- Cheese criteria met? {met}",
-            ]
-
-        parts += ["", f"**Recommendation: {self.recommendation}**"]
-        for index, description in enumerate(self.slot_descriptions):
-            parts.append(f"- Slot {index}: {description}")
-        parts.append(f"- Playing: {self._label(self.row_labels, self.chosen_row)}")
-        if self.exploitation is not None:
-            parts.append(
-                f"- Expected value vs prediction: {self.exploitation.value_vs_prediction:.3f} | "
-                f"vs equilibrium: {self.exploitation.value_vs_equilibrium:.3f} | "
-                f"worst case: {self.exploitation.worst_case:.3f} | epsilon: {self.exploitation.epsilon:.2f}"
-            )
-        if self.key_assumption:
-            parts.append(f"- Key assumption that would change this: {self.key_assumption}")
+        parts = [f"### {self.turn} Analysis", "", f"**State summary:** {self.state_summary or '(not supplied)'}", ""]
+        parts.append(f"**Predicted opponent ({self.source}):**")
+        for foe, guess in self.prediction.items():
+            target = f" -> {guess['target']}" if guess.get("target") else ""
+            move = f" ({guess['move']})" if guess.get("move") else ""
+            parts.append(f"- {foe}: {guess.get('action')}{target}{move}, confidence {guess.get('confidence')}: {guess.get('why', '')}")
+        if self.source == "model" and self.code_guess:
+            parts.append("- code guess: " + "; ".join(f"{foe} {g.get('action')}" for foe, g in self.code_guess.items()))
+        parts += ["", "**Our best answers** (value on the damage scale):"]
+        for index, (value, description) in enumerate(self.lines):
+            parts.append(f"- {value:.1f} {description}{' **<- played**' if index == 0 else ''}")
         return "\n".join(parts)
 
     def as_dict(self) -> dict:
         return {
-            "row_labels": self.row_labels,
-            "col_labels": self.col_labels,
-            "matrix": self.matrix,
-            "equilibrium": {
-                "our_mix": self.equilibrium.row_mix,
-                "opponent_mix": self.equilibrium.col_mix,
-                "game_value": self.equilibrium.value,
-            },
-            "predicted_opponent_mix": self.predicted_col_mix,
-            "chosen_row": self.chosen_row,
-            "recommendation": self.recommendation,
             "state_summary": self.state_summary,
-            "threats": self.threats,
-            "pruned": self.pruned,
-            "key_assumption": self.key_assumption,
-            "cheese": None if self.cheese is None else {
-                "exploit": self.cheese.exploit,
-                "situation": self.cheese.situation,
-                "observations": self.cheese.observations,
-                "modal_category": self.cheese.modal_category,
-                "modal_probability": self.cheese.modal_probability,
-                "posterior_entropy": self.cheese.posterior_entropy,
-                "equilibrium_entropy": self.cheese.equilibrium_entropy,
-                "reasons": list(self.cheese.reasons),
-            },
-            "exploitation": None if self.exploitation is None else {
-                "epsilon": self.exploitation.epsilon,
-                "value_vs_prediction": self.exploitation.value_vs_prediction,
-                "value_vs_equilibrium": self.exploitation.value_vs_equilibrium,
-                "worst_case": self.exploitation.worst_case,
-            },
+            "prediction": self.prediction,
+            "prediction_source": self.source,
+            "code_guess": self.code_guess,
+            "lines": [{"value": value, "line": description} for value, description in self.lines],
         }
-
-    # -- pieces ---------------------------------------------------------------
-
-    def _matrix_table(self) -> str:
-        header = "| You \\ Opp | " + " | ".join(self._label(self.col_labels, j) for j in range(len(self.col_labels))) + " |"
-        divider = "|---" * (len(self.col_labels) + 1) + "|"
-        rows = [
-            f"| {self._label(self.row_labels, i)}{' **<-**' if i == self.chosen_row else ''} | "
-            + " | ".join(f"{value:.2f}" for value in row)
-            + " |"
-            for i, row in enumerate(self.matrix)
-        ]
-        return "\n".join([header, divider, *rows])
-
-    def _mermaid(self) -> str:
-        """A focused tree: the chosen line against each opponent reply (4.4).
-
-        Only drawn when the decision is actually close — a genuinely mixed
-        equilibrium or two rows within a hair of each other. A sprawling
-        tree is worse than no tree.
-        """
-        if not self._is_close():
-            return ""
-        lines = ["```mermaid", "graph TD", f'    S{{{{"{self.turn}: joint decision<br/>see payoff matrix"}}}}']
-        chosen = self._label(self.row_labels, self.chosen_row)
-        for j, weight in enumerate(self.equilibrium.col_mix):
-            payoff = self.matrix[self.chosen_row][j]
-            lines.append(
-                f'    S -->|"We: {_escape(chosen)}<br/>Opp: {_escape(self._label(self.col_labels, j))} '
-                f'(y* {weight:.0%})"| T{j}(["Win prob {payoff:.2f}"])'
-            )
-        lines += ["    style S stroke-width:2px", "```"]
-        return "\n".join(lines)
-
-    def _is_close(self) -> bool:
-        mixed = sum(1 for weight in self.equilibrium.row_mix if weight >= MIXED_WEIGHT)
-        if mixed >= 2:
-            return True
-        guarantees = sorted((min(row) for row in self.matrix), reverse=True)
-        return len(guarantees) >= 2 and guarantees[0] - guarantees[1] < 0.05
-
-    @staticmethod
-    def _label(labels: list[str], index: int) -> str:
-        if 0 <= index < len(labels) and labels[index]:
-            return labels[index]
-        return f"option {index}"
-
-    def _mix(self, mix: list[float], labels: list[str]) -> str:
-        shown = [
-            f"{self._label(labels, index)} {weight:.0%}"
-            for index, weight in enumerate(mix)
-            if weight >= 0.005
-        ]
-        return ", ".join(shown) or "(degenerate)"
-
-
-def _escape(text: str) -> str:
-    """Keep a label safe inside a Mermaid edge string."""
-    return text.replace('"', "'").replace("|", "/").replace("\n", " ")
 
 
 @dataclass
@@ -224,6 +85,9 @@ class Decision:
     seconds: float = 0.0
     fallback_reason: str | None = None
     analysis: Analysis | None = None
+    move_state: dict | None = None  # the move tracker's view (doubles turns only)
+    last_turn: dict | None = None  # observed.last_turn: what happened since the previous decision
+    board: list | None = None  # draft picks: the cards on offer (JSONL only), for the card-pool CSV
 
     def render(self) -> str:
         cost = f"attempts {self.attempts}, {self.seconds:.1f}s" if self.attempts else "no model call"
@@ -236,8 +100,17 @@ class Decision:
             head.append(f"- **FALLBACK**: {self.fallback_reason}")
         head += [
             f"- Sent: `{_compact_json(self.payload)}`",
-            f"- Public summary: {self.public_summary or '(none)'}",
+            f"- Note (private; the platform was sent a neutral line): {self.public_summary or '(none)'}",
         ]
+        if self.move_state:
+            head.append(f"- Move rules: `{_compact_json(self.move_state)}`")
+        if self.last_turn:
+            reads = self.last_turn.get("reads") or {}
+            if reads:
+                head.append("- Last turn's reads: " + "; ".join(
+                    f"{foe} {r['predicted']}: **{r['result']}**" for foe, r in reads.items()))
+            seen = {k: v for k, v in self.last_turn.items() if k != "reads"}
+            head.append(f"- What happened: `{_compact_json(seen)}`")
         parts = ["\n".join(head)]
         if self.model_reasoning:
             parts += [
@@ -266,6 +139,9 @@ class Decision:
             "seconds": round(self.seconds, 2),
             "fallback_reason": self.fallback_reason,
             "analysis": None if self.analysis is None else self.analysis.as_dict(),
+            "move_state": self.move_state,
+            "last_turn": self.last_turn,
+            "board": self.board,
         }
 
 
@@ -325,12 +201,13 @@ class MatchLog:
             self._log(f"[vgc] match log disabled, could not write {self._stem}: {exc}")
 
     def summarize(self, *, outcome: str | None = None, opponent: list | None = None,
-                  archetype: str | None = None, note: str | None = None) -> dict:
+                  archetype: str | None = None, note: str | None = None, ending: dict | None = None,
+                  style: dict | None = None) -> dict:
         """Emit a compact end-of-match summary for offline, no-time-pressure review.
 
         The per-turn log already holds every move and its reasoning; this adds
         the skimmable layer on top — what we faced, how each turn resolved
-        (EQUILIBRIUM / EXPLOIT / FALLBACK), how many fallbacks we were forced
+        (MODEL / FALLBACK), how many fallbacks we were forced
         into, and the outcome when it is known — so a human can spot mistakes
         and decide which archetype/counterplay to PRELOAD into the playbook.
 
@@ -339,8 +216,9 @@ class MatchLog:
         ``outcome`` is only recorded when the caller actually knows it; it is
         never guessed.
         """
+        from .observed import tally
+
         fallbacks = sum(1 for e in self._trail if e["result"] == "FALLBACK")
-        exploits = sum(1 for e in self._trail if e["result"] == "EXPLOIT")
         summary = {
             "match": self._identity,
             "outcome": outcome,  # "win" / "loss" / None (unknown)
@@ -348,13 +226,14 @@ class MatchLog:
             "opponent_archetype": archetype,
             "decisions": len(self._trail),
             "fallbacks": fallbacks,
-            "exploits": exploits,
+            "reads": tally([read for e in self._trail for read in e.get("reads", [])]),
+            "ending": ending,  # the server's final_result and the last board: how it ended
+            "opponent_style": style,  # basic (book Protects) or strong (plays around reads), and why
             "turns": self._trail,
             "note": note,
         }
         digest = (
-            f"match summary: {len(self._trail)} decisions, {fallbacks} fallback(s), "
-            f"{exploits} exploit(s)"
+            f"match summary: {len(self._trail)} decisions, {fallbacks} fallback(s)"
             + (f", outcome={outcome}" if outcome else "")
             + (f", vs {archetype}" if archetype else "")
         )
@@ -384,20 +263,21 @@ def _trail_entry(decision: Decision) -> dict:
     if decision.fallback_reason:
         result = "FALLBACK"
     elif decision.analysis is not None:
-        result = decision.analysis.recommendation  # "EQUILIBRIUM" or "EXPLOIT"
+        result = "MODEL"
     else:
         result = "-"
-    game_value = None
+    line_value = None
     if decision.analysis is not None:
-        game_value = round(decision.analysis.equilibrium.value, 3)
+        line_value = decision.analysis.lines[0][0] if decision.analysis.lines else None
     return {
         "turn": decision.turn,
         "kind": decision.kind,
         "result": result,
-        "game_value": game_value,
+        "line_value": line_value,
         "seconds": round(decision.seconds, 2),
         "summary": decision.public_summary or "",
         "fallback_reason": decision.fallback_reason,
+        "reads": list(((decision.last_turn or {}).get("reads") or {}).values()),
     }
 
 
@@ -408,14 +288,24 @@ def _render_summary(summary: dict) -> str:
         f"- Outcome: **{summary['outcome'] or 'unknown'}**"
         + (f" | vs archetype: {summary['opponent_archetype']}" if summary.get("opponent_archetype") else ""),
         f"- Opponent: {', '.join(summary['opponent_species']) or '(not recorded)'}",
-        f"- Decisions: {summary['decisions']} | Fallbacks: {summary['fallbacks']} | Exploits: {summary['exploits']}",
+        f"- Decisions: {summary['decisions']} | Fallbacks: {summary['fallbacks']}",
     ]
     if summary.get("note"):
         lines.append(f"- Note: {summary['note']}")
-    lines += ["", "| Turn | Kind | Result | Game value | s | Public summary |",
+    if summary.get("opponent_style"):
+        st = summary["opponent_style"]
+        lines.append(f"- Opponent style: **{st.get('label')}** (P strong {st.get('p_strong')}; protected when available "
+                     f"{st.get('protected_when_available')})")
+        lines += [f"  - {n}" for n in st.get("notes") or []]
+    if summary.get("ending"):
+        lines.append(f"- How it ended: `{_compact_json(summary['ending'])}`")
+    for action, row in (summary.get("reads") or {}).items():
+        rate = "n/a" if row["hit_rate"] is None else f"{row['hit_rate']:.0%}"
+        lines.append(f"- Reads, predicted {action}: {row['hit']} hit / {row['miss']} miss / {row['unknown']} unknown (hit rate {rate})")
+    lines += ["", "| Turn | Kind | Result | Best line value | s | Public summary |",
               "|---|---|---|---|---|---|"]
     for e in summary["turns"]:
-        gv = "" if e["game_value"] is None else f"{e['game_value']:.3f}"
+        gv = "" if e["line_value"] is None else f"{e['line_value']:.1f}"
         text = (e["summary"] or e.get("fallback_reason") or "").replace("|", "/")
         lines.append(f"| {e['turn']} | {e['kind']} | {e['result']} | {gv} | {e['seconds']:.1f} | {text} |")
     return "\n".join(lines)

@@ -1749,3 +1749,35 @@ def test_a_message_that_cant_be_sent_as_json_fails_at_once_as_the_agents_error()
 
     assert exc_info.value.__cause__ is unsendable and "can't be sent" in str(exc_info.value)
     assert len(game.send_message_calls) == 1 and clock.sleeps == [] and lines == []
+
+
+def test_on_match_end_gets_the_terminal_state_once():
+    ended = []
+
+    class Agent:
+        def choose_action(self, state, context):
+            return state.legal_actions[0]
+
+        def on_match_end(self, final_state, context):
+            ended.append(final_state)
+
+    game = FakeMCPGameSession().queue_state(terminal_state()).queue_result(result_dict())
+    final = run_game(game, CONTEXT, Agent(), sleep=lambda s: None, log=lambda line: None)
+
+    assert ended == [final] and final.is_terminal
+
+
+def test_a_failing_on_match_end_is_logged_not_raised():
+    lines = []
+
+    class Agent:
+        def choose_action(self, state, context):
+            return state.legal_actions[0]
+
+        def on_match_end(self, final_state, context):
+            raise RuntimeError("disk full")
+
+    game = FakeMCPGameSession().queue_state(terminal_state()).queue_result(result_dict())
+    run_game(game, CONTEXT, Agent(), sleep=lambda s: None, log=lines.append)
+
+    assert any("on_match_end raised" in line for line in lines)

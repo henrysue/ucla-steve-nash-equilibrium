@@ -7,23 +7,28 @@ once the opponent has proven predictable enough to punish.
 
     from agent.vgc import create_strategist
 
-Modules, mapped to the spec's sections:
+Modules:
 
-- ``nash``       — equilibrium, best response, safe exploitation (5, 6.4, 10)
-- ``opponent``   — situation types, Dirichlet posteriors, cheese criteria (6.2, 6.3)
-- ``actions``    — template parsing, action pruning, payload building (3.2)
-- ``typechart``  — type effectiveness behind damage and immunity pruning (3.3)
-- ``meta``       — the draft reference table: roles, counters, partners (7)
-- ``decisions``  — prompts and strict schemas for the three decision points
-- ``report``     — payoff matrix, Mermaid graphs, Section 9 output (4, 9)
-- ``strategist`` — the per-turn workflow (8)
-- ``providers``  — Claude or OpenAI, on a hard per-request deadline
+- ``strategist`` - the three decisions: draft pick, Team Preview, battle turn (rules -> predict -> answer)
+- ``decisions``  - prompts and strict schemas for those three model calls
+- ``draft``      - one score per draft card (plan, roles, coverage, matchup)
+- ``archetypes`` - team plans (data/team_plans.json) and opponent playstyle
+- ``rules``      - the one rules layer: what is withheld, what is a blunder
+- ``moverules``  - per-match move history (Fake Out, Protect chains)
+- ``movelist``   - move data (data/moves.json) and the blunder checks
+- ``lookahead``  - damage estimates, the threat table, and our best answer to the prediction
+- ``protect``    - each foe's chance to Protect this turn
+- ``abilities``  - target abilities that punish a move
+- ``actions``    - template parsing, option descriptions, payload building
+- ``predict``    - each foe's most likely action (code's guess, refined by the model)
+- ``meta``       - the reference tables (Reg I and Champions Reg M-C)
+- ``typechart``  - type effectiveness
+- ``report``     - the match log
+- ``providers``  - Claude or OpenAI, on a hard per-request deadline
 """
 
 from __future__ import annotations
 
-from .nash import Equilibrium, solve_zero_sum
-from .opponent import OpponentModel, check_cheese
 from .strategist import VGCDraftStrategist
 
 
@@ -45,10 +50,6 @@ def create_strategist(**kwargs) -> VGCDraftStrategist:
 
 
 __all__ = [
-    "Equilibrium",
-    "OpponentModel",
     "VGCDraftStrategist",
-    "check_cheese",
     "create_strategist",
-    "solve_zero_sum",
 ]

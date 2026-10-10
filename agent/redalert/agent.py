@@ -1,59 +1,98 @@
-"""The Red Alert agent: wires the executor and brain into one match player.
+"""The Red Alert agent: one ``RedAlertAgent`` per match.
 
-``create_agent()`` builds one :class:`RedAlertAgent` per match. The agent is
-real time, so ``choose_action`` must return fast and never block on a model:
-
-- The **executor** runs every view and returns a legal batch immediately.
-- The **brain** (mode selection) is deterministic and cheap, so it also runs
-  every view — but the *optional* model consultation inside it is throttled and
-  strictly off the critical path (a stale suggestion from a previous view is
-  used; a failing/absent model just means the deterministic policy decides).
-- ``on_action_result`` feeds refusals back so a batch refused as a whole is not
-  repeated verbatim.
-
-With no model configured the agent plays a complete, aggressive, legal match
-from the deterministic policy alone — it never stalls or forfeits.
+Real time, so ``choose_action`` never waits on a model. Every view: read the
+state (observe), remember enemies (memory), pick a Mode (brain), update the
+squads (scout, raid, home guard, garrison, expansion), add micro, and send
+one order batch (executor). The model advisor and Haiku squad leads run on
+background threads; their newest advice is used when ready. Refused orders are
+held back briefly; unchanged army orders aren't resent every view. Without a
+model the rules play a complete match. Platform rules:
+https://api.altruagent-game.com/skill/redalert.
 """
 
 from __future__ import annotations
 
+import json
+from collections import Counter
 import time
 from collections.abc import Callable
 from typing import Any
 
 from altruagent import WAIT, DecisionContext, GameState, WithReasoning
+from altruagent.console import print_line
 
-from . import brain, executor, orders
+from . import brain, buildplan, executor, micro, orders, scout, squadlead
+from .expand import Expansion
+from .expand import enemy_expansions as _enemy_expansions
+from .guard import Garrison, HomeGuard
+from .raid import Raid
 from . import config as C
+from .matchlog import MatchLog
+from .memory import EnemyMemory
+from .harvest import HarvestManager
+from .movement import Unstick
 from .modes import Mode
-from .observe import read
+from .observe import dist2, enemy_ore_field, read
 
 
 def create_agent():
-    return RedAlertAgent()
+    from .advisor import advisor_from_env
+    from .squadlead import squad_leads_from_env
+
+    return RedAlertAgent(advisor_factory=advisor_from_env, squad_lead_factory=squad_leads_from_env)
 
 
 class RedAlertAgent:
     def __init__(
         self,
         *,
-        log: Callable[[str], None] = print,
+        log: Callable[[str], None] = print_line,
         clock: Callable[[], float] = time.monotonic,
-        model_pref_fn: Callable[[Any], Mode | None] | None = None,
+        advisor_factory: Callable[..., Any] | None = None,
+        squad_lead_factory: Callable[..., Any] | None = None,
+        log_dir: str | None = None,
     ) -> None:
         self._log = log
         self._clock = clock
-        # Optional hook: (view) -> Mode suggestion. None => pure deterministic
-        # policy. Kept injectable so a model-backed brain can be added without
-        # touching the hot path, and so tests run without a provider.
-        self._model_pref_fn = model_pref_fn
         self._cheese_since: float | None = None
         self._mode: Mode = Mode.OPEN
-        self._model_pref: Mode | None = None
-        self._last_model_call = 0.0
-        self._model_calls = 0
-        self._last_batch_keys: list[str] = []
-        self._refused_last = False
+        # The batch play_action answers next; refused order key -> blocked
+        # until (clock); army (cmd, destination) -> (last sent, unit ids).
+        self._last_sent: list[dict] = []
+        self._blocked: dict[str, float] = {}
+        self._army_sent: dict[str, tuple[float, frozenset]] = {}
+        # build/train item -> when we last sent it (until production shows it).
+        self._production_sent: dict[str, float] = {}
+        self._patrol = scout.Patrol()
+        self._memory = EnemyMemory()
+        self._raid = Raid()
+        self._guard = HomeGuard()
+        self._expansion = Expansion()
+        self._garrison = Garrison()
+        self._unstick = Unstick()
+        self._hunter = scout.Hunter()
+        self._placing: dict = {}   # item -> {"asked", "t", "known"}: where we asked to place it
+        self._sold_at = float("-inf")
+        self._clearing: dict = {}   # building item -> game time its spot was first found occupied
+        self._harvest = HarvestManager()
+        # Per-match review log (off unless a log directory is configured).
+        self._matchlog = MatchLog(log, directory=log_dir)
+        self._game_seconds: float | None = None
+        # (game seconds, kills_cost, deaths_cost) for the trade-based retreat.
+        self._trades: list[tuple[float, float, float]] = []
+        self._retreated_at: float | None = None
+        self._mode_since = 0.0
+        self._attack_army = 0.0              # army value when the current attack began
+        self._retreat_army: float | None = None  # army value at the last retreat
+        # Flank route for the current attack (executor.choose_flank).
+        self._attacks = 0
+        self._flank_via: tuple[int, int] | None = None
+        # The model advisor (None: rules only). Built after the match log so
+        # each piece of advice is logged as it arrives.
+        self._advisor = advisor_factory(log, on_advice=self._on_advice) if advisor_factory else None
+        self._last_plan: tuple[str, str] | None = None
+        # Haiku squad leads for the raid squad and the garrison ({} = rules only).
+        self._leads = squad_lead_factory(log, on_directive=self._matchlog.squad) if squad_lead_factory else {}
 
     # -- the hot path ---------------------------------------------------------
 
@@ -62,64 +101,344 @@ class RedAlertAgent:
         if not isinstance(raw, dict) or not isinstance(raw.get("observation"), dict):
             return WAIT  # nothing to look at yet
 
-        view = read(raw)
+        view = read(raw, getattr(context, "game_config", None))
         if not view.ok:
             return WAIT
+
+        # Remember enemies through the fog: the brain weighs the enemy army we
+        # remember, and the army can target buildings we saw earlier.
+        self._audit_placements(view)
+        self._memory.update(view)
+        view = self._memory.apply(view)
 
         # Track the cheese window (sets/expires defensively; strategy hole #3).
         self._cheese_since = brain.update_cheese_since(view, self._cheese_since)
 
-        # Optional, throttled model suggestion — used on a LATER view when
-        # ready, never blocking this one.
-        self._maybe_refresh_model_pref(view)
-
+        self._patrol.update(view)
+        advice = self._poll_advisor(view)
+        prev_mode = self._mode
+        hunting = self._hunter.hunting(view)
         self._mode = brain.choose_mode(
-            view, cheese_since=self._cheese_since, model_pref=self._model_pref
+            view, cheese_since=self._cheese_since, model_pref=_POSTURE.get(getattr(advice, "posture", None)),
+            prev_mode=prev_mode, scout_id=self._patrol.unit_id,
+            losing_trades=self._losing_trades(view), retreated_at=self._retreated_at,
+            retreat_army=self._retreat_army, hunting=hunting,
         )
+        # Defend the haul: while the expansion MCV is on the road, the army
+        # escorts it instead of attacking (safety modes still win).
+        self._expansion.update(view, self._mode, advice, ore_running_out=self._harvest.home_depleted(view))
+        if self._expansion.escorting and self._mode is Mode.ALL_IN and not brain.must_attack(view) and not hunting:
+            self._mode = Mode.BUILD
+        if self._expansion.scout_target is not None and self._patrol.visit is None:
+            self._patrol.visit = self._expansion.scout_target
+        # Commit: no BUILD <-> ALL_IN flip within MODE_MIN_DWELL_SECONDS.
+        if ({prev_mode, self._mode} == {Mode.BUILD, Mode.ALL_IN}
+                and view.game_seconds - self._mode_since < C.MODE_MIN_DWELL_SECONDS):
+            self._mode = prev_mode
+        if self._mode is not prev_mode:
+            self._mode_since = view.game_seconds
+            if self._mode is Mode.ALL_IN:
+                self._attack_army = view.army_value
+                self._flank_via = self._pick_route(view, advice)
+                self._attacks += 1
+            else:
+                self._flank_via = None
+        self._update_flank(view)
+        if self._mode is Mode.RETREAT and prev_mode is not Mode.RETREAT:
+            self._retreated_at = view.game_seconds
+            self._retreat_army = view.army_value
+        self._game_seconds = view.game_seconds
 
-        batch_orders = executor.plan(view, self._mode)
-        if self._refused_last:
-            # Don't resend an identical batch that was just refused as a whole.
-            batch_orders = [o for o in batch_orders if _order_key(o) not in self._last_batch_keys]
+        self._raid.update(view, self._mode, self._patrol.unit_id, advice, taken=set(self._guard.unit_ids))
+        self._guard.update(view, self._mode, {self._patrol.unit_id, *self._raid.unit_ids})
+        self._garrison.update(view, self._mode, self._expansion,
+                              {self._patrol.unit_id, *self._raid.unit_ids, *self._guard.unit_ids})
+        self._matchlog.observe(raw, view, self._mode, context, extra={
+            "scout": self._patrol.unit_id, "raid_squad": len(self._raid.unit_ids),
+            "home_guard": len(self._guard.unit_ids),
+            # Confirms the live game_config carries the map picture.
+            "map_ore_cells": len(view.ore_cells), "enemy_ore_field": enemy_ore_field(view),
+            "raid_target": self._raid.target(view),
+            "flank_via": self._flank_via,
+            "expansion": self._expansion.state, "expansion_site": self._expansion.site,
+            "expansions_done": self._expansion.sites, "garrison": len(self._garrison.unit_ids),
+            # Each expansion's ore, whether a refinery of ours serves it, and
+            # how often the engine moved an expansion refinery off its spot.
+            "expansion_ores": [d["ore"] for d in self._expansion.done],
+            "expansions_served": [self._expansion.served(view, d["ore"]) for d in self._expansion.done],
+            "refineries_moved": self._expansion.refineries_moved,
+            "refinery_moves": self._expansion.moves,
+            "expand_push": self._expansion._push(view.game_seconds),
+            "harvesters_by_field": {f"{f[0]},{f[1]}": n for f, n in self._harvest.last_counts.items()},
+            "depleted_fields": sorted(f"{f[0]},{f[1]}" for f in self._harvest.depleted()),
+            "home_depleted": self._harvest.home_depleted(view),
+            "early_push_warning": scout.early_push_warning(view),
+            "hunting": hunting,
+            "active_base": self._active_base(view),
+            "harvester_acts": dict(Counter(h.act for h in view.units_of(C.HARVESTER) if h.act)),
+            "unstuck": self._unstick.unstuck,
+            "enemy_expansions": _enemy_expansions(view),
+            "advice": getattr(advice, "posture", None), "advisor_calls": getattr(self._advisor, "calls", 0),
+        })
+        squads = {self._patrol.unit_id, *self._raid.unit_ids, *self._guard.unit_ids, *self._garrison.unit_ids}
+        micro_orders, micro_ids = micro.plan(view, self._mode, frozenset(squads), scout.choke_cell(view))
+        hunt = self._hunter.targets(view, C.HUNT_GROUPS) if self._mode is Mode.ALL_IN else []
+        sell = buildplan.sell_for_income(view)
+        if sell is not None and view.game_seconds - self._sold_at >= C.SELL_FOR_INCOME_SECONDS:
+            self._sold_at = view.game_seconds
+        else:
+            sell = None
+        planned = ([sell] if sell else []) + executor.plan(
+            view, self._mode,
+            scout_id=self._patrol.unit_id, scout_orders=self._patrol.orders(view),
+            raid_ids=[*self._raid.unit_ids, *self._guard.unit_ids, *self._garrison.unit_ids, *micro_ids],
+            raid_orders=(self._raid_orders(view) + self._guard.orders(view)
+                         + self._garrison_orders(view) + micro_orders),
+            advice=advice,
+            flank_via=self._flank_via, expansion=self._expansion,
+            hunt=hunt[0] if hunt else None, hunt_points=hunt,
+            harvest_orders=self._harvest.orders(view),
+            depleted=frozenset(self._harvest.depleted()),
+            home=self._active_base(view),
+            clearing=self._clearing,
+        ) + self._unstick.orders(view) + executor.stance_orders(
+            view, self._mode, {*self._guard.unit_ids, *self._garrison.unit_ids})
+        now = self._clock()
+        batch_orders = [
+            o for o in planned
+            if self._blocked.get(_order_key(o), 0.0) <= now
+            and not self._army_repeat(o, now) and not self._production_pending(o, now)
+        ]
 
         move = orders.batch(batch_orders)
         if move is None:
             return WAIT  # nothing to do right now
 
-        self._last_batch_keys = [_order_key(o) for o in move["orders"]]
-        self._refused_last = False
+        self._last_sent = move["orders"]
+        self._note_placements(view, self._last_sent)
+        for order in self._last_sent:
+            if order.get("cmd") in _ARMY_CMDS:
+                self._army_sent[_army_key(order)] = (now, frozenset(order.get("units") or ()))
+            elif order.get("cmd") in _PRODUCTION_CMDS:
+                self._production_sent[_production_key(order)] = now
         return WithReasoning(move, self._reason(view))
 
     def on_action_result(self, result: Any, context: DecisionContext) -> None:
-        """Learn from each play_action answer. A whole-batch refusal
-        (INVALID_ACTION) sets a flag so the next view does not resend it."""
-        if isinstance(result, dict) and str(result.get("error") or "").upper() == "INVALID_ACTION":
-            self._refused_last = True
+        """Learn from each play_action answer. Orders the server refused (the
+        whole batch on INVALID_ACTION, or single rows marked ``rejected``) are
+        held back for ``REFUSAL_BLOCK_SECONDS``, then allowed again — a refusal
+        never blocks an order for the rest of the match."""
+        if not isinstance(result, dict):
+            return
+        until = self._clock() + C.REFUSAL_BLOCK_SECONDS
+        sent = self._last_sent
+        if str(result.get("error") or "").upper() == "INVALID_ACTION":
+            refused = [(o, "batch_refused", result.get("detail")) for o in sent]
+        else:
+            refused = [
+                (sent[row["index"]], row.get("reason"), row.get("detail"))
+                for row in result.get("results") or []
+                if isinstance(row, dict) and row.get("status") == "rejected"
+                and isinstance(row.get("index"), int) and 0 <= row["index"] < len(sent)
+            ]
+        for order, reason, detail in refused:
+            self._blocked[_order_key(order)] = until
+            self._army_sent.pop(_army_key(order), None)
+            if order.get("cmd") in _PRODUCTION_CMDS:
+                self._production_sent.pop(_production_key(order), None)
+            self._matchlog.refused(order, reason, detail, self._game_seconds)
 
-    # -- the brain's optional model hook -------------------------------------
+    def on_match_end(self, final_state: Any, context: DecisionContext) -> None:
+        """Record how the match ended (the runner calls this once)."""
+        self._matchlog.end(final_state, context)
+        if self._advisor is not None:
+            self._advisor.close()
+        for lead in self._leads.values():
+            lead.close()
 
-    def _maybe_refresh_model_pref(self, view) -> None:
-        if self._model_pref_fn is None:
+    def _raid_orders(self, view) -> list[dict]:
+        """The raid squad's orders: its Haiku lead's call when fresh and
+        usable, else the raid rules."""
+        lead = self._leads.get("raid")
+        ids = list(self._raid.unit_ids)
+        if lead is not None and ids:
+            d = lead.poll(view, ids, "Hunt enemy harvesters and weakly defended expansions; avoid defenses.",
+                          {"rules_target": self._raid.target(view)})
+            o = squadlead.squad_orders(view, ids, d, scout.choke_cell(view)) if d is not None else None
+            if o is not None:
+                return o
+        elif lead is not None:
+            lead.poll(view, [], "")
+        return self._raid.orders(view)
+
+    def _garrison_orders(self, view) -> list[dict]:
+        """The garrison's orders: its Haiku lead's call when fresh, usable and
+        within ``GARRISON_LEASH_CELLS`` of its post, else the garrison rules."""
+        lead = self._leads.get("garrison")
+        ids = list(self._garrison.unit_ids)
+        post = self._garrison.post(view, self._expansion)
+        if lead is not None and ids and post is not None:
+            d = lead.poll(view, ids, f"Hold our expansion; post at {list(post)}. Engage threats near it; don't chase far.",
+                          {"post": list(post)})
+            leashed = d is not None and (d.cell is None or dist2(d.cell, post) <= C.GARRISON_LEASH_CELLS ** 2)
+            o = squadlead.squad_orders(view, ids, d, post) if leashed else None
+            if o is not None:
+                return o
+        elif lead is not None:
+            lead.poll(view, [], "")
+        return self._garrison.orders(view, self._expansion)
+
+    def _active_base(self, view):
+        """The expansion that takes over building once home is mined out (or None)."""
+        return self._expansion.active_base(view, self._harvest.home_depleted(view), self._harvest.depleted())
+
+    def _pick_route(self, view, advice) -> tuple[int, int] | None:
+        """The flank waypoint for a new attack (None: straight at the target).
+        The advisor's route when it gave one, else the side with the fewest
+        known enemies, rotating on ties."""
+        target = getattr(advice, "army_target", None) or executor._attack_target(view)
+        route = getattr(advice, "attack_route", "auto")
+        if view.game_seconds < C.FLANK_AFTER_SECONDS:
+            return None   # early: straight down the middle, keeping map control
+        if route in ("left", "right"):
+            return executor.flank_waypoint(view, target, -1 if route == "left" else 1)
+        if route == "center":
+            return None
+        return executor.choose_flank(view, target, self._attacks)[1]
+
+    def _update_flank(self, view) -> None:
+        """End the flank leg once the army reaches the waypoint, or after
+        ``FLANK_MAX_SECONDS``: from then on it attacks the target directly."""
+        if self._flank_via is None:
             return
-        if self._model_calls >= C.MAX_BRAIN_CALLS:
+        if view.game_seconds - self._mode_since > C.FLANK_MAX_SECONDS:
+            self._flank_via = None
             return
-        now = self._clock()
-        if now - self._last_model_call < C.BRAIN_MIN_INTERVAL_SECONDS:
-            return
-        self._last_model_call = now
-        self._model_calls += 1
+        army = [u.cell for u in view.combat_units if u.cell is not None and u.id != self._patrol.unit_id]
+        if army:
+            cx = sum(c[0] for c in army) / len(army)
+            cy = sum(c[1] for c in army) / len(army)
+            if (cx - self._flank_via[0]) ** 2 + (cy - self._flank_via[1]) ** 2 <= C.FLANK_ARRIVED_CELLS ** 2:
+                self._flank_via = None
+
+    def _on_advice(self, advice, latency_s: float) -> None:
+        """Each answer goes to the match log; the console gets a line only
+        when the posture or plan changes, so it can be followed live without
+        a line every few seconds. Local only: never in reasoning_summary."""
+        self._matchlog.advice(advice, latency_s)
+        key = (advice.posture, advice.plan)
+        if key != self._last_plan:
+            self._last_plan = key
+            self._log(
+                f"[redalert] advisor t={int(advice.made_at)}s ({latency_s:.1f}s) {advice.posture}: "
+                f"{advice.plan or '(no plan)'} | why: {advice.reasoning or '-'}"
+            )
+
+    def _poll_advisor(self, view):
+        """The advisor's fresh advice, or ``None``. Never blocks, never raises."""
+        if self._advisor is None:
+            return None
         try:
-            self._model_pref = self._model_pref_fn(view)
-        except Exception as exc:  # noqa: BLE001 - a model problem must never stall
-            self._log(f"[redalert] model suggestion failed, using policy: {type(exc).__name__}: {exc}")
-            self._model_pref = None
+            return self._advisor.poll(view, {
+                "mode": str(self._mode),
+                "mode_for_seconds": round(self._game_seconds - self._mode_since) if self._game_seconds else 0,
+                "scout_id": self._patrol.unit_id,
+                "raid_squad_ids": list(self._raid.unit_ids),
+                "default_staging": list(scout.choke_cell(view) or []) or None,
+            })
+        except Exception as exc:  # noqa: BLE001 - the advisor must never stall the game
+            self._log(f"[redalert] advisor poll failed, rules only: {type(exc).__name__}: {exc}")
+            return None
+
+    def _losing_trades(self, view) -> bool:
+        """Since the attack began (at most ``TRADE_WINDOW_SECONDS`` back): lost
+        at least ``TRADE_LOSS_MIN`` and more than ``TRADE_LOSS_RATIO`` x what
+        we killed. Losses from before the attack don't count (match 28e54539
+        retreated 3 s into an attack over losses taken while massing)."""
+        t = view.game_seconds
+        self._trades.append((t, view.kills_cost, view.deaths_cost))
+        self._trades = [row for row in self._trades if t - row[0] <= C.TRADE_WINDOW_SECONDS]
+        if t - self._mode_since < C.MIN_ENGAGEMENT_SECONDS:
+            return False  # give the fight a chance: the first volley always costs
+        since = [row for row in self._trades if row[0] >= self._mode_since] or self._trades[-1:]
+        _, kills0, deaths0 = since[0]
+        lost, killed = view.deaths_cost - deaths0, view.kills_cost - kills0
+        floor = max(C.TRADE_LOSS_MIN, C.TRADE_LOSS_ARMY_SHARE * self._attack_army)
+        return lost >= floor and lost > C.TRADE_LOSS_RATIO * killed
+
+    def _note_placements(self, view, sent: list[dict]) -> None:
+        """Remember where each building was asked for (placement audit)."""
+        for o in sent:
+            if o.get("cmd") != "place":
+                continue
+            item = str(o.get("item") or "").lower()
+            p = self._placing.get(item)
+            if p is None or view.game_seconds - p["t"] > 15.0:
+                known = {b.id for b in view.buildings if b.type == item}
+                self._placing[item] = {"asked": o.get("at"), "t": view.game_seconds, "known": known}
+            else:
+                p["asked"] = o.get("at")
+
+    def _audit_placements(self, view) -> None:
+        """Log where each placed building came up against where it was asked
+        for: the placement rule the platform doesn't document (refineries at
+        expansions keep landing at home while power plants beside them don't)."""
+        for item, p in list(self._placing.items()):
+            new = [b for b in view.buildings if b.type == item and b.id not in p["known"] and b.cell is not None]
+            if new:
+                landed = new[0].cell
+                self._matchlog.placement({"t": round(view.game_seconds), "item": item,
+                                          "asked": p["asked"], "landed": list(landed)})
+                del self._placing[item]
+            elif view.game_seconds - p["t"] > 15.0:
+                del self._placing[item]
+
+    def _production_pending(self, order: dict, now: float) -> bool:
+        """A build/train of an item we sent moments ago: the engine applies
+        orders 0.2-0.4 s later, so the view may not show it queued yet and a
+        resend would queue it twice (skill/redalert §9, "Don't overlap")."""
+        if order.get("cmd") not in _PRODUCTION_CMDS:
+            return False
+        sent_at = self._production_sent.get(_production_key(order))
+        return sent_at is not None and now - sent_at < C.PENDING_PRODUCTION_SECONDS
+
+    def _army_repeat(self, order: dict, now: float) -> bool:
+        """An army order with the same command and destination, sent recently,
+        to no new units: skip it so units aren't re-ordered 5x a second."""
+        if order.get("cmd") not in _ARMY_CMDS:
+            return False
+        last = self._army_sent.get(_army_key(order))
+        if last is None:
+            return False
+        sent_at, units = last
+        return now - sent_at < C.ARMY_REISSUE_SECONDS and set(order.get("units") or ()) <= units
 
     def _reason(self, view) -> str:
         return f"{self._mode} | army {int(view.army_value)} vs {int(view.enemy_army_value)} | t={int(view.game_seconds)}s"
 
 
+_POSTURE = {"attack": Mode.ALL_IN, "hold": Mode.BUILD}
+_ARMY_CMDS = frozenset({"attack_move", "attack", "move"})
+_PRODUCTION_CMDS = frozenset({"build", "train", "cancel", "place", "repair"})
+
+
+def _production_key(order: dict) -> str:
+    """The item (build/train/cancel/place), or the building id (repair)."""
+    return str(order.get("item") or order.get("building")).lower()
+
+
+def _army_key(order: dict) -> str:
+    """Command + destination on a coarse grid + target: chasing an enemy that
+    shifts a cell or two is the same order, not a fresh one every view."""
+    to = order.get("to")
+    coarse = [v // _ARMY_GRID for v in to] if isinstance(to, list) else to
+    return json.dumps([order.get("cmd"), coarse, order.get("target")], default=str)
+
+
+_ARMY_GRID = 4
+
+
 def _order_key(order: dict) -> str:
-    import json
     body = {k: v for k, v in order.items() if k != "queued"}
     if isinstance(body.get("units"), list):
         body["units"] = sorted(body["units"], key=str)

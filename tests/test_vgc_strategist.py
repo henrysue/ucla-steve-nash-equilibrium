@@ -188,25 +188,16 @@ BATTLE_OBSERVATION = {
 }
 
 
-def _doubles_answer(**overrides):
+def _doubles_answer(foes=None, **overrides):
+    """The model's battle answer: a prediction of each opposing active's action."""
     answer = {
         "state_summary": "Our Incineroar and Flutter Mane face a weakened Landorus and a healthy Amoonguss.",
-        "threats": "Amoonguss Spore is the main risk; Landorus is in Flare Blitz range.",
-        "pruned": "Dropped Fake Out: Incineroar has been on the field since turn one.",
-        "situation": "threatened",
-        "opponent_last_action": "none",
-        "our_options": [
-            {"label": "Flare Blitz Lando + Moonblast Lando", "slot_0": {"option": 1, "target": 1},
-             "slot_1": {"option": 0, "target": 1}},
-            {"label": "Protect + Icy Wind", "slot_0": {"option": 2, "target": None},
-             "slot_1": {"option": 1, "target": None}},
+        "foes": foes or [
+            {"species": "landorustherian", "action": "attack", "target": "fluttermane", "move": "rockslide",
+             "confidence": 0.6, "why": "Rock Slide is its best hit"},
+            {"species": "amoonguss", "action": "protect", "target": "none", "move": "protect",
+             "confidence": 0.7, "why": "it has Protect and did not use it last turn"},
         ],
-        "opponent_options": [
-            {"label": "Both attack Flutter Mane", "category": "double_target"},
-            {"label": "Protect Landorus + Spore", "category": "protect"},
-        ],
-        "payoffs": [[0.62, 0.41], [0.48, 0.55]],
-        "key_assumption": "That Landorus is not holding a Focus Sash.",
         "reasoning_summary": "Flare Blitz should finish the weakened Landorus.",
     }
     answer.update(overrides)
@@ -234,7 +225,8 @@ def test_draft_pick_returns_the_models_choice():
     )
     assert isinstance(decision, WithReasoning)
     assert decision.action.action_id == "draft_pick:c2"
-    assert decision.reasoning_summary == "Denies their wall."
+    # The model's note stays local; the platform only ever sees a neutral line.
+    assert decision.reasoning_summary == "Move submitted."
 
 
 def test_draft_prompt_carries_the_reference_table_and_rosters():
@@ -244,8 +236,9 @@ def test_draft_prompt_carries_the_reference_table_and_rosters():
     )
     prompt = provider.prompt()
     cards = {card["species"]: card for card in prompt["available_cards"]}
-    assert cards["Rillaboom"]["reference"]["tier"] == "S"
-    assert cards["Rillaboom"]["reference"]["draft_points"] == "17"
+    # Usage anchors stay out of the draft; fit with OUR roster goes in.
+    assert not {"tier", "draft_points", "usage_pct"} & set(cards["Rillaboom"]["reference"])
+    assert "partners" in cards["Rillaboom"]["fit"]
     assert "countered_by" in cards["Rillaboom"]["reference"]
     assert prompt["your_roster_so_far"] == ["Incineroar"]
     # Pyukumuku is below the table's usage cutoff and simply has no entry.
@@ -282,18 +275,17 @@ def test_draft_uses_the_short_clock():
 # -- team preview --------------------------------------------------------------------------
 
 
-def _lineup_answer(**overrides):
+GOOD_PREVIEW_BRING = ["incineroar", "rillaboom", "fluttermane", "landorustherian"]
+
+
+def _lineup_answer(bring=None, leads=None, **overrides):
     answer = {
-        "state_summary": "Balanced matchup.",
-        "threats": "Their Amoonguss redirects.",
-        "pruned": "Dropped brings without speed control.",
-        "our_options": [
-            {"label": "Fire/Fairy offence", "bring": ROSTER[:4], "leads": ROSTER[:2]},
-            {"label": "Trick Room", "bring": ROSTER[2:6], "leads": ROSTER[2:4]},
-        ],
-        "opponent_options": [{"label": "Sun"}, {"label": "Trick Room"}],
-        "payoffs": [[0.58, 0.44], [0.46, 0.61]],
-        "key_assumption": "That they lead their speed control.",
+        "our_win_conditions": ["Fire/Fairy pressure"], "their_win_conditions": ["sun"],
+        "their_playstyle": "sun offense", "their_likely_sets": [], "our_key_moves": [],
+        "bring": GOOD_PREVIEW_BRING if bring is None else bring,
+        "leads": ["incineroar", "fluttermane"] if leads is None else leads,
+        "lead_plan": "Fake Out + Moonblast", "early_game": "e", "mid_game": "m", "end_game": "e",
+        "preserve": ["fluttermane"], "remove_first": ["torkoal"], "avoid": [],
         "reasoning_summary": "Bringing the robust four.",
     }
     answer.update(overrides)
@@ -312,23 +304,8 @@ def test_team_preview_builds_a_valid_lineup_payload():
     assert set(payload["leads"]) <= set(payload["bring"])
 
 
-def test_team_preview_prompt_carries_matchup_cross_references():
-    provider = FakeProvider(_lineup_answer())
-    _agent(provider).choose_action(
-        _state(
-            _lineup_action(), phase="team_preview",
-            observation={"opponent_roster": [{"species": "Torkoal"}, {"species": "Rillaboom"}]},
-        ),
-        POKEMON,
-    )
-    prompt = provider.prompt()
-    assert "reference_matchups" in prompt
-    assert "reference_your_roster" in prompt
-    assert prompt["opponent_roster"][0]["species"] == "Torkoal"
-
-
 def test_team_preview_rejects_a_lineup_that_is_not_four_species():
-    bad = _lineup_answer(our_options=[{"label": "too few", "bring": ROSTER[:3], "leads": ROSTER[:2]}])
+    bad = _lineup_answer(bring=ROSTER[:3], leads=ROSTER[:2])
     provider = FakeProvider(bad, _lineup_answer())
     log = []
     decision = _agent(provider, log=log).choose_action(
@@ -340,14 +317,10 @@ def test_team_preview_rejects_a_lineup_that_is_not_four_species():
 
 
 def test_team_preview_rejects_leads_outside_the_bring():
-    bad = _lineup_answer(
-        our_options=[{"label": "bad leads", "bring": ROSTER[:4], "leads": [ROSTER[4], ROSTER[5]]}]
-    )
+    bad = _lineup_answer(leads=[ROSTER[4], ROSTER[5]])
     provider = FakeProvider(bad, bad)
     log = []
-    decision = _agent(provider, log=log).choose_action(
-        _state(_lineup_action(), phase="team_preview"), POKEMON
-    )
+    decision = _agent(provider, log=log).choose_action(_state(_lineup_action(), phase="team_preview"), POKEMON)
     assert any("leads must be 2 different species" in line for line in log)
     assert decision.action["type"] == "select_lineup"  # fell back to a legal lineup
 
@@ -385,25 +358,6 @@ def test_the_preview_fallback_still_fields_four_from_an_all_restricted_roster():
     assert len(decision.action["bring"]) == 4
 
 
-def test_the_preview_prompt_names_both_sides_restricted_legendaries():
-    provider = FakeProvider(_lineup_answer(
-        our_options=[{"label": "one restricted", "bring": RESTRICTED_ROSTER[:1] + RESTRICTED_ROSTER[3:6],
-                      "leads": RESTRICTED_ROSTER[:1] + RESTRICTED_ROSTER[3:4]}],
-        opponent_options=[{"label": "Sun"}],
-        payoffs=[[0.55]],
-    ))
-    action = _templated(
-        "select_lineup", {"type": "select_lineup", "roster": RESTRICTED_ROSTER, "instructions": ""}
-    )
-    _agent(provider).choose_action(
-        _state(action, phase="team_preview", observation={"opponent_roster": [{"species": "Kyogre"}]}),
-        POKEMON,
-    )
-    prompt = provider.prompt()
-    assert prompt["your_restricted_legendaries"] == ["Calyrex-Shadow", "Miraidon", "Koraidon"]
-    assert prompt["opponent_restricted_legendaries"] == ["Kyogre"]
-
-
 def test_the_draft_fallback_deprioritizes_a_second_restricted():
     """With a restricted already drafted, a cheaper non-restricted wins."""
     observation = {
@@ -436,19 +390,6 @@ def test_the_draft_fallback_takes_the_first_restricted_on_value():
     assert decision.action.action_id == "draft_pick:r"
 
 
-def test_the_draft_prompt_names_restricteds_already_taken():
-    provider = FakeProvider({"action_id": "draft_pick:n", "reasoning_summary": "ok"})
-    observation = {
-        "phase": "draft",
-        "available_cards": [{"card_id": "n", "species": "Amoonguss"}],
-        "rosters": {"me": [{"card_id": "x", "species": "Calyrex-Shadow"}], "them": []},
-    }
-    _agent(provider).choose_action(
-        _state(*_draft_actions("n"), phase="draft", observation=observation), POKEMON
-    )
-    assert provider.prompt()["your_restricted_legendaries_so_far"] == ["Calyrex-Shadow"]
-
-
 # -- doubles turns -------------------------------------------------------------------------
 
 
@@ -463,88 +404,22 @@ def test_doubles_turn_builds_a_valid_payload():
     assert payload["slot_1"]["type"] in ("move", "switch", "pass")
 
 
-def test_the_dominant_row_is_played_when_the_matrix_has_a_saddle_point():
-    """Row 0 beats row 1 against either column, so the mix is pure."""
-    answer = _doubles_answer(payoffs=[[0.80, 0.75], [0.30, 0.20]])
-    provider = FakeProvider(answer)
-    decision = _agent(provider).choose_action(
-        _state(_doubles_action(), observation=BATTLE_OBSERVATION), POKEMON
-    )
-    assert decision.action["slot_0"] == {"type": "move", "move_id": "flareblitz", "target": 1}
-    assert decision.action["slot_1"] == {"type": "move", "move_id": "moonblast", "target": 1}
-
-
-def test_the_analysis_log_reports_the_matrix_equilibrium_and_verdict():
+def test_the_analysis_log_reports_the_prediction_and_our_answers():
     log = []
     provider = FakeProvider(_doubles_answer())
-    _agent(provider, log=log).choose_action(
-        _state(_doubles_action(), observation=BATTLE_OBSERVATION), POKEMON
-    )
+    _agent(provider, log=log).choose_action(_state(_doubles_action(), observation=BATTLE_OBSERVATION), POKEMON)
     rendered = "\n".join(log)
     assert "Turn 1 Analysis" in rendered
-    assert "Payoff matrix" in rendered
-    assert "Nash equilibrium" in rendered
-    assert "Game value:" in rendered
-    assert "Recommendation: EQUILIBRIUM" in rendered
-    assert "Opponent model check" in rendered
+    assert "Predicted opponent (model)" in rendered and "amoonguss: protect" in rendered
+    assert "Our best answers" in rendered and "<- played" in rendered
 
 
-def test_a_mixed_equilibrium_draws_the_game_tree():
-    """4.2/4.4: the tree is for close calls, which a mixed equilibrium is."""
+def test_a_bad_prediction_is_retried_then_the_code_guess_is_used():
+    provider = FakeProvider({"state_summary": "s", "foes": [], "reasoning_summary": "r"}, ProviderError("down"))
     log = []
-    provider = FakeProvider(_doubles_answer())  # the default matrix has no saddle point
-    _agent(provider, log=log).choose_action(
-        _state(_doubles_action(), observation=BATTLE_OBSERVATION), POKEMON
-    )
-    rendered = "\n".join(log)
-    assert "mermaid" in rendered
-    assert "graph TD" in rendered
-
-
-def test_an_illegal_target_is_rejected():
-    answer = _doubles_answer(our_options=[
-        {"label": "illegal target", "slot_0": {"option": 1, "target": 99}, "slot_1": {"option": 0, "target": 1}},
-    ], payoffs=[[0.5, 0.5]])
-    provider = FakeProvider(answer, _doubles_answer())
-    log = []
-    _agent(provider, log=log).choose_action(_state(_doubles_action(), observation=BATTLE_OBSERVATION), POKEMON)
-    assert any("is not legal for flareblitz" in line for line in log)
-
-
-def test_an_out_of_range_option_index_is_rejected():
-    answer = _doubles_answer(our_options=[
-        {"label": "no such option", "slot_0": {"option": 9, "target": 1}, "slot_1": {"option": 0, "target": 1}},
-    ], payoffs=[[0.5, 0.5]])
-    provider = FakeProvider(answer, _doubles_answer())
-    log = []
-    _agent(provider, log=log).choose_action(_state(_doubles_action(), observation=BATTLE_OBSERVATION), POKEMON)
-    assert any("must be an index 0..3" in line for line in log)
-
-
-def test_a_payoff_matrix_of_the_wrong_shape_is_rejected():
-    answer = _doubles_answer(payoffs=[[0.5, 0.5]])  # 2 rows declared, 1 given
-    provider = FakeProvider(answer, _doubles_answer())
-    log = []
-    _agent(provider, log=log).choose_action(_state(_doubles_action(), observation=BATTLE_OBSERVATION), POKEMON)
-    assert any("payoffs must have exactly 2 rows" in line for line in log)
-
-
-def test_a_ragged_payoff_row_is_rejected():
-    answer = _doubles_answer(payoffs=[[0.5, 0.5], [0.5]])
-    provider = FakeProvider(answer, _doubles_answer())
-    log = []
-    _agent(provider, log=log).choose_action(_state(_doubles_action(), observation=BATTLE_OBSERVATION), POKEMON)
-    assert any("must have exactly 2 cells" in line for line in log)
-
-
-def test_out_of_range_payoffs_are_clamped_to_win_probabilities():
-    log = []
-    provider = FakeProvider(_doubles_answer(payoffs=[[1.9, -4.0], [0.48, 0.55]]))
-    decision = _agent(provider, log=log).choose_action(
-        _state(_doubles_action(), observation=BATTLE_OBSERVATION), POKEMON
-    )
-    assert any("clamped" in line for line in log)
+    decision = _agent(provider, log=log).choose_action(_state(_doubles_action(), observation=BATTLE_OBSERVATION), POKEMON)
     assert decision.action["type"] == "doubles_turn"
+    assert any("FALLBACK" in line and "code's prediction" in line for line in log)
 
 
 def test_both_slots_switching_the_same_pokemon_is_rejected():
@@ -562,95 +437,6 @@ def test_both_slots_switching_the_same_pokemon_is_rejected():
 
 
 # -- the opponent model across a match -----------------------------------------------------
-
-
-def test_exploitation_engages_once_the_opponent_is_demonstrably_predictable():
-    """Four consecutive Protects in the same situation should clear 6.3."""
-    # A matrix where punishing 'protect' (column 1) pays, and the equilibrium is mixed.
-    answer = _doubles_answer(
-        payoffs=[[0.40, 0.75], [0.60, 0.45]],
-        opponent_last_action="protect",
-    )
-    log = []
-    agent = _agent(FakeProvider(*[dict(answer) for _ in range(6)]), log=log)
-    state = _state(_doubles_action(), observation=BATTLE_OBSERVATION)
-    for _ in range(6):
-        agent.choose_action(state, POKEMON)
-
-    rendered = "\n".join(log)
-    assert agent._opponent.observations("threatened") >= 4
-    assert "Recommendation: EXPLOIT" in rendered
-    # The first turn cannot exploit: nothing has been observed yet.
-    assert log[0].count("EXPLOIT") == 0
-
-
-def test_no_exploitation_before_the_sample_threshold():
-    answer = _doubles_answer(payoffs=[[0.40, 0.75], [0.60, 0.45]], opponent_last_action="protect")
-    log = []
-    agent = _agent(FakeProvider(dict(answer), dict(answer)), log=log)
-    state = _state(_doubles_action(), observation=BATTLE_OBSERVATION)
-    agent.choose_action(state, POKEMON)
-    agent.choose_action(state, POKEMON)
-    rendered = "\n".join(log)
-    assert "Recommendation: EXPLOIT" not in rendered
-    assert "sample too small" in rendered
-
-
-def test_observations_are_attributed_to_the_previous_turns_situation():
-    """Step 9: what they did last turn belongs to last turn's situation."""
-    agent = _agent(FakeProvider(
-        _doubles_answer(situation="lead", opponent_last_action="none"),
-        _doubles_answer(situation="threatened", opponent_last_action="protect"),
-    ))
-    state = _state(_doubles_action(), observation=BATTLE_OBSERVATION)
-    agent.choose_action(state, POKEMON)
-    agent.choose_action(state, POKEMON)
-    assert agent._opponent.counts == {"lead": {"protect": 1}}
-
-
-def test_an_unusable_observation_category_is_ignored():
-    log = []
-    agent = _agent(FakeProvider(
-        _doubles_answer(situation="lead", opponent_last_action="none"),
-        _doubles_answer(opponent_last_action="not_a_category"),
-    ), log=log)
-    state = _state(_doubles_action(), observation=BATTLE_OBSERVATION)
-    agent.choose_action(state, POKEMON)
-    agent.choose_action(state, POKEMON)
-    assert agent._opponent.counts == {}
-    assert any("unusable opponent observation" in line for line in log)
-
-
-def test_the_opponent_model_is_shown_to_the_model_on_later_turns():
-    """Counts reach the prompt one turn after the behaviour is attributed.
-
-    An observation is read out of the answer that also uses the prompt, so
-    turn N's prompt carries what was learned up to turn N-1.
-    """
-    provider = FakeProvider(
-        _doubles_answer(situation="lead", opponent_last_action="none"),
-        _doubles_answer(situation="threatened", opponent_last_action="protect"),
-        _doubles_answer(situation="threatened", opponent_last_action="protect"),
-    )
-    agent = _agent(provider)
-    state = _state(_doubles_action(), observation=BATTLE_OBSERVATION)
-    for _ in range(3):
-        agent.choose_action(state, POKEMON)
-
-    assert provider.prompt(1)["what_you_know_about_this_opponent"][
-        "observed_opponent_actions_by_situation"
-    ] == "nothing observed yet"
-    assert provider.prompt(2)["what_you_know_about_this_opponent"][
-        "observed_opponent_actions_by_situation"
-    ] == {"lead": {"protect": 1}}
-
-
-def test_each_match_gets_a_fresh_opponent_model():
-    from agent.vgc import create_strategist
-
-    first, second = create_strategist(), create_strategist()
-    first._opponent.observe("lead", "protect")
-    assert second._opponent.counts == {}
 
 
 # -- the clock -----------------------------------------------------------------------------
@@ -746,7 +532,7 @@ def test_a_missing_reference_table_is_diagnosed_too(monkeypatch, tmp_path):
     try:
         log = []
         VGCDraftStrategist(FakeProvider(), log=log.append, rng=random.Random(1), clock=lambda: 0.0)
-        assert any("No draft reference table" in line for line in log)
+        assert any("No reference table loaded" in line for line in log)
     finally:
         meta.table.cache_clear()
 
@@ -1040,12 +826,10 @@ def test_a_logged_record_carries_the_full_decision_basis(tmp_path):
     assert "timestamp" in record
 
     analysis = record["analysis"]
-    assert analysis["matrix"] == [[0.62, 0.41], [0.48, 0.55]]
-    assert len(analysis["row_labels"]) == 2 and len(analysis["col_labels"]) == 2
-    assert 0.0 <= analysis["equilibrium"]["game_value"] <= 1.0
-    assert analysis["recommendation"] in ("EQUILIBRIUM", "EXPLOIT")
-    assert analysis["cheese"]["situation"] == "threatened"
-    assert analysis["key_assumption"]
+    assert analysis["prediction_source"] == "model"
+    assert analysis["prediction"]["amoonguss"]["action"] == "protect"
+    assert analysis["code_guess"] and analysis["lines"][0]["line"]
+    assert record["move_state"]["ours"]  # the move tracker's view is logged
 
 
 def test_the_model_reasoning_is_logged_but_never_sent_to_the_platform(tmp_path):
@@ -1069,7 +853,7 @@ def test_a_fallback_is_audited_with_its_reason(tmp_path):
     text, records = _logged(tmp_path, provider, _state(_doubles_action(), observation=BATTLE_OBSERVATION))
 
     assert records[0]["fallback_reason"] is not None
-    assert records[0]["analysis"] is None
+    assert records[0]["analysis"]["prediction_source"] == "code"  # what we assumed instead
     assert records[0]["payload"]["type"] == "doubles_turn"  # still a legal move
     assert records[0]["attempts"] == 2
     assert "FALLBACK" in text
@@ -1114,10 +898,11 @@ def test_the_draft_and_preview_phases_are_audited(tmp_path):
         _state(*_draft_actions("c1", "c2"), phase="draft", observation=DRAFT_OBSERVATION),
         _state(_lineup_action(), phase="team_preview"),
     )
-    assert [r["kind"] for r in records] == ["draft_pick", "select_lineup"]
+    assert [r["kind"] for r in records] == ["draft_pick", "game_plan", "select_lineup"]
     assert records[0]["payload"] == "draft_pick:c1"  # a LegalAction logs its id
     assert records[0]["phase"] == "draft"
-    assert records[1]["payload"]["type"] == "select_lineup"
+    assert records[1]["payload"]["lead_plan"]  # the plan is logged before the lineup
+    assert records[2]["payload"]["type"] == "select_lineup"
     assert "select_lineup" in text
 
 
@@ -1256,26 +1041,3 @@ def test_summarize_match_is_safe_without_a_log_dir():
 # -- opponent type profile ----------------------------------------------------
 
 
-def test_battle_prompt_carries_the_opponent_type_profile():
-    provider = FakeProvider(_doubles_answer())
-    _agent(provider).choose_action(_state(_doubles_action(), observation=BATTLE_OBSERVATION), POKEMON)
-    profile = provider.prompt().get("reference_opponent_type_profile")
-    assert profile is not None
-    assert profile["revealed_count"] >= 1
-    assert isinstance(profile["shared_weaknesses"], list)
-    assert isinstance(profile["their_stab_coverage"], list)
-
-
-def test_type_profile_prefers_live_observation_types_over_the_table():
-    """A Tera'd active shown as a new type must drive the profile, not the CSV."""
-    observation = {
-        "is_doubles": True, "turn": 2,
-        "active_pokemon": [{"species": "incineroar", "types": ["FIRE", "DARK"]}],
-        "opponent_active_pokemon": [{"species": "fluttermane", "types": ["WATER"], "hp_fraction": 1.0}],
-        "available_moves": [[], []],
-    }
-    provider = FakeProvider(_doubles_answer())
-    _agent(provider).choose_action(_state(_doubles_action(), observation=observation), POKEMON)
-    profile = provider.prompt()["reference_opponent_type_profile"]
-    # Flutter Mane is Ghost/Fairy in the table; shown Tera Water here.
-    assert profile["their_stab_coverage"] == ["Water"]

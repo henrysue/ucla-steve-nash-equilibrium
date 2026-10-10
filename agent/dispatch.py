@@ -54,6 +54,11 @@ class GameDispatcher:
         if callable(handler):
             handler(result, context)
 
+    def on_match_end(self, final_state: Any, context: Any) -> None:
+        handler = getattr(self._resolve(context), "on_match_end", None)
+        if callable(handler):
+            handler(final_state, context)
+
     # -- selection ------------------------------------------------------------
 
     def _resolve(self, context: Any) -> Any:

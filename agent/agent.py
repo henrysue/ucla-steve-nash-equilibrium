@@ -3,17 +3,17 @@
 ``create_agent()`` is what the runtime looks for at startup. It is called
 once per match, in that match's own process, and whatever it returns plays
 every turn of that one match — so each match gets a fresh strategist, and
-the opponent model it builds never leaks into the next game.
+nothing it remembers (move history, the match plan) leaks into the next game.
 
     python -m agent --check-tournament
     python -m agent --match          # your test matches
     python -m agent --tournament     # your tournament games
 
-The strategist implements ``vgc-draft-strategist.md``: it treats each turn
-as a simultaneous-move matrix game, estimates payoffs as win probabilities,
-solves the mixed-strategy Nash equilibrium exactly, and deviates into
-exploitation only when the opponent has proven predictable enough that the
-gain clears a stated risk budget. See ``agent/vgc/`` for the pieces.
+The strategist drafts toward a team plan, writes a match plan at Team
+Preview, and treats each battle turn as a simultaneous-move matrix game:
+code removes moves that cannot work, the model estimates win probabilities,
+and the mixed-strategy Nash equilibrium is solved exactly. See HANDOFF.md
+and ``agent/vgc/`` for the pieces.
 
 Configuration (environment, or the starter's gitignored ``.env``):
 

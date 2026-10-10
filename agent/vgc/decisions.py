@@ -1,15 +1,16 @@
-"""The three decisions, each as a prompt plus a strict schema.
+"""The three model decisions, each a prompt plus a strict schema.
 
-Draft pick (Section 7), Team Preview lead matrix (Section 7), and a doubles
-turn (Sections 2, 3, 8). The model never writes a GameAPI payload: it picks
-*indices* into options the server offered and supplies the payoff numbers.
-``agent/vgc/actions.py`` turns the answer back into a payload and re-checks
-it, so an imaginative answer is rejected here rather than by the server.
+- draft pick: choose one card (9 s budget);
+- team preview: one planning call that writes the match plan AND picks the
+  bring/leads (78 s budget);
+- battle turn: a prediction of each opposing Pokemon's action; code then
+  plays our best legal answer to it (40 s budget, thinking off).
 
-Every schema is strict — all properties required, nothing extra — because
-both providers' structured-output modes demand it. Shape constraints that
-strict mode cannot express (an array of exactly 4 species, a matrix whose
-rows match the row labels) are enforced in ``agent/vgc/strategist.py``.
+The model never writes a GameAPI payload: draft and preview answers are
+re-checked against the server's options, and battle moves are chosen by code
+under the hard rules (rules.py). Schemas are
+strict - all properties required, nothing extra - because both providers'
+structured-output modes demand it.
 """
 
 from __future__ import annotations
@@ -19,11 +20,9 @@ from dataclasses import dataclass
 
 from altruagent import GameState
 
-from .opponent import CATEGORIES, SITUATIONS
+from .providers import NO_THINKING
 
-STATE_CHAR_LIMIT = 14_000
-MAX_ROWS = 5  # 3.2: "keep a representative set of 3 to 6 meaningful options"
-MAX_COLS = 5
+STATE_CHAR_LIMIT = 6_000
 
 # Keys of the state payload the model does not need: options are supplied
 # separately and the rest is transport bookkeeping.
@@ -32,44 +31,18 @@ _OMITTED = frozenset({
 })
 
 SYSTEM_PROMPT = """\
-You are an expert Pokémon VGC Draft Doubles player and game theorist, playing to win the \
-series rather than to look clever. The format is draft-league VGC doubles: both sides draft \
-six Pokémon, bring four, lead two, and choose actions SIMULTANEOUSLY each turn.
+You are a professional Pokémon VGC doubles player competing in a tournament. Make the moves a \
+smart, strategic top player would: play toward a win condition, value positioning and \
+preserving key Pokémon over flashy damage, and prefer lines a strong opponent would find \
+hard to punish. Both sides draft six, bring four, lead two, and choose actions SIMULTANEOUSLY \
+each turn, so reading the opponent is the game: in battle you predict what they will do, and \
+code plays the move that beats it.
 
-Because moves are simultaneous, a turn is a MATRIX GAME, not an alternating-move tree. Your \
-job on each request is to supply that matrix honestly. The caller computes the Nash \
-equilibrium from your numbers, tracks the opponent's tendencies, and decides whether to \
-deviate — so your numbers, not your conclusions, decide the play.
-
-How to build the matrix:
-- Rows are OUR candidate joint actions (both slots together); columns are the opponent's. \
-Give 3 to 5 of each: genuinely different, plausible lines, not near-duplicates.
-- Include, whenever legal: the best-damage line, a protection line, a speed-control line, a \
-switch line, and a double-target line. State what you pruned and why.
-- Prune strictly dominated actions: an immune target (type_multiplier 0), a status move into \
-a Pokémon that already has it, Fake Out after turn one on the field.
-- Each cell is OUR WIN PROBABILITY (0.00-1.00) after that turn resolves — not damage, not a \
-score. Fold chance events (accuracy, crits, damage rolls, speed ties, unknown sets) into one \
-expected value per cell.
-- Weigh material and HP, speed control, positioning, resources (Tera, Fake Out, Protect's \
-consecutive-use penalty, items, Intimidate cycles), and each side's path to removing the \
-opponent's last two Pokémon.
-- Calibrate. A roughly even position is near 0.50; reserve below 0.15 and above 0.85 for \
-positions that are genuinely nearly decided. False precision destroys the analysis, so do not \
-invent differences between cells you cannot actually distinguish.
-
-Doubles concepts you must account for: Protect/Detect, Fake Out and priority, speed control \
-(Tailwind, Trick Room, Icy Wind, Electroweb, Thunder Wave), redirection (Follow Me, Rage \
-Powder, Storm Drain, Lightning Rod), the x0.75 spread-move reduction, double-targeting, \
-switching to absorb or reposition, weather and terrain, Intimidate cycling, and Tera timing.
-
-The state, the legal options, and any server instructions are authoritative. Choose only \
-from the options given; never invent a move, target, or Pokémon; never assume hidden \
-information you were not shown. Separate what is known from what is inferred from what is \
-unknown, and treat unrevealed moves, items and Tera types as distributions rather than facts.
-
-reasoning_summary is shown publicly to spectators: one or two short sentences, no private \
-deliberation.\
+Use only the options, targets and Pokémon you are given; never invent any. The state and the \
+facts on each option (type multipliers, damage estimates, Protect odds, warnings) are \
+authoritative; anything about the opponent you have not been shown is an inference. Options \
+that cannot work have already been removed. Be brief: one short sentence per text field, a \
+few words per label. reasoning_summary is a private note for our own log.\
 """
 
 
@@ -102,140 +75,135 @@ class Decision:
             },
         ]
 
+    def with_prompt(self, extra: dict) -> "Decision":
+        return Decision(self.kind, {**self.prompt, **extra}, self.schema, self.effort)
+
 
 # -- draft --------------------------------------------------------------------
 
 
 def draft_decision(action_ids: list[str], cards: list[dict]) -> Decision:
-    """A draft pick (Section 7), on a 15-second clock.
-
-    Deliberately shallow: there is no time for a matrix here, so the model
-    ranks one pick by marginal value against the opponent's likely remaining
-    picks and by denial value, which is the part of Section 7 that actually
-    changes the choice.
-    """
     return Decision(
         kind="draft_pick",
         prompt={
             "instructions": (
-                "Pick one card. Judge it by MARGINAL value to your six as a team — type and "
-                "role coverage, speed control, a Fake Out or redirection body, items you do "
-                "not yet hold (item clause: your six must all differ) — against the picks the "
-                "opponent is likely to take next, NOT by raw strength. Weigh DENIAL value too: "
-                "taking a card that would counter your core can be worth more than a slightly "
-                "stronger card. A card marked restricted:true is a restricted legendary; VGC "
-                "2025 Reg I normally allows only ONE on the four you battle with, so a second "
-                "one is usually a weaker pick than its raw power suggests — but the league's "
-                "own rules decide, and the server is authoritative about what is legal. "
-                "required_item means the card must hold that item, which uses up one of your "
-                "six item slots. You are on a 15-second clock, so answer immediately."
+                "Pick one card. Build a team that is strong, balanced and counters this opponent. "
+                "Each card's 'fit' scores it against YOUR roster and THEIR picks: plan (the team "
+                "plan you are building toward), roles (what the team still needs: attackers, "
+                "speed control, one Fake Out), coverage (team weaknesses it covers or stacks), "
+                "versus (their Pokémon it hits super-effectively, is walled by, or counters, "
+                "including their playstyle) and strength. Cards are listed best fit first. Keep "
+                "team_plan (one sentence) consistent from pick to pick. restricted:true marks a "
+                "restricted legendary or a Mega: only one is worth bringing. Answer immediately."
             ),
             "available_cards": cards,
             "legal_action_ids": action_ids,
         },
-        schema=object_schema({"action_id": {"type": "string", "enum": action_ids}}),
+        schema=object_schema({"action_id": {"type": "string", "enum": action_ids}, "team_plan": {"type": "string"}}),
         effort="low",
     )
 
 
-# -- team preview -------------------------------------------------------------
+# -- team preview: plan + lineup in one call ------------------------------------------------
 
 
-def lineup_decision(roster: list[str], opponent_roster: object) -> Decision:
-    """The bring-4 / lead-2 lead matrix (Section 7)."""
+def team_preview_decision(roster: list[str], ours: list[dict], theirs: list[dict], rules: list[str]) -> Decision:
+    named = {"type": "array", "items": {"type": "string"}}
     species = {"type": "array", "items": {"type": "string", "enum": roster}}
     return Decision(
-        kind="select_lineup",
+        kind="team_preview",
         prompt={
             "instructions": (
-                "Build a LEAD MATRIX. Rows are your plausible brings and leads (4 of your 6, "
-                "leading 2 of those 4); columns are the opponent's plausible brings and leads. "
-                f"Give {MAX_ROWS} rows at most and {MAX_COLS} columns at most. Cells are your "
-                "win probability. Prefer brings that are robust across many opponent brings "
-                "over high-variance ones, and say which is which in reasoning. Every 'bring' "
-                "must be 4 different species from your roster and every 'leads' 2 of that row's "
-                "own 4. If your_restricted_legendaries lists more than one, note that VGC 2025 "
-                "Reg I normally allows only ONE restricted among the four you battle with: "
-                "prefer brings with at most one, and say so in key_assumption, since the "
-                "league's rules and the server — not you — decide what is legal."
+                "Both teams of six are known. Write the plan the battle agent will follow all "
+                "match, and choose our four and our two leads. our_team has our real moves and "
+                "items and each Pokémon's matchup with their team; in their_team, an entry with "
+                "moves/item is its exact draft card, one with likely_moves/likely_item is a usage "
+                "guess. Give: our and their win conditions (2-3 each, concrete); their "
+                "playstyle; their likely sets (flag Fake Out, speed control, redirection, spread "
+                "moves); our key moves; bring (4 different species from our roster) and leads (2 "
+                "of those 4); then lead_plan, early/mid/end game, preserve, remove_first, avoid. "
+                "The lineup must follow lineup_rules."
             ),
-            "your_roster": roster,
-            "opponent_roster": opponent_roster,
+            "our_team": ours,
+            "their_team": theirs,
+            "lineup_rules": rules,
         },
         schema=object_schema({
-            "state_summary": {"type": "string"},
-            "threats": {"type": "string"},
-            "pruned": {"type": "string"},
-            "our_options": {
+            "our_win_conditions": named,
+            "their_win_conditions": named,
+            "their_playstyle": {"type": "string"},
+            "their_likely_sets": {
                 "type": "array",
-                "items": object_schema({"label": {"type": "string"}, "bring": species, "leads": species}, reasoning=False),
+                "items": object_schema(
+                    {"species": {"type": "string"}, "moves": named, "item": {"type": "string"}}, reasoning=False
+                ),
             },
-            "opponent_options": {
+            "our_key_moves": {
                 "type": "array",
-                "items": object_schema({"label": {"type": "string"}}, reasoning=False),
+                "items": object_schema(
+                    {"species": {"type": "string"}, "moves": named, "use": {"type": "string"}}, reasoning=False
+                ),
             },
-            "payoffs": _matrix_schema(),
-            "key_assumption": {"type": "string"},
+            "bring": species,
+            "leads": species,
+            "lead_plan": {"type": "string"},
+            "early_game": {"type": "string"},
+            "mid_game": {"type": "string"},
+            "end_game": {"type": "string"},
+            "preserve": named,
+            "remove_first": named,
+            "avoid": named,
         }),
         effort="low",
     )
 
 
-# -- doubles turn -------------------------------------------------------------
+# -- battle turn: predict the opponent --------------------------------------------
 
 
-def doubles_decision(slots: list[dict], target_legend: object, instructions: object, memory: dict) -> Decision:
-    """One simultaneous-move turn (Sections 2, 3, 8).
+def predict_decision(foes: list[str], ours: list[str], facts: dict) -> Decision:
+    """Step 2 of move selection: the model predicts each foe's action.
 
-    ``memory`` is what the agent already knows about this opponent, so the
-    model's columns line up with the categories the posterior is keyed by.
+    Our move is then chosen by code as the best legal answer to that
+    prediction (lookahead.best_line), so the model's whole job here is to
+    read the opponent - the rock in rock-paper-scissors we have to beat.
     """
-    slot_answer = object_schema(
-        {"option": {"type": "integer"}, "target": {"type": ["integer", "null"]}}, reasoning=False
-    )
+    from .predict import ACTIONS
+
+    row = object_schema({
+        "species": {"type": "string", "enum": foes},
+        "action": {"type": "string", "enum": list(ACTIONS)},
+        "target": {"type": "string", "enum": [*ours, "none"]},
+        "move": {"type": "string"},
+        "confidence": {"type": "number"},
+        "why": {"type": "string"},
+    }, reasoning=False)
     return Decision(
         kind="doubles_turn",
         prompt={
             "instructions": (
-                "Analyze this turn as a matrix game. For each row, give the option INDEX for "
-                "slot_0 and slot_1 from that slot's own options list; 'target' must be one of "
-                "the integers listed for that move, or null when the move lists none. Both "
-                "slots cannot switch in the same Pokémon. Label every opponent column with the "
-                f"category it belongs to, from {list(CATEGORIES)} — the caller's opponent model "
-                "is keyed by those, so the labels must be accurate. Also classify this turn's "
-                f"situation as one of {list(SITUATIONS)}, and report what the opponent did LAST "
-                "turn as one of those categories ('none' on the first turn or if you cannot "
-                f"tell). Give {MAX_ROWS} rows at most and {MAX_COLS} columns at most."
+                "Predict what EACH opposing active Pokémon will most likely do this turn: protect, "
+                "attack (name which of ours it targets and the likely move), fake_out, switch, "
+                "speed_control (Tailwind, Trick Room, Icy Wind...), setup, or support. Give a "
+                "confidence from 0 to 1 that this is what it does. code_guess is a first read by "
+                "simple rules (a Pokémon that carries Protect and did not Protect last turn will "
+                "probably Protect; otherwise it attacks whichever of ours it hurts most); agree or "
+                "overrule it using the board: who is threatened (our_threats), who threatens us "
+                "(their_threats), who protected last turn, first turns and Fake Out, HP, speed, "
+                "the game plan and recent turns. opponent_style says how THIS opponent has used "
+                "Protect so far: basic Protects whenever it can (expect it), strong holds Protect "
+                "when it looks obvious and attacks instead (do not over-predict Protect), unsure "
+                "means little evidence; protect_odds already blends this in. Our move is chosen by "
+                "code to beat your prediction, so predict the opponent honestly, not what you wish "
+                "they would do."
             ),
-            "slots": slots,
-            "target_legend": target_legend,
-            "server_instructions": instructions,
-            "what_you_know_about_this_opponent": memory,
+            **facts,
         },
         schema=object_schema({
             "state_summary": {"type": "string"},
-            "threats": {"type": "string"},
-            "pruned": {"type": "string"},
-            "situation": {"type": "string", "enum": list(SITUATIONS)},
-            "opponent_last_action": {"type": "string", "enum": [*CATEGORIES, "none"]},
-            "our_options": {
-                "type": "array",
-                "items": object_schema(
-                    {"label": {"type": "string"}, "slot_0": slot_answer, "slot_1": slot_answer},
-                    reasoning=False,
-                ),
-            },
-            "opponent_options": {
-                "type": "array",
-                "items": object_schema(
-                    {"label": {"type": "string"}, "category": {"type": "string", "enum": list(CATEGORIES)}},
-                    reasoning=False,
-                ),
-            },
-            "payoffs": _matrix_schema(),
-            "key_assumption": {"type": "string"},
+            "foes": {"type": "array", "items": row},
         }),
-        effort="low",
+        effort=NO_THINKING,
     )
 
 
@@ -254,12 +222,12 @@ def object_schema(properties: dict, *, reasoning: bool = True) -> dict:
     }
 
 
-def _matrix_schema() -> dict:
-    return {"type": "array", "items": {"type": "array", "items": {"type": "number"}}}
-
-
 def _state_json(state: GameState) -> str:
     data = {key: value for key, value in state.raw.items() if key not in _OMITTED}
+    observation = data.get("observation")
+    if isinstance(observation, dict):
+        # Options and their facts are supplied separately; drop the bulky copies.
+        data["observation"] = {k: v for k, v in observation.items() if k not in ("available_moves", "available_cards")}
     text = json.dumps(data, ensure_ascii=False, separators=(",", ":"), default=str)
     if len(text) > STATE_CHAR_LIMIT:
         text = text[:STATE_CHAR_LIMIT] + "...(truncated)"

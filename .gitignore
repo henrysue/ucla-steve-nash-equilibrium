@@ -31,4 +31,11 @@ htmlcov/
 .DS_Store
 
 # data
+.data/
 data/
+
+# OpenRA replays downloaded for analysis (large binaries, third-party games)
+ora-replays/
+
+# matchlogs
+matchlogs/
