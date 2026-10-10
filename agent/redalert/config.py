@@ -264,8 +264,8 @@ PROBE_FRACTION = 0.3               # ...to this share of the way from the massin
 ATTACK_GROUPS = 3                  # the army attacks in this many groups, a semi-concave...
 ATTACK_GROUP_SPREAD_CELLS = 5      # ...the side groups this far either side of the target
 ATTACK_GROUP_MIN_UNITS = 6         # ...once the army has this many units
-GARRISON_SIZE = 4
-GARRISON_TYPES = ("3tnk", "2tnk", "1tnk", "e3", "ftrk", "jeep", "e1")   # tanks first
+GARRISON_SIZE = 2                  # a small outpost at a forward expansion only...
+GARRISON_TYPES = ("e1", "e3")      # ...of infantry: the tanks stay with the army
 GARRISON_LEASH_CELLS = 12          # a garrison stays (and is led) within this of its expansion
 
 # -- expansion -----------------------------------------------------------------------------------

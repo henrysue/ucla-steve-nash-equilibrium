@@ -33,12 +33,16 @@ def _at_home(view: View, cell) -> bool:
 
 
 class Garrison:
-    """Units posted at our newest expansion: "bring support to capture and
-    defend an expansion". ``GARRISON_SIZE`` fighters (tanks first) are claimed
-    once an expansion is deployed and we can spare them, posted on its
-    enemy-facing side, and kept out of the army. When the expansion is
-    complete (refinery and defense) and the army pushes (ALL_IN), they are
-    released to join the push; they are claimed again after it.
+    """A small outpost at a forward expansion (one nearer the enemy than our
+    main base): ``GARRISON_SIZE`` infantry posted on its enemy-facing side.
+    Expansions behind or beside the base get none.
+
+    Available at any notice: they are posted only while the army masses in
+    calm (BUILD / OPEN). An attack (the rules' or the advisor's), a defense,
+    a retreat, or a real fight near the army (executor.fight_near) takes them
+    straight back — unless their own expansion is the one attacked, and then
+    they fight the attackers there. Match 0ee93a05: four units, tanks first,
+    stood at an expansion through every fight with the rusher.
     """
 
     def __init__(self) -> None:
@@ -47,21 +51,20 @@ class Garrison:
     def update(self, view: View, mode: Mode, expansion, taken: set) -> None:
         alive = {u.id for u in view.combat_units}
         self.unit_ids = [i for i in self.unit_ids if i in alive]
-        if not expansion.sites:
+        site = forward_site(view, expansion)
+        if site is None:
             self.unit_ids = []
             return
-        if mode in DEFENSIVE and not self._threatened(view, expansion):
-            self.unit_ids = []           # the main base is under attack: go help
+        threatened = self._threatened(view, site)
+        if not threatened and (mode not in (Mode.BUILD, Mode.OPEN) or self._army_fighting(view)):
+            self.unit_ids = []           # needed elsewhere: back with the army at once
             return
-        if mode is Mode.ALL_IN and expansion.complete(view):
-            self.unit_ids = []           # join the push
+        if threatened or len(self.unit_ids) >= C.GARRISON_SIZE:
             return
-        if mode is Mode.ALL_IN or len(self.unit_ids) >= C.GARRISON_SIZE:
-            return   # no claims during an attack: the army commits together
         free = [u for u in view.combat_units if u.id is not None and u.id not in taken
                 and u.id not in self.unit_ids and _at_home(view, u.cell)]
-        if len(free) < C.MIN_DEFENDERS:
-            return
+        if len(free) < C.MIN_DEFENDERS + C.GARRISON_SIZE:
+            return                       # the army can't spare them yet
         for kind in C.GARRISON_TYPES:
             for u in free:
                 if len(self.unit_ids) >= C.GARRISON_SIZE:
@@ -69,22 +72,28 @@ class Garrison:
                 if u.type == kind and u.id not in self.unit_ids:
                     self.unit_ids.append(u.id)
 
+    def _army_fighting(self, view: View) -> bool:
+        from .executor import fight_near
+
+        ids = set(self.unit_ids)
+        return fight_near(view, [u.cell for u in view.combat_units if u.id not in ids]) is not None
+
     @staticmethod
-    def _threatened(view: View, expansion) -> bool:
-        """Enemies near one of our expansions (then the garrison stays put)."""
+    def _threatened(view: View, site) -> bool:
+        """Enemies near the outpost's expansion."""
         from .scout import enemy_threat_near_base
 
         r2 = C.GARRISON_LEASH_CELLS ** 2
-        return any(a.cell is not None and dist2(a.cell, s) <= r2
-                   for a in enemy_threat_near_base(view) for s in expansion.sites)
+        return any(a.cell is not None and dist2(a.cell, site) <= r2 for a in enemy_threat_near_base(view))
 
     def post(self, view: View, expansion) -> tuple[int, int] | None:
-        """A few cells out from the newest expansion toward the enemy."""
+        """A few cells out from the forward expansion toward the enemy."""
         from .observe import enemy_spawn_guess
 
-        if not expansion.sites:
+        site = forward_site(view, expansion)
+        if site is None:
             return None
-        site, enemy = expansion.sites[-1], enemy_spawn_guess(view)
+        enemy = enemy_spawn_guess(view)
         if enemy is None:
             return site
         dx, dy = enemy[0] - site[0], enemy[1] - site[1]
@@ -96,6 +105,23 @@ class Garrison:
         if post is None or not self.unit_ids:
             return []
         ids = set(self.unit_ids)
+        # A threat at the expansion: attack it (nearest the post first).
+        from .scout import enemy_threat_near_base
+        leash2 = C.GARRISON_LEASH_CELLS ** 2
+        threats = [a.cell for a in enemy_threat_near_base(view) if a.cell is not None and dist2(a.cell, post) <= leash2]
+        if threats:
+            return [orders.attack_move(list(self.unit_ids), list(min(threats, key=lambda c: dist2(c, post))))]
         r2 = 3 ** 2
         away = [u.id for u in view.combat_units if u.id in ids and u.idle and dist2(u.cell, post) > r2]
         return [orders.attack_move(away, list(post))] if away else []
+
+
+def forward_site(view: View, expansion) -> tuple[int, int] | None:
+    """Our newest expansion that lies nearer the enemy than our main base, else None."""
+    from .observe import enemy_spawn_guess
+
+    enemy, base = enemy_spawn_guess(view), view.base_center
+    if enemy is None or base is None:
+        return None
+    ahead = [s for s in expansion.sites if dist2(s, enemy) < dist2(base, enemy)]
+    return ahead[-1] if ahead else None

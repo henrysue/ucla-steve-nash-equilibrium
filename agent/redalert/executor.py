@@ -404,14 +404,8 @@ def _stage_forward(
     # and artillery shot the concave from outside its range). Measured from
     # the fighters: the massing point itself falls back when enemies come.
     # A small raid is the home response's (two riflemen).
-    r2 = C.STAGE_ENGAGE_CELLS ** 2
-    cells = [u.cell for u in fighters if u.cell is not None] or [stage]
-    near = [a for a in view.enemy_units if a.cell is not None and not a.wreck and a.type not in C.HARVESTER
-            and any(dist2(a.cell, c) <= r2 for c in cells)]
-    value = sum(view.unit_costs.get(a.type, C.KNOWN_COSTS.get(a.type, C.DEFAULT_UNIT_COST)) for a in near)
-    if fighters and value > C.SMALL_RAID_VALUE:
-        centre = (sum(c[0] for c in cells) / len(cells), sum(c[1] for c in cells) / len(cells))
-        target = min(near, key=lambda a: dist2(a.cell, centre)).cell
+    target = fight_near(view, [u.cell for u in fighters if u.cell is not None] or [stage])
+    if fighters and target is not None:
         return [orders.attack_move([u.id for u in fighters][:orders.MAX_UNITS_PER_ORDER], list(target))]
     # Massing (and holding at home) is always a concave facing the enemy's
     # approach: every unit can fire into the middle where they arrive.
@@ -420,6 +414,23 @@ def _stage_forward(
     r2 = C.STAGING_RADIUS_CELLS ** 2
     movers = [u.id for u in fighters if u.idle and dist2(u.cell, stage) > r2]
     return [orders.attack_move(movers[:orders.MAX_UNITS_PER_ORDER], list(stage))] if movers else []
+
+
+def fight_near(view: View, cells) -> tuple[int, int] | None:
+    """A real fight at these cells: enemy fighters worth more than a small
+    raid within ``STAGE_ENGAGE_CELLS`` of any of them. The cell of the one
+    nearest their middle, else None (a raid is the home response's)."""
+    cells = [c for c in cells if c is not None]
+    if not cells:
+        return None
+    r2 = C.STAGE_ENGAGE_CELLS ** 2
+    near = [a for a in view.enemy_units if a.cell is not None and not a.wreck and a.type not in C.HARVESTER
+            and any(dist2(a.cell, c) <= r2 for c in cells)]
+    value = sum(view.unit_costs.get(a.type, C.KNOWN_COSTS.get(a.type, C.DEFAULT_UNIT_COST)) for a in near)
+    if value <= C.SMALL_RAID_VALUE:
+        return None
+    centre = (sum(c[0] for c in cells) / len(cells), sum(c[1] for c in cells) / len(cells))
+    return min(near, key=lambda a: dist2(a.cell, centre)).cell
 
 
 def concave_slots(view: View, center, facing, n: int) -> list[tuple[int, int]]:

@@ -77,6 +77,11 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
   anything worth more than a small raid within 12 cells of it.
 - **Expansion MCV**: trained only with 8+ fighters and not outgunned;
   cancelled (money back) if outgunned while it trains.
+- **Outpost** (guard.Garrison): 2 infantry at a forward expansion (nearer the
+  enemy than our base) only; posted only while the army masses in calm, back
+  at once on any attack, defense, retreat or nearby fight, unless their own
+  expansion is attacked (then they fight there). 0ee93a05 kept 4, tanks
+  first, at an expansion through every fight.
 - **Advisor**: strong, generally good moves inside the game plan; its value is the read.
   enemy_style aggressive -> hold, up to 3 turrets, win on macro; macro -> a raid
   party of 6 that flanks to their economy; standard -> our plan. balance

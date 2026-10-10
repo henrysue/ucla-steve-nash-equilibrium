@@ -1542,21 +1542,6 @@ def test_each_expansion_gets_a_turret_on_its_enemy_side():
     assert (x - 20) ** 2 + (y - 6) ** 2 <= 100                               # at the expansion, not home
 
 
-def test_garrison_holds_the_expansion_then_joins_a_push_once_complete():
-    e = _deployed_expansion()
-    tanks = [{"id": 300 + i, "type": "1tnk", "x": 15, "y": 15, "hp": 100, "idle": True} for i in range(12)]
-    yard = _EXP_BASE + [{"id": 80, "type": "fact", "x": 20, "y": 6}]
-    g = Garrison()
-    g.update(_exp_view(units=tanks, buildings=yard), Mode.BUILD, e, taken=set())
-    assert len(g.unit_ids) == 4
-    assert g.orders(_exp_view(units=tanks, buildings=yard), e)[0]["cmd"] == "attack_move"
-    g.update(_exp_view(units=tanks, buildings=yard), Mode.ALL_IN, e, taken=set())
-    assert len(g.unit_ids) == 4                                              # not complete yet: hold it
-    done = yard + [{"id": 81, "type": "proc", "x": 24, "y": 8}, {"id": 82, "type": "pbox", "x": 22, "y": 10}]
-    g.update(_exp_view(units=tanks, buildings=done), Mode.ALL_IN, e, taken=set())
-    assert g.unit_ids == []                                                  # complete: join the push
-
-
 def test_an_attack_on_an_expansion_yard_is_a_base_attack():
     yard = BASE + [{"id": 80, "type": "fact", "x": 30, "y": 8}]
     near = [{"id": 50, "type": "1tnk", "x": 32, "y": 10, "hp": 100}, {"id": 51, "type": "e1", "x": 33, "y": 9, "hp": 100},
@@ -1938,21 +1923,6 @@ def test_with_nothing_known_the_army_hunts_instead_of_idling_on_ruins():
     units = [{"id": 30 + i, "type": "1tnk", "x": 40, "y": 40, "hp": 100} for i in range(4)]
     o = executor._army_orders(_view(buildings=BASE, units=units), Mode.ALL_IN, hunt=(10, 40))
     assert o[0]["to"] == [10, 40]
-
-
-def test_garrison_helps_defend_the_main_base_but_holds_an_attacked_expansion():
-    e = _deployed_expansion()
-    tanks = [{"id": 300 + i, "type": "1tnk", "x": 15, "y": 15, "hp": 100} for i in range(12)]
-    yard = _EXP_BASE + [{"id": 80, "type": "fact", "x": 20, "y": 6}]
-    at_home = [{"id": 90, "type": "3tnk", "x": 5, "y": 6, "hp": 100}, {"id": 91, "type": "e1", "x": 6, "y": 6, "hp": 100}]
-    at_exp = [{"id": 90, "type": "3tnk", "x": 21, "y": 8, "hp": 100}, {"id": 91, "type": "e1", "x": 22, "y": 8, "hp": 100}]
-    g = Garrison()
-    g.update(_exp_view(units=tanks, buildings=yard), Mode.BUILD, e, taken=set())
-    assert len(g.unit_ids) == 4
-    g.update(_exp_view(units=tanks, buildings=yard, enemies=at_exp), Mode.DEFEND_BASE, e, taken=set())
-    assert len(g.unit_ids) == 4                                      # the expansion is the one attacked: hold it
-    g.update(_exp_view(units=tanks, buildings=yard, enemies=at_home), Mode.DEFEND_BASE, e, taken=set())
-    assert g.unit_ids == []                                          # the main base is attacked: go help
 
 
 # -- turrets: an even fan facing the enemy ------------------------------------------------
@@ -3636,3 +3606,47 @@ def test_the_advice_schema_uses_only_keywords_claude_structured_outputs_accept()
                 walk(v)
 
     walk(ra_advisor.ADVICE_SCHEMA)
+
+
+# -- the outpost: two infantry at a forward expansion, back at any notice ------------------------
+
+
+def _outpost_units():
+    rifles = [{"id": 300 + i, "type": "e1", "x": 15, "y": 15, "hp": 100, "idle": True} for i in range(4)]
+    tanks = [{"id": 400 + i, "type": "1tnk", "x": 15, "y": 15, "hp": 100, "idle": True} for i in range(8)]
+    return rifles + tanks
+
+
+def test_the_outpost_is_two_infantry_at_a_forward_expansion_only():
+    import types
+    units, yard = _outpost_units(), _EXP_BASE + [{"id": 80, "type": "fact", "x": 20, "y": 6}]
+    g = Garrison()
+    g.update(_exp_view(units=units, buildings=yard), Mode.BUILD, _deployed_expansion(), taken=set())
+    assert len(g.unit_ids) == 2 and all(i < 400 for i in g.unit_ids)        # riflemen, the tanks stay
+    behind = types.SimpleNamespace(sites=[(2, 2)])                            # behind our base
+    g2 = Garrison()
+    g2.update(_exp_view(units=units, buildings=yard), Mode.BUILD, behind, taken=set())
+    assert g2.unit_ids == [] and g2.post(_exp_view(), behind) is None
+
+
+def test_the_outpost_comes_back_at_any_notice_unless_its_expansion_is_attacked():
+    e, units = _deployed_expansion(), _outpost_units()
+    yard = _EXP_BASE + [{"id": 80, "type": "fact", "x": 20, "y": 6}]
+    for mode in (Mode.ALL_IN, Mode.DEFEND_BASE, Mode.RETREAT):
+        g = Garrison()
+        g.update(_exp_view(units=units, buildings=yard), Mode.BUILD, e, taken=set())
+        assert len(g.unit_ids) == 2
+        g.update(_exp_view(units=units, buildings=yard), mode, e, taken=set())
+        assert g.unit_ids == [], mode                                         # back with the army
+    g = Garrison()
+    g.update(_exp_view(units=units, buildings=yard), Mode.BUILD, e, taken=set())
+    push = [{"id": 900 + i, "type": "1tnk", "x": 18, "y": 18, "hp": 100} for i in range(6)]
+    g.update(_exp_view(units=units, buildings=yard, enemies=push), Mode.BUILD, e, taken=set())
+    assert g.unit_ids == []                                                   # the army fights: they join
+    g.update(_exp_view(units=units, buildings=yard), Mode.BUILD, e, taken=set())
+    at_exp = [{"id": 950, "type": "e1", "x": 22, "y": 8, "hp": 100}, {"id": 951, "type": "e1", "x": 23, "y": 8, "hp": 100}]
+    v = _exp_view(units=units, buildings=yard, enemies=at_exp)
+    g.update(v, Mode.DEFEND_BASE, e, taken=set())
+    assert len(g.unit_ids) == 2                                               # their expansion is attacked: stay
+    o = g.orders(v, e)
+    assert o and o[0]["cmd"] == "attack_move" and tuple(o[0]["to"]) in {(22, 8), (23, 8)}   # and fight it

@@ -84,7 +84,7 @@ It attacks when our army is 1.3x enemy.army_value_estimate (the fog hides most o
 estimate is what we saw lately and what the trades imply, never just what is visible), retreats \
 when losing 1.3x what it kills, and does not flank before 10:00 unless decisively ahead. A lone \
 raider draws two riflemen; a real push recalls the army unless our own attack is winning. A raid \
-squad hunts their harvesters. The first turret faces the road in.
+squad hunts their harvesters. The first turret faces the road in. Two infantry hold a forward expansion and rejoin the army the moment it attacks, defends or fights (an "attack" posture brings them too).
 
 YOUR READ:
 - enemy_style: what the enemy is playing, from their buildings, army and moves:
