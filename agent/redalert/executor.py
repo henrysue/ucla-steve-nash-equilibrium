@@ -53,9 +53,12 @@ def plan(
     # (the army code would walk them straight back).
     clearing_ids = {i for o in placed if o.get("cmd") in ("move", "attack_move") for i in o.get("units") or ()}
     out += placed
-    out += buildplan.next_build_orders(view, exp_ore, depleted, rusher=rusher)  # advance the build order / power
+    out += buildplan.next_build_orders(view, exp_ore, depleted, rusher=rusher,   # advance the build order / power
+                                       units_first=getattr(advice, "balance", None) == "more_army")
     out += expansion.orders(view) if expansion is not None else []
     under_attack = mode in (Mode.DEFEND_RUSH, Mode.DEFEND_BASE) or scout.early_push_warning(view) or threat
+    # The advisor reads an aggressive enemy: turrets up on the approach (we win on macro).
+    under_attack = under_attack or getattr(advice, "enemy_style", None) == "aggressive"
     if not rusher or under_attack:   # testrush: the rusher builds turrets only when attacked
         out += buildplan.defense_orders(view, under_attack=under_attack,
                                         expansion_site=exp_def if expansion is not None else None, home=home)

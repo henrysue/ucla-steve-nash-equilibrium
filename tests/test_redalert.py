@@ -1045,8 +1045,8 @@ def test_advisor_plan_goes_to_console_only_when_it_changes(tmp_path):
                                              _view(), 112.0), 3.0)
     console = [l for l in lines if "advisor t=" in l]
     assert len(console) == 2
-    assert "hold: Mass at home, raid their ore. | why: Their army is bigger" in console[0]
-    assert "attack: Push their power now." in console[1]
+    assert "hold, enemy unknown, balanced: Mass at home, raid their ore. | why: Their army is bigger" in console[0]
+    assert "attack, enemy unknown, balanced: Push their power now." in console[1]
 
     final = GameState.from_mcp_state({**_raw(), "phase": "finished", "is_terminal": True,
                                       "result": {"outcome": "win", "reason": "time_limit"}})
@@ -3307,9 +3307,10 @@ def test_the_commander_keeps_the_bookkeeping():
 
 def test_the_advisor_schema_has_only_fields_the_rules_use():
     props = set(ra_advisor.ADVICE_SCHEMA["properties"])
-    assert props == {"posture", "attack_route", "expand", "army_target", "raid_target_id", "raid_target_cell",
-                     "defense_at", "plan", "reasoning"}
-    for word in ("double-refinery", "rush", "concave", "second prong", "DEFEND", "FINISH", "4-second look"):
+    assert props == {"enemy_style", "balance", "mistakes", "posture", "attack_route", "expand", "army_target",
+                     "raid_target_id", "raid_target_cell", "defense_at", "plan", "reasoning"}
+    for word in ("double refinery", "rush", "concave", "army_value_estimate", "aggressive", "macro",
+                 "over-index", "mistakes", "generally good"):
         assert word in ra_advisor.SYSTEM_PROMPT, word
 
 
@@ -3578,3 +3579,43 @@ def test_the_massing_army_fights_what_attacks_it():
     assert len(o) == 1 and o[0]["cmd"] == "attack_move" and len(o[0]["units"]) == 10
     scout = _view(_t=500.0, buildings=BASE, units=army, visible_enemies=push[:1])
     assert not any(x.get("to") == [18, 18] for x in executor._army_orders(scout, Mode.BUILD))  # a raid: the concave holds
+
+
+# -- the advisor reads the game: enemy style, balance, mistakes ----------------------------------
+
+
+def test_the_advisors_read_shapes_posture_expansion_and_mistakes():
+    read_ = lambda **kw: ra_advisor.parse_advice({**_ANSWER, "posture": "default", "expand": "auto", **kw},  # noqa: E731
+                                                 _view(), 100.0)
+    a = read_(enemy_style="aggressive", balance="more_army",
+              mistakes=[{"kind": "bank_piling", "note": "3000 unspent"}, {"kind": "nonsense", "note": "x"}])
+    assert a.posture == "hold" and a.expand == "wait"                        # defend, units first
+    assert a.mistakes == ({"kind": "bank_piling", "note": "3000 unspent"},)   # unknown kinds dropped
+    b = read_(enemy_style="macro", balance="more_economy")
+    assert b.posture == "default" and b.expand == "now"
+    c = read_(enemy_style="standard", balance="balanced", posture="attack", expand="wait")
+    assert c.posture == "attack" and c.expand == "wait"                      # its own calls stand
+    assert read_(enemy_style="???").enemy_style == "unknown"
+
+
+def test_an_aggressive_enemy_gets_turrets_and_more_army_skips_the_extra_refinery(monkeypatch):
+    monkeypatch.setattr(buildplan, "open_ore", lambda *a, **k: (30, 10))
+    v = _saturated_view()
+    assert any(o.get("item") == "proc" for o in buildplan.next_build_orders(v))
+    assert not any(o.get("item") == "proc" for o in buildplan.next_build_orders(v, units_first=True))
+
+
+def test_against_a_macro_enemy_the_raid_party_is_bigger_and_flanks():
+    import types
+    macro = types.SimpleNamespace(enemy_style="macro", raid_target_id=None, raid_target_cell=(40, 40))
+    army = [{"id": 30 + i, "type": "e3", "x": 6, "y": 6, "hp": 100} for i in range(14)]
+    v = _view(_t=300.0, buildings=BASE, units=army)
+    r = Raid()
+    r.update(v, Mode.BUILD, None, macro)
+    assert len(r.unit_ids) == C.RAID_SQUAD_SIZE_MACRO
+    o = r.orders(v)
+    assert len(o) == 2 and o[1].get("queued") and o[1]["to"] == [40, 40]     # round the side, then in
+    plain = Raid()
+    plain.update(v, Mode.BUILD, None, types.SimpleNamespace(enemy_style="standard", raid_target_id=None,
+                                                             raid_target_cell=(40, 40)))
+    assert len(plain.unit_ids) == C.RAID_SQUAD_SIZE and len(plain.orders(v)) == 1

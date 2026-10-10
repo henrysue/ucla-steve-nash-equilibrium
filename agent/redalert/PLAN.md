@@ -77,7 +77,14 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
   anything worth more than a small raid within 12 cells of it.
 - **Expansion MCV**: trained only with 8+ fighters and not outgunned;
   cancelled (money back) if outgunned while it trains.
-- **Advisor posture**: "hold" only; it can't push an attack the numbers don't support.
+- **Advisor**: strong, generally good moves inside the game plan; its value is the read.
+  enemy_style aggressive -> hold, up to 3 turrets, win on macro; macro -> a raid
+  party of 6 that flanks to their economy; standard -> our plan. balance
+  more_army -> no extra refineries/dome/expansion; more_economy -> expand as soon
+  as the gates allow. mistakes (idle units, exposed harvesters, piling bank,
+  stuck units, a losing fight) go to the log and console. Its posture, route,
+  army target and expand calls stay, within their limits ("attack" only when
+  the numbers support it).
 - **Flanking**: none before 10:00 unless decisively ahead (dominant trades
   or 2.5x their known army): engaged early, a flank loses us the defense.
 - **Economy**: trucks come with refineries (target = refineries + 2); more

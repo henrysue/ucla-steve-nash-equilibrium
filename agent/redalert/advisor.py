@@ -5,15 +5,27 @@ PLAN.md (decisions in commander.py / brain.py). Every
 ``ADVISOR_INTERVAL_SECONDS`` this module asks a model for *advice*: a few
 choices the rules then carry out, within their limits.
 
-- ``posture``: ``attack`` (go now), ``hold`` (keep massing), or ``default``;
+Its read of the game:
+
+- ``enemy_style``: what the enemy is playing — ``aggressive`` (we hold,
+  turrets up, and win on macro), ``macro`` (a bigger raid party that flanks
+  to their economy), ``standard`` (our plan) or ``unknown``;
+- ``balance``: ``more_army`` / ``more_economy`` / ``balanced`` — where the
+  money goes, inside the rules' own gates (never over-index on either);
+- ``mistakes``: up to 3 problems it sees (idle units, exposed harvesters, a
+  piling bank, stuck units, a losing fight), for our log and console.
+
+Its calls, each inside the game plan and its limits:
+
+- ``posture``: ``attack`` (only when the numbers support it), ``hold``, or ``default``;
 - ``attack_route``: ``center`` / ``left`` / ``right`` / ``auto`` (from 10:00, or sooner when decisively ahead);
-- ``expand``: ``now`` / ``wait`` / ``auto``;
+- ``expand``: ``now`` / ``wait`` / ``auto`` (``auto`` follows the balance);
 - ``army_target``: the cell the main army attacks (used only with a known
   enemy near it, and not while finishing a razed enemy);
 - ``raid_target_id`` / ``raid_target_cell``: the harvester or cell the raid
   squad goes for once nothing defends it;
 - ``defense_at``: which side of the base the next turret faces;
-- ``plan`` / ``reasoning``: its plan and why, for our log and console.
+- ``plan`` / ``reasoning``: its read and why, for our log and console.
 
 Where the army masses, how it is formed and how it attacks are the rules'
 (the advisor's staging fields were dropped: match a2952a6d massed toward our
@@ -52,56 +64,79 @@ from .observe import View, enemy_ore_field, enemy_spawn_guess
 
 SYSTEM_PROMPT = """\
 You are a professional Command & Conquer: Red Alert (OpenRA) player in a 1v1 tournament match, \
-advising a fast rules engine that plays every moment. Make the calls a smart, strategic top player would.
+coaching a fast rules engine that plays every moment. Make strong, generally good moves: the calls \
+a top player makes on any map against any opponent. Play our game plan well; don't gamble, don't \
+invent a new plan. Your best value is reading the opponent, keeping army and economy in balance, \
+and catching mistakes.
 
 THE MATCH: at most 20 minutes. Destroying every enemy building wins outright; otherwise the higher \
 kills_cost - deaths_cost wins, then higher assets_value. Trade efficiently and finish a beaten enemy.
 
-OUR STRATEGY (the engine does all of this by itself):
-- Economy: the pros' double-refinery build order (power, barracks, refinery, refinery, power, war \
-factory, refinery, service depot), with its money set aside first; units spend only what is left. \
-Refineries spread over the ore fields by size. Expansion to the natural field first. A second war \
-factory when money piles up.
-- Information: two scouts circle behind the enemy base in the first 3 minutes to see every building, \
-then 4 pickets watch the approach and one re-checks their base every 2.5 minutes. One refinery plus a \
-war factory or second barracks early reads as a rush (you see it as intel.enemy_opening).
-- Decisions, first match wins: DEFEND (a real threat at a base, more than home units and turrets can \
-handle); HOLD (an early-push warning or a rush read: mass at home, turrets up); FINISH (their base \
-razed or we dominate the trades: destroy everything); RETREAT (our attack is losing); ATTACK (our \
-units clearly outweigh theirs, we can break the turrets in the way, and on even trades the call still \
-holds after a 4-second look); otherwise MASS. No attack before 3:00 unless a war factory is up.
-- Execution: the army masses in a concave just in front of our base facing the enemy, attacks in a \
-semi-concave of groups, and attack-moves everywhere. A raid squad fights defenders first, pulls back \
-when outmatched, and joins the main army's fight as a second prong. Units at home kill small raids.
+OUR GAME PLAN (the engine does all of this by itself):
+- Opening: power, barracks, refinery, refinery, power, war factory (the pros' double refinery). Then, \
+unless outgunned, a third refinery and the service depot; more refineries over time, expansion to \
+the natural field, a second war factory when money piles up. Units spend what the economy doesn't need.
+- Information: two scouts circle behind the enemy base early, then pickets watch the approach and \
+one re-checks their base every 2.5 minutes. One refinery plus an early war factory or 2nd barracks \
+reads as a rush (intel.enemy_opening).
+- The army masses in a concave in front of our base and fights anything big that comes near it. \
+It attacks when our army is 1.3x enemy.army_value_estimate (the fog hides most of their army: the \
+estimate is what we saw lately and what the trades imply, never just what is visible), retreats \
+when losing 1.3x what it kills, and does not flank before 10:00 unless decisively ahead. A lone \
+raider draws two riflemen; a real push recalls the army unless our own attack is winning. A raid \
+squad hunts their harvesters. The first turret faces the road in.
 
-YOUR DIRECTIVES (null or "default"/"auto" = let the engine decide):
-- posture: "attack" can't start an attack the numbers don't support: the engine attacks once our \
-army is 1.3x enemy.army_value_estimate (the fog hides most of their army; never judge by what \
-you happen to see). \
-"hold" keeps massing: ignored when we clearly outnumber them or are behind at the end. Use them \
-for judgment the numbers miss (their army is out of position, a counter-push is coming), not to \
-second-guess the obvious. Keep a posture 30+ seconds: flip-flopping marches the army out and back.
-- attack_route: "center", "left" or "right" for the next attack, from 10:00 on (sooner only when decisively ahead: \
-engaged early, a flank leaves our base open). Flank around a \
-defended or crowded middle; go straight when the raid squad is drawing their army away.
-- expand: "now" to start an expansion earlier, "wait" if the site or the map is contested. The \
-engine expands on its own (natural first) and also when broke while trading even.
-- army_target: [x, y] the main army attacks. Used only if a known enemy building or unit is \
-within 10 cells of it. Good targets: power plants, then production, then refineries; an \
-undefended expansion.
+YOUR READ:
+- enemy_style: what the enemy is playing, from their buildings, army and moves:
+  "aggressive": early or repeated pushes, 2+ barracks or an early war factory on one refinery, units \
+  at our base. The engine holds at home, puts up to 3 turrets on the approach, and wins on macro.
+  "macro": many refineries or harvesters, fast expansions, few units, no pressure. The engine sends \
+  a bigger raid party round the flank to their harvesters and expansions.
+  "standard": a normal build and army: the engine plays its plan. "unknown": not enough seen yet.
+  Change it only on new evidence.
+- balance: where our money should go, from our bank (cash + ore), harvesters, refineries, \
+production and army against enemy.army_value_estimate. "more_army" when our army trails theirs or \
+money piles up while units are few (no extra refineries, dome or expansion for now); \
+"more_economy" when we are safe and our income trails theirs; "balanced" otherwise. Never \
+over-index: a big bank with a small army and a big army on 4 harvesters are both mistakes.
+- mistakes: up to 3 problems you see, each {"kind", "note"}: "idle_units" (fighters standing \
+around while there is work), "exposed_harvesters" (harvesters hit or mining far from cover), \
+"bank_piling" (money unspent), "stuck_units" (units not moving where sent), "losing_fight" (a \
+fight going badly that the engine has not left), "other". The note: one short sentence with cells \
+or ids. Empty when all is well.
+
+YOUR CALLS (null or "default"/"auto" = the engine decides; each works inside the plan's limits):
+- posture: "attack" asks for an attack now, honored only when the engine's numbers already support \
+one; "hold" keeps massing (ignored when we clearly outnumber them or are behind at the end). Use \
+them for what the numbers miss (their army is out of position, a counter-push is coming). Keep a \
+posture 30+ seconds: flip-flopping marches the army out and back.
+- attack_route: "center", "left" or "right" for the next attack, from 10:00 (sooner only when \
+decisively ahead: engaged early, a flank leaves our base open). Flank a defended middle; go straight \
+when the raid squad is drawing their army away.
+- expand: "now" to expand earlier, "wait" if the site or map is contested; "auto" follows your balance.
+- army_target: [x, y] the main army attacks, used only if a known enemy building or unit is within \
+10 cells of it. Good targets: power plants, then production, then refineries; an undefended expansion.
 - raid_target_id / raid_target_cell: the raid squad's harvester (a visible harvester's id) or a \
 cell to sweep (an ore field they harvest, a fresh expansion). It kills any defenders first.
 - defense_at: [x, y] the side of our base the next turret should face (the enemy's approach).
-- plan: your plan for the next minute or two, in 1-2 short sentences.
-- reasoning: why these directives now, from what you see, in 1-2 short sentences.
+- plan: your read of the game and plan for the next minute or two, in 1-2 short sentences.
+- reasoning: the evidence for it, in 1-2 short sentences.
 
 Use only cells inside map.bounds and ids you are shown. Be decisive and brief.\
 """
 
 _CELL = {"type": ["array", "null"], "items": {"type": "integer"}}
+STYLES = ("aggressive", "macro", "standard", "unknown")
+BALANCES = ("more_army", "more_economy", "balanced")
+MISTAKES = ("idle_units", "exposed_harvesters", "bank_piling", "stuck_units", "losing_fight", "other")
 ADVICE_SCHEMA = {
     "type": "object",
     "properties": {
+        "enemy_style": {"type": "string", "enum": list(STYLES)},
+        "balance": {"type": "string", "enum": list(BALANCES)},
+        "mistakes": {"type": "array", "maxItems": 3, "items": {
+            "type": "object", "additionalProperties": False, "required": ["kind", "note"],
+            "properties": {"kind": {"type": "string", "enum": list(MISTAKES)}, "note": {"type": "string"}}}},
         "posture": {"type": "string", "enum": ["attack", "hold", "default"]},
         "attack_route": {"type": "string", "enum": ["auto", "center", "left", "right"]},
         "expand": {"type": "string", "enum": ["auto", "now", "wait"]},
@@ -112,7 +147,7 @@ ADVICE_SCHEMA = {
         "plan": {"type": "string"},
         "reasoning": {"type": "string"},
     },
-    "required": ["posture", "attack_route", "expand", "army_target", "raid_target_id", "raid_target_cell",
+    "required": ["enemy_style", "balance", "mistakes", "posture", "attack_route", "expand", "army_target", "raid_target_id", "raid_target_cell",
                  "defense_at", "plan", "reasoning"],
     "additionalProperties": False,
 }
@@ -121,6 +156,9 @@ ADVICE_SCHEMA = {
 @dataclass(frozen=True)
 class Advice:
     made_at: float                       # game seconds of the view it was asked about
+    enemy_style: str = "unknown"         # its read of the enemy: aggressive / macro / standard / unknown
+    balance: str = "balanced"            # where the money goes: more_army / more_economy / balanced
+    mistakes: tuple = ()                 # ({"kind", "note"}, ...): for the log and console
     posture: str = "default"
     attack_route: str = "auto"
     expand: str = "auto"
@@ -150,13 +188,27 @@ def parse_advice(answer: Any, view: View, made_at: float) -> Advice | None:
                 return None
         return value[0], value[1]
 
+    style = answer.get("enemy_style") if answer.get("enemy_style") in STYLES else "unknown"
+    balance = answer.get("balance") if answer.get("balance") in BALANCES else "balanced"
+    mistakes = tuple(
+        {"kind": m["kind"], "note": " ".join(str(m.get("note") or "").split())[:160]}
+        for m in (answer.get("mistakes") or [])[:3]
+        if isinstance(m, dict) and m.get("kind") in MISTAKES)
     posture = answer.get("posture") if answer.get("posture") in ("attack", "hold", "default") else "default"
+    if posture == "default" and style == "aggressive":
+        posture = "hold"                   # an aggressive enemy: defend and win on macro
+    expand = answer.get("expand") if answer.get("expand") in ("now", "wait") else "auto"
+    if expand == "auto":
+        expand = {"more_economy": "now", "more_army": "wait"}.get(balance, "auto")
     raid_id = answer.get("raid_target_id")
     return Advice(
         made_at=made_at,
+        enemy_style=style,
+        balance=balance,
+        mistakes=mistakes,
         posture=posture,
         attack_route=answer.get("attack_route") if answer.get("attack_route") in ("center", "left", "right") else "auto",
-        expand=answer.get("expand") if answer.get("expand") in ("now", "wait") else "auto",
+        expand=expand,
         army_target=cell(answer.get("army_target")),
         raid_target_id=raid_id if isinstance(raid_id, int) and not isinstance(raid_id, bool) else None,
         raid_target_cell=cell(answer.get("raid_target_cell")),
@@ -181,6 +233,9 @@ def build_prompt(view: View, situation: dict) -> dict:
         "you": {
             "cash": round(view.cash), "ore": round(view.ore), "power": [round(view.power_provided), round(view.power_drained)],
             "army_value": round(view.army_value), "kills_cost": round(view.kills_cost),
+            "bank": round(view.cash + view.ore),
+            "harvesters": len(view.units_of(C.HARVESTER)),
+            "in_production": [str(p.get("item")) for p in view.production if not p.get("ready")][:10],
             "deaths_cost": round(view.deaths_cost), "assets_value": round(view.assets_value),
             "buildings": [{"type": b.type, "cell": list(b.cell)} for b in view.buildings if b.cell is not None and not b.wreck][:30],
             "units": groups(view.units, 6),

@@ -44,6 +44,8 @@ class Raid:
         self._released_at: float | None = None
         self._advice = None
         self._drawing_at: float | None = None   # last time enemy fighters were on the squad
+        self._via: tuple[int, int] | None = None  # flank waypoint (macro enemy), until reached
+        self._via_done = False
 
     def update(self, view: View, mode: Mode, scout_id: int | None, advice=None, taken: set = frozenset()) -> None:
         """Drop dead members; release or form the squad."""
@@ -107,7 +109,30 @@ class Raid:
             return []
         if isinstance(target, int):
             return [orders.attack(ids, target)]
+        via = self._flank(view, members, target)
+        if via is not None:
+            return [orders.attack_move(ids, list(via)), orders.attack_move(ids, list(target), queued=True)]
         return [orders.attack_move(ids, list(target))]
+
+    def _flank(self, view: View, members: list[Actor], target) -> tuple[int, int] | None:
+        """Against a macro-heavy enemy (the advisor's read), round the side
+        with the fewest known enemies to a far target, then straight in."""
+        if getattr(self._advice, "enemy_style", None) != "macro" or self._via_done:
+            return None
+        centre = _centroid(members)
+        if self._via is None:
+            if centre is None or dist2(centre, target) < C.RAID_FLANK_MIN_CELLS ** 2:
+                return None
+            from .executor import flank_waypoint
+            r2 = C.FLANK_DANGER_RADIUS_CELLS ** 2
+            enemies = [a.cell for a in list(view.enemy_units) + list(view.known_enemy_units)
+                       + list(view.known_enemy_buildings) if a.cell is not None and a.type not in C.HARVESTER]
+            sides = [w for w in (flank_waypoint(view, target, s) for s in (1, -1)) if w is not None]
+            self._via = min(sides, key=lambda w: sum(1 for c in enemies if dist2(c, w) <= r2), default=None)
+        if self._via is not None and centre is not None and dist2(centre, self._via) <= C.FLANK_ARRIVED_CELLS ** 2:
+            self._via_done = True
+            return None
+        return self._via
 
     # -- internals -------------------------------------------------------------
 
@@ -126,10 +151,14 @@ class Raid:
         fighters = [u for u in view.combat_units if u.id is not None and u.id != scout_id and u.id not in taken]
         if len(fighters) < C.MIN_DEFENDERS + C.RAID_SQUAD_SIZE:
             return  # can't spare them
+        size = C.RAID_SQUAD_SIZE_MACRO if getattr(self._advice, "enemy_style", None) == "macro" else C.RAID_SQUAD_SIZE
+        if len(fighters) < C.MIN_DEFENDERS + size:
+            size = C.RAID_SQUAD_SIZE      # can't spare the bigger party
         squad: list[int] = []
         for kind in C.RAID_UNIT_TYPES:  # rockets first
             squad += [u.id for u in fighters if u.type == kind and u.id not in squad]
-        self.unit_ids = squad[:C.RAID_SQUAD_SIZE]
+        self.unit_ids = squad[:size]
+        self._via, self._via_done = None, False
         if len(self.unit_ids) < C.RAID_MIN_SIZE:
             self.unit_ids = []
             return

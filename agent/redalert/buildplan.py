@@ -32,7 +32,8 @@ def _count_built_and_queued(view: View, type_ids) -> int:
 
 
 def next_build_orders(view: View, expansion_ore: tuple[int, int] | None = None,
-                      depleted: frozenset = frozenset(), rusher: bool = False) -> list[dict]:
+                      depleted: frozenset = frozenset(), rusher: bool = False,
+                      units_first: bool = False) -> list[dict]:
     """Zero or one production order that advances the build order this view.
 
     Returns a list (0 or 1 orders) so the executor can concatenate it with
@@ -95,14 +96,15 @@ def next_build_orders(view: View, expansion_ore: tuple[int, int] | None = None,
 
     # Interrupt 2d: radar dome for the end game (unlocks siege units).
     from .brain import outgunned
-    if (view.game_seconds >= C.DOME_AFTER_SECONDS and money >= C.DOME_ADD_FUNDS and not outgunned(view)
+    if (view.game_seconds >= C.DOME_AFTER_SECONDS and money >= C.DOME_ADD_FUNDS and not outgunned(view) and not units_first
             and view.has_building(C.SERVICE_DEPOT) and not _count_built_and_queued(view, (C.RADAR_DOME,))):
         dome = _available(view, C.RADAR_DOME)
         if dome:
             return [orders.build(dome)]
 
-    # Past the build order, no more refineries while outgunned: units first.
-    short = outgunned(view)
+    # Past the build order, no more refineries while outgunned, or when the
+    # advisor reads that our army needs the money (balance "more_army").
+    short = outgunned(view) or units_first
 
     # Interrupt 2c: more refineries over time (each comes with a harvester).
     if (not short and money >= C.REFINERY_ADD_FUNDS

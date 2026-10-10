@@ -187,7 +187,9 @@ class RedAlertAgent:
             "harvester_acts": dict(Counter(h.act for h in view.units_of(C.HARVESTER) if h.act)),
             "unstuck": self._unstick.unstuck,
             "enemy_expansions": _enemy_expansions(view),
-            "advice": getattr(advice, "posture", None), "advisor_calls": getattr(self._advisor, "calls", 0),
+            "advice": getattr(advice, "posture", None), "enemy_style": getattr(advice, "enemy_style", None),
+            "balance": getattr(advice, "balance", None),
+            "advisor_calls": getattr(self._advisor, "calls", 0),
         })
         squads = {*self._patrol.unit_ids, *self._raid.unit_ids, *self._garrison.unit_ids}
         micro_orders, micro_ids = micro.plan(view, self._mode, frozenset(squads), scout.choke_cell(view))
@@ -374,12 +376,14 @@ class RedAlertAgent:
         when the posture or plan changes, so it can be followed live without
         a line every few seconds. Local only: never in reasoning_summary."""
         self._matchlog.advice(advice, latency_s)
-        key = (advice.posture, advice.plan)
+        key = (advice.posture, advice.enemy_style, advice.balance, advice.plan, advice.mistakes)
         if key != self._last_plan:
             self._last_plan = key
+            mistakes = "; ".join(f"{m['kind']}: {m['note']}" for m in advice.mistakes)
             self._log(
-                f"[redalert] advisor t={int(advice.made_at)}s ({latency_s:.1f}s) {advice.posture}: "
-                f"{advice.plan or '(no plan)'} | why: {advice.reasoning or '-'}"
+                f"[redalert] advisor t={int(advice.made_at)}s ({latency_s:.1f}s) {advice.posture}, enemy {advice.enemy_style}, "
+                f"{advice.balance}: {advice.plan or '(no plan)'} | why: {advice.reasoning or '-'}"
+                + (f" | mistakes: {mistakes}" if mistakes else "")
             )
 
     def _poll_advisor(self, view):
