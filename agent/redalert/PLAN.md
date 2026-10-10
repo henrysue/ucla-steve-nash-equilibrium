@@ -30,7 +30,7 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
 | `executor.py` | Production, economy, army orders, rally points, stances |
 | `scout.py` | Base threats, the massing point, hunting the last buildings |
 | `scouting.py` / `intel.py` | The scout corps (early circuits, pickets, base checks); reading their opening |
-| `raid.py` / `guard.py` | Harvester raids; home guard and expansion garrison |
+| `raid.py` / `guard.py` | Harvester raids (and the second prong); the expansion garrison |
 | `expand.py` | Our expansions; enemy expansion sites |
 | `harvest.py` | Harvesters steered to fields that still have ore |
 | `micro.py` / `movement.py` | Focus fire, pull back damaged units; unstick units |
@@ -51,8 +51,10 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
 - **Fighting**: mass on our side of the map, attack with an edge, flank when
   the middle is guarded, target power then production, focus fire, retreat
   from losing fights (fighting back when pressed), hunt the last buildings.
-- **Squads**: roaming scout, harvester raid squad, home guard at the power
-  plants, garrison at the newest expansion (joins pushes once it's complete).
+- **Squads**: the scout corps, the harvester raid squad (second prong of an
+  attack), home responders for small raids, garrison at the newest expansion
+  (joins pushes once it's complete). The army splits one way: groups to
+  points (two clusters, a semi-concave across the target, or hunt points).
 - **End**: protect a real lead in the last 2 minutes (any lead in the last
   minute); when behind in the last 3 minutes, attack regardless.
 - **Late game**: radar dome ~7:00; 2-4 siege units (V2 / artillery) once enemy

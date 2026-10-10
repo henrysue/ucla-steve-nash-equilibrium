@@ -984,7 +984,6 @@ def dist2_ok(a, b):
 
 # -- base layout like good players (web research) + home guard ---------------
 
-from agent.redalert.guard import HomeGuard  # noqa: E402
 
 
 def _layout_view(**over):
@@ -1013,28 +1012,6 @@ def test_placement_keeps_a_gap_instead_of_cramming():
                                 {"id": 11, "type": "tent", "x": 14, "y": 14}])
     spot = buildplan.placement_cell(v, "barr")
     assert (spot[0] - 14) ** 2 + (spot[1] - 14) ** 2 >= 4
-
-
-def test_home_guard_posts_between_the_power_plants():
-    units = [{"id": 30 + i, "type": "e1", "x": 14, "y": 14, "hp": 100, "idle": True} for i in range(8)]   # at home
-    power = [{"id": 10, "type": "fact", "x": 10, "y": 10}, {"id": 11, "type": "powr", "x": 4, "y": 8},
-             {"id": 12, "type": "powr", "x": 6, "y": 12}]
-    v = _view(buildings=power, units=units)
-    g = HomeGuard()
-    g.update(v, Mode.BUILD, taken=set())
-    assert len(g.unit_ids) == 2
-    assert g.orders(v) == [{"cmd": "attack_move", "units": g.unit_ids, "to": [5, 10]}]
-
-
-def test_home_guard_joins_the_fight_in_defense_and_never_strips_the_army():
-    units = [{"id": 30 + i, "type": "e1", "x": 22, "y": 22, "hp": 100} for i in range(8)]
-    g = HomeGuard()
-    g.update(_view(units=units), Mode.BUILD, taken=set())
-    g.update(_view(units=units), Mode.DEFEND_BASE, taken=set())
-    assert g.unit_ids == []
-    few = HomeGuard()
-    few.update(_view(units=units[:4]), Mode.BUILD, taken=set())
-    assert few.unit_ids == []
 
 
 # -- the advisor's plan and reasoning in the logs -----------------------------
@@ -1099,7 +1076,7 @@ def test_the_army_commits_instead_of_flip_flopping():
     assert agent._mode is Mode.BUILD                             # 30 s in: may switch
 
 
-def test_raids_use_light_vehicles_when_infantry_is_short_and_spare_the_guard():
+def test_raids_use_light_vehicles_when_infantry_is_short_and_spare_other_squads():
     tanks = [{"id": 300 + i, "type": "1tnk", "x": 22, "y": 22, "hp": 100} for i in range(10)]
     guard = [{"id": 400, "type": "e1", "x": 5, "y": 5, "hp": 100}, {"id": 401, "type": "e1", "x": 5, "y": 5, "hp": 100}]
     r = Raid()
@@ -2815,12 +2792,11 @@ def test_no_infantry_cap_only_the_build_order_reserve():
 
 def test_squads_never_take_units_from_the_front():
     front = [{"id": 30 + i, "type": "1tnk" if i < 4 else "e1", "x": 30, "y": 30, "hp": 100} for i in range(10)]
-    g, h = Garrison(), HomeGuard()
+    g = Garrison()
     e = _deployed_expansion()
     v = _view(_t=400.0, buildings=BASE, units=front)
     g.update(v, Mode.BUILD, e, taken=set())
-    h.update(v, Mode.BUILD, taken=set())
-    assert g.unit_ids == [] and h.unit_ids == []                   # 30 cells out: those are fighting
+    assert g.unit_ids == []                                        # 30 cells out: those are fighting
     home = [{**u, "x": 8, "y": 8} for u in front]
     g.update(_view(_t=400.0, buildings=BASE, units=home), Mode.BUILD, e, taken=set())
     assert len(g.unit_ids) == C.GARRISON_SIZE
@@ -2828,11 +2804,10 @@ def test_squads_never_take_units_from_the_front():
 
 def test_no_squad_claims_during_an_attack_and_raiders_join_it():
     home = [{"id": 30 + i, "type": "e1", "x": 8, "y": 8, "hp": 100} for i in range(10)]
-    g, h = Garrison(), HomeGuard()
+    g = Garrison()
     v = _view(_t=400.0, buildings=BASE, units=home)
     g.update(v, Mode.ALL_IN, _deployed_expansion(), taken=set())
-    h.update(v, Mode.ALL_IN, taken=set())
-    assert g.unit_ids == [] and h.unit_ids == []
+    assert g.unit_ids == []
     r = Raid()
     r.unit_ids, r._formed_size = [30, 31, 32], 3
     r.update(dataclasses.replace(v, enemy_units=read(_raw(visible_enemies=[_ENEMY_HARV])).enemy_units), Mode.ALL_IN, None)

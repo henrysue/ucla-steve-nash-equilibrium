@@ -304,24 +304,24 @@ def _army_orders(
         blind = not (view.enemy_buildings or view.enemy_units or view.known_enemy_buildings
                      or any(a.type == C.MCV for a in view.known_enemy_units))
         if blind and hunt is not None:
-            if flank_via is None:
-                groups = _hunt_groups(view, combat[:orders.MAX_UNITS_PER_ORDER], hunt_points or [hunt])
-                if groups:
-                    return groups
+            units = combat[:orders.MAX_UNITS_PER_ORDER]
+            k = min(len(hunt_points or [hunt]), C.HUNT_GROUPS, len(units) // C.HUNT_GROUP_MIN_UNITS)
+            if flank_via is None and k >= 2:
+                return _groups(view, units, (hunt_points or [hunt])[:k])
             advice = None
         target = _advised_target(view, advice) or _attack_target(view, hunt)
         if target is not None:
             # attack_move (not attack-on-id) so the army fights whatever it
             # meets on the way instead of walking past it to one building.
             units = combat[:orders.MAX_UNITS_PER_ORDER]
-            split = _split_attack(view, units) if _advised_target(view, advice) is None and flank_via is None else None
-            if split:
-                return split
             if flank_via is not None:
                 # Flank: round the side first, then on to the target.
                 return [orders.attack_move(units, list(flank_via)),
                         orders.attack_move(units, list(target), queued=True)]
-            return _concave_attack(view, units, target)
+            # The advisor's own pick is a single point; otherwise split into
+            # groups (two clusters, or a semi-concave across the target).
+            points = [target] if _advised_target(view, advice) is not None else _attack_points(view, units, target)
+            return _groups(view, units, points)
         # Blind and no spawns known: fall back to the server's ready-made order
         # (without the scout, which the server counts as a combat unit).
         if view.attack_now:
@@ -534,49 +534,19 @@ def home_response(view: View, mode: Mode, scout_id: int | None, reserved: frozen
     return [orders.attack(picked[:orders.MAX_UNITS_PER_ORDER], target.id)], set(picked)
 
 
-def _concave_attack(view: View, units: list[int], target) -> list[dict]:
-    """Attack in ``ATTACK_GROUPS`` groups closing on ``target`` as a rough
-    semi-concave: the side groups aim ``ATTACK_GROUP_SPREAD_CELLS`` either
-    side of it, so the army arrives spread and every gun gets to fire,
-    instead of one column. Units go to the group on their own side (no
-    crossing over); a small army just attack-moves."""
-    if len(units) < C.ATTACK_GROUP_MIN_UNITS:
-        return [orders.attack_move(units, list(target))]
+def _groups(view: View, units: list[int], points: list) -> list[dict]:
+    """The one way to split the army: each unit attack-moves to the nearest
+    point whose group still has room (groups of about equal size, nearest
+    units placed first). One point: everyone goes there. The hunt, a split
+    between two enemy clusters and the semi-concave are just different
+    points (:func:`_attack_points`)."""
+    points = [tuple(p) for p in points]
+    if not units or not points:
+        return []
+    if len(points) == 1:
+        return [orders.attack_move(units, list(points[0]))]
     cells = {u.id: u.cell for u in view.combat_units if u.cell is not None}
-    mine = [cells[i] for i in units if i in cells]
-    if not mine:
-        return [orders.attack_move(units, list(target))]
-    cx, cy = sum(c[0] for c in mine) / len(mine), sum(c[1] for c in mine) / len(mine)
-    dx, dy = target[0] - cx, target[1] - cy
-    length = (dx * dx + dy * dy) ** 0.5 or 1.0
-    px, py = -dy / length, dx / length
-    ranked = sorted(units, key=lambda i: ((cells.get(i, (cx, cy))[0] - cx) * px + (cells.get(i, (cx, cy))[1] - cy) * py))
-    k = C.ATTACK_GROUPS
-    size = -(-len(ranked) // k)
-    out = []
-    for g in range(k):
-        ids = ranked[g * size:(g + 1) * size]
-        if not ids:
-            continue
-        side = (g - (k - 1) / 2) / max(1, (k - 1) / 2)          # -1 .. 1
-        spot = (round(target[0] + px * side * C.ATTACK_GROUP_SPREAD_CELLS),
-                round(target[1] + py * side * C.ATTACK_GROUP_SPREAD_CELLS))
-        if view.bounds is not None:
-            bx, by, bw, bh = view.bounds
-            spot = (min(max(spot[0], bx), bx + bw - 1), min(max(spot[1], by), by + bh - 1))
-        out.append(orders.attack_move(ids, list(spot)))
-    return out
-
-
-def _hunt_groups(view: View, units: list[int], points: list) -> list[dict] | None:
-    """Split the hunt over several search points: each unit to the nearest
-    point whose group still has room. None when the army is too small."""
-    k = min(len(points), C.HUNT_GROUPS, len(units) // C.HUNT_GROUP_MIN_UNITS)
-    if k < 2:
-        return None
-    points = [tuple(p) for p in points[:k]]
-    cells = {u.id: u.cell for u in view.combat_units if u.cell is not None}
-    room = {p: -(-len(units) // k) for p in points}
+    room = {p: -(-len(units) // len(points)) for p in points}
     groups: dict = {p: [] for p in points}
     for uid in sorted(units, key=lambda i: min(dist2(cells.get(i, points[0]), p) for p in points)):
         here = cells.get(uid, points[0])
@@ -586,26 +556,44 @@ def _hunt_groups(view: View, units: list[int], points: list) -> list[dict] | Non
     return [orders.attack_move(ids, list(p)) for p, ids in groups.items() if ids]
 
 
-def _split_attack(view: View, units: list[int]) -> list[dict] | None:
-    """Overwhelming the enemy and two or more enemy building clusters known:
-    attack the two nearest at once, half the army each, instead of one after
-    the other (match 4bc1ee71: 6 minutes on a beaten enemy's main base and
-    expansions, one at a time, and no victory)."""
+def _attack_points(view: View, units: list[int], target) -> list[tuple[int, int]]:
+    """Where the attack groups go.
+
+    - Overwhelming, with two or more enemy building clusters known: the two
+      nearest clusters at once (match 4bc1ee71 took a beaten enemy's base and
+      expansions one at a time and never won).
+    - Else, with ``ATTACK_GROUP_MIN_UNITS`` or more: ``ATTACK_GROUPS`` points
+      across the target, ``ATTACK_GROUP_SPREAD_CELLS`` apart, so the army
+      arrives as a rough semi-concave and every gun fires.
+    - Else the target itself."""
     from .brain import _overwhelming
 
-    if len(units) < C.SPLIT_MIN_UNITS or not _overwhelming(view) or view.base_center is None:
-        return None
-    clusters: list[tuple[int, int]] = []
-    for b in list(view.enemy_buildings) + list(view.known_enemy_buildings):
-        if b.cell is not None and not b.wreck and all(dist2(b.cell, c) > C.ENEMY_CLUSTER_CELLS ** 2 for c in clusters):
-            clusters.append(b.cell)
-    if len(clusters) < 2:
-        return None
-    a, b = sorted(clusters, key=lambda c: dist2(c, view.base_center))[:2]
-    cells = {u.id: u.cell for u in view.combat_units if u.id in set(units) and u.cell is not None}
-    ranked = sorted(units, key=lambda i: dist2(cells.get(i, a), a) - dist2(cells.get(i, b), b))
-    half = len(ranked) // 2
-    return [orders.attack_move(ranked[:half], list(a)), orders.attack_move(ranked[half:], list(b))]
+    if len(units) >= C.SPLIT_MIN_UNITS and _overwhelming(view) and view.base_center is not None:
+        clusters: list[tuple[int, int]] = []
+        for b in list(view.enemy_buildings) + list(view.known_enemy_buildings):
+            if b.cell is not None and not b.wreck and all(dist2(b.cell, c) > C.ENEMY_CLUSTER_CELLS ** 2 for c in clusters):
+                clusters.append(b.cell)
+        if len(clusters) >= 2:
+            return sorted(clusters, key=lambda c: dist2(c, view.base_center))[:2]
+    if len(units) < C.ATTACK_GROUP_MIN_UNITS:
+        return [tuple(target)]
+    cells = [u.cell for u in view.combat_units if u.id in set(units) and u.cell is not None]
+    if not cells:
+        return [tuple(target)]
+    cx, cy = sum(c[0] for c in cells) / len(cells), sum(c[1] for c in cells) / len(cells)
+    dx, dy = target[0] - cx, target[1] - cy
+    length = (dx * dx + dy * dy) ** 0.5 or 1.0
+    px, py = -dy / length, dx / length
+    k = C.ATTACK_GROUPS
+    out = []
+    for g in range(k):
+        side = (g - (k - 1) / 2) / max(1, (k - 1) / 2)          # -1 .. 1
+        x, y = round(target[0] + px * side * C.ATTACK_GROUP_SPREAD_CELLS), round(target[1] + py * side * C.ATTACK_GROUP_SPREAD_CELLS)
+        if view.bounds is not None:
+            bx, by, bw, bh = view.bounds
+            x, y = min(max(x, bx), bx + bw - 1), min(max(y, by), by + bh - 1)
+        out.append((x, y))
+    return out
 
 
 def _attack_target(view: View, hunt: tuple[int, int] | None = None) -> tuple[int, int] | None:

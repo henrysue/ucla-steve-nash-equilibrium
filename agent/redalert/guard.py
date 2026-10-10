@@ -1,16 +1,10 @@
-"""A small home guard posted among our power plants.
+"""The expansion garrison, and which units count as "at home".
 
-"Keep a Rifle or two to guard your home base. Place them between your
-structures guarding your Power plants using the structures view range"
-(OpenRA forum, "OpenRA Red Alert Multiplayer Guide 2022"). Power is what a
-raid hits first (it slows all production and switches defenses off), and
-with the army away a couple of infantry stop a lone harvester-hunter, an
-engineer or a jeep from walking in unseen.
-
-``HOME_GUARD_SIZE`` infantry are claimed once we have a real army, posted at
-the middle of our power plants (else the base centre), and kept out of the
-army like the scout and raid squad. In defensive modes and retreats they are
-released to fight with everyone, then claimed again later.
+The garrison: units posted at our newest expansion ("bring support to
+capture and defend an expansion"); see :class:`Garrison`. Squads claim only
+units at home (:func:`_at_home`), never from the front. (A home guard of two
+riflemen at the power plants used to live here; home responders —
+executor.home_response — now deal with small raids on the base.)
 """
 
 from __future__ import annotations
@@ -36,51 +30,6 @@ def _at_home(view: View, cell) -> bool:
         homes.append(stage)
     r2 = C.SQUAD_CLAIM_RADIUS_CELLS ** 2
     return cell is not None and any(dist2(cell, h) <= r2 for h in homes)
-
-
-class HomeGuard:
-    def __init__(self) -> None:
-        self.unit_ids: list[int] = []
-
-    def update(self, view: View, mode: Mode, taken: set) -> None:
-        """Drop dead guards; release them to fight in defensive modes; claim
-        new ones (never the scout or raid squad, ``taken``) when we can spare
-        them."""
-        alive = {u.id for u in view.combat_units}
-        self.unit_ids = [i for i in self.unit_ids if i in alive]
-        if mode in DEFENSIVE or mode is Mode.RETREAT:
-            self.unit_ids = []
-            return
-        if mode is Mode.ALL_IN or len(self.unit_ids) >= C.HOME_GUARD_SIZE:
-            return   # no claims during an attack: the army commits together
-        free = [u for u in view.combat_units if u.id is not None and u.id not in taken
-                and u.id not in self.unit_ids and _at_home(view, u.cell)]
-        if len(free) < C.MIN_DEFENDERS:
-            return  # the army needs them more
-        for kind in C.HOME_GUARD_TYPES:
-            for u in free:
-                if len(self.unit_ids) >= C.HOME_GUARD_SIZE:
-                    return
-                if u.type == kind and u.id not in self.unit_ids:
-                    self.unit_ids.append(u.id)
-
-    def post(self, view: View) -> tuple[int, int] | None:
-        """The middle of our power plants, else the base centre."""
-        power = [b.cell for b in view.buildings
-                 if b.type in (C.POWER_PLANT, C.ADV_POWER_PLANT) and b.cell is not None and not b.wreck]
-        if not power:
-            return view.base_center
-        return (sum(c[0] for c in power) // len(power), sum(c[1] for c in power) // len(power))
-
-    def orders(self, view: View) -> list[dict]:
-        """Send idle guards that have wandered off back to their post."""
-        post = self.post(view)
-        if post is None or not self.unit_ids:
-            return []
-        ids = set(self.unit_ids)
-        r2 = _POST_RADIUS_CELLS ** 2
-        away = [u.id for u in view.combat_units if u.id in ids and u.idle and dist2(u.cell, post) > r2]
-        return [orders.attack_move(away, list(post))] if away else []
 
 
 class Garrison:

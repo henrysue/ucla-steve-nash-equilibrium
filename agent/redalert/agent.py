@@ -27,7 +27,7 @@ from . import intel, scouting
 from .commander import Commander
 from .expand import Expansion
 from .expand import enemy_expansions as _enemy_expansions
-from .guard import Garrison, HomeGuard
+from .guard import Garrison
 from .raid import Raid
 from . import config as C
 from .matchlog import MatchLog
@@ -69,7 +69,6 @@ class RedAlertAgent:
         self._intel = intel.EnemyIntel()
         self._memory = EnemyMemory()
         self._raid = Raid()
-        self._guard = HomeGuard()
         self._expansion = Expansion()
         self._garrison = Garrison()
         self._unstick = Unstick()
@@ -114,7 +113,7 @@ class RedAlertAgent:
         self._commander.track_threat(view)
 
         self._intel.update(view)
-        self._patrol.update(view, taken={*self._raid.unit_ids, *self._guard.unit_ids, *self._garrison.unit_ids})
+        self._patrol.update(view, taken={*self._raid.unit_ids, *self._garrison.unit_ids})
         threat = self._patrol.alarm(view) or self._intel.rushing(view)
         advice = self._poll_advisor(view)
         hunting = self._hunter.hunting(view)
@@ -125,8 +124,7 @@ class RedAlertAgent:
         # The army's one decision (commander.py).
         self._commander.decide(
             view, model_pref=_POSTURE.get(getattr(advice, "posture", None)), scout_id=self._patrol.unit_id,
-            squad_ids=frozenset({*self._patrol.unit_ids, *self._raid.unit_ids,
-                                 *self._guard.unit_ids, *self._garrison.unit_ids}),
+            squad_ids=frozenset({*self._patrol.unit_ids, *self._raid.unit_ids, *self._garrison.unit_ids}),
             hunting=hunting, alarm=threat, distraction=self._raid.distracting(view),
             escorting=self._expansion.escorting, rushing=rushing, forced=forced,
         )
@@ -142,16 +140,15 @@ class RedAlertAgent:
         self._game_seconds = view.game_seconds
 
         self._raid.update(view, self._mode, self._patrol.unit_id, advice,
-                          taken={*self._guard.unit_ids, *self._patrol.unit_ids})
-        self._guard.update(view, self._mode, {*self._patrol.unit_ids, *self._raid.unit_ids})
+                          taken=set(self._patrol.unit_ids))
         self._garrison.update(view, self._mode, self._expansion,
-                              {*self._patrol.unit_ids, *self._raid.unit_ids, *self._guard.unit_ids})
+                              {*self._patrol.unit_ids, *self._raid.unit_ids})
         self._matchlog.observe(raw, view, self._mode, context, extra={
             "scout": self._patrol.unit_id, "scouts": dict(self._patrol.roles),
             "enemy_opening": self._intel.opening(), "threat": threat,
             "confirming": self._confirm_at is not None,
             "raid_squad": len(self._raid.unit_ids),
-            "home_guard": len(self._guard.unit_ids),
+
             # Confirms the live game_config carries the map picture.
             "map_ore_cells": len(view.ore_cells), "enemy_ore_field": enemy_ore_field(view),
             "raid_target": self._raid.target(view),
@@ -177,7 +174,7 @@ class RedAlertAgent:
             "enemy_expansions": _enemy_expansions(view),
             "advice": getattr(advice, "posture", None), "advisor_calls": getattr(self._advisor, "calls", 0),
         })
-        squads = {*self._patrol.unit_ids, *self._raid.unit_ids, *self._guard.unit_ids, *self._garrison.unit_ids}
+        squads = {*self._patrol.unit_ids, *self._raid.unit_ids, *self._garrison.unit_ids}
         micro_orders, micro_ids = micro.plan(view, self._mode, frozenset(squads), scout.choke_cell(view))
         hunt = self._hunter.targets(view, C.HUNT_GROUPS) if self._mode is Mode.ALL_IN else []
         sell = buildplan.sell_for_income(view)
@@ -188,9 +185,9 @@ class RedAlertAgent:
         planned = ([sell] if sell else []) + executor.plan(
             view, self._mode,
             scout_id=self._patrol.unit_id, scout_orders=self._patrol.orders(view) + self._patrol.production(view),
-            raid_ids=[*self._raid.unit_ids, *self._guard.unit_ids, *self._garrison.unit_ids, *micro_ids,
+            raid_ids=[*self._raid.unit_ids, *self._garrison.unit_ids, *micro_ids,
                       *self._patrol.unit_ids],
-            raid_orders=(self._raid_orders(view) + self._guard.orders(view)
+            raid_orders=(self._raid_orders(view)
                          + self._garrison_orders(view) + micro_orders),
             advice=self._army_advice(advice, hunting, view),
             flank_via=self._flank_via, expansion=self._expansion,
@@ -203,7 +200,7 @@ class RedAlertAgent:
             threat=threat,
             probe=self._probe_point(view),
         ) + self._unstick.orders(view) + executor.stance_orders(
-            view, self._mode, {*self._guard.unit_ids, *self._garrison.unit_ids})
+            view, self._mode, set(self._garrison.unit_ids))
         now = self._clock()
         batch_orders = [
             o for o in planned
@@ -273,7 +270,7 @@ class RedAlertAgent:
         """Where the main army is fighting (ALL_IN, enemies near it), else None."""
         if self._mode is not Mode.ALL_IN:
             return None
-        squads = {*self._patrol.unit_ids, *self._raid.unit_ids, *self._guard.unit_ids, *self._garrison.unit_ids}
+        squads = {*self._patrol.unit_ids, *self._raid.unit_ids, *self._garrison.unit_ids}
         army = [u.cell for u in view.combat_units if u.cell is not None and u.id not in squads]
         if not army:
             return None
