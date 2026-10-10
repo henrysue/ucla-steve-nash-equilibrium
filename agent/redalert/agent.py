@@ -13,6 +13,7 @@ https://api.altruagent-game.com/skill/redalert.
 from __future__ import annotations
 
 import json
+import os
 from collections import Counter
 import time
 from collections.abc import Callable
@@ -78,6 +79,7 @@ class RedAlertAgent:
         self._kills_seen = (0.0, 0.0)               # (kills_cost, game time it last changed)
         self._ignore_advice_until = float("-inf")   # advisor's army target ignored until (stall breaker)
         self._rusher = testrush.SelfPlayRusher()   # testrush: TEST ONLY
+        self._models_checked = False                # REDALERT_MODELS_OFF_SEAT applied yet
         self._clearing: dict = {}   # building item -> game time its spot was first found occupied
         self._harvest = HarvestManager()
         # Per-match review log (off unless a log directory is configured).
@@ -105,6 +107,7 @@ class RedAlertAgent:
 
         # Remember enemies through the fog: the brain weighs the enemy army we
         # remember, and the army can target buildings we saw earlier.
+        self._models_switch(context)
         self._audit_placements(view)
         self._memory.update(view)
         view = self._memory.apply(view)
@@ -166,6 +169,7 @@ class RedAlertAgent:
             "early_push_warning": scout.early_push_warning(view),
             "hunting": hunting,
             "test_rusher": rushing,   # testrush
+            "models": "on" if (self._advisor is not None or self._leads) else "off",
             "active_base": self._active_base(view),
             "harvester_acts": dict(Counter(h.act for h in view.units_of(C.HARVESTER) if h.act)),
             "unstuck": self._unstick.unstuck,
@@ -439,6 +443,26 @@ class RedAlertAgent:
             import dataclasses
             return dataclasses.replace(advice, army_target=None)
         return advice
+
+    def _models_switch(self, context) -> None:
+        """A/B testing in self-play: ``REDALERT_MODELS_OFF_SEAT=<seat>`` plays
+        that seat rules-only (no advisor, no squad leads) while the other
+        keeps them. Test matches only (never a tournament game); checked once
+        per match."""
+        if self._models_checked:
+            return
+        self._models_checked = True
+        seat = os.environ.get("REDALERT_MODELS_OFF_SEAT", "").strip()
+        if (not seat.isdigit() or getattr(context, "tournament_id", None) is not None
+                or getattr(context, "seat_position", None) != int(seat)):
+            return
+        if self._advisor is not None:
+            self._advisor.close()
+            self._advisor = None
+        for lead in self._leads.values():
+            lead.close()
+        self._leads = {}
+        self._log(f"[redalert] seat {seat}: models off for this test match (A/B: rules only)")
 
     def _note_placements(self, view, sent: list[dict]) -> None:
         """Remember where each building was asked for (placement audit)."""

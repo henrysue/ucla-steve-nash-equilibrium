@@ -3318,3 +3318,24 @@ def test_while_hunting_each_free_scout_sweeps_its_own_search_point():
     sweeps = {x["units"][0]: tuple(x["to"]) for x in o if x["units"][0] in (30, 32)}
     assert sweeps == {30: (12, 30), 32: (35, 12)}                            # nearest, one each
     assert any(x["units"] == [31] and tuple(x["to"]) == (40, 40) for x in o)   # the circling scout keeps its route
+
+
+def test_one_seat_can_play_without_models_for_an_ab_test(monkeypatch):
+    class Off:
+        closed = False
+        calls = 0
+        def poll(self, view, situation): return None
+        def close(self): Off.closed = True
+
+    monkeypatch.setenv("REDALERT_MODELS_OFF_SEAT", "1")
+    seat1 = DecisionContext(session_id="ab", tournament_id=None, game_type="red_alert", agent_id="me", seat_position=1)
+    a = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0, advisor_factory=lambda log, on_advice: Off())
+    a.choose_action(_state(_t=60.0, buildings=BASE), seat1)
+    assert a._advisor is None and Off.closed                                 # seat 1: rules only
+    b = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0, advisor_factory=lambda log, on_advice: Off())
+    b.choose_action(_state(_t=60.0, buildings=BASE), CTX)                    # seat 0 keeps its advisor
+    assert b._advisor is not None
+    t = DecisionContext(session_id="ab", tournament_id="cup", game_type="red_alert", agent_id="me", seat_position=1)
+    c = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0, advisor_factory=lambda log, on_advice: Off())
+    c.choose_action(_state(_t=60.0, buildings=BASE), t)
+    assert c._advisor is not None                                            # never in a tournament game

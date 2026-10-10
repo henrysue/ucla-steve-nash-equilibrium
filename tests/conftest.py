@@ -25,3 +25,5 @@ def _no_match_logs_from_tests(monkeypatch):
     # And the Red Alert self-play test rusher (agent/redalert/testrush.py):
     # off, so tests never write marker files or turn a seat into a rusher.
     monkeypatch.setenv("RA_TEST_RUSH", "0")
+    # And the per-seat models-off switch (A/B tests in self-play).
+    monkeypatch.setenv("REDALERT_MODELS_OFF_SEAT", "")
