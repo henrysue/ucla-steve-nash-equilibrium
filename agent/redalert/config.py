@@ -155,6 +155,7 @@ UNDER_ATTACK_FRESH_TICKS = 250     # an under_attack event counts for 10 s
 # -- attacking -----------------------------------------------------------------------------------
 ENEMY_PRIOR_SHARE = 0.8            # fog: their army is at least this x (our army + our deaths - our kills)...
 ENEMY_PEAK_SECONDS = 180.0         # ...and the most we saw of it this recently, less what we killed since
+ENEMY_ECONOMY_FLOOR = 0.5          # the prior scales by their known refineries / ours, never below this
 ATTACK_ARMY_EDGE = 1.3             # our army / estimated enemy army (brain.enemy_estimate) needed to attack...
 ESCALATED_ARMY_EDGE = 1.0          # ...lowered after ESCALATE_AFTER_SECONDS
 ESCALATE_AFTER_SECONDS = 420.0
@@ -194,7 +195,7 @@ ENEMY_CLUSTER_CELLS = 10           # enemy buildings this close together are one
 RETREAT_ARMY_EDGE = 0.8            # retreat below this edge while attacking...
 TRADE_WINDOW_SECONDS = 30.0        # ...or when, since the attack began (at most this far back),
 TRADE_LOSS_MIN = 1000              # we lost at least this,
-TRADE_LOSS_ARMY_SHARE = 0.15       # and this share of the attacking army,
+TRADE_LOSS_ARMY_SHARE = 0.25       # and this share of the army (the bigger of at the start and now),
 TRADE_LOSS_RATIO = 1.3             # and more than this times what we killed (08560d9b bled out at 1.33),
 MIN_ENGAGEMENT_SECONDS = 15.0      # after at least this long in the fight
 REGROUPED_SHARE = 0.7              # retreat ends when this share is back...

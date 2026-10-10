@@ -101,7 +101,10 @@ class Commander:
         since = [row for row in self._trades if row[0] >= self.mode_since] or self._trades[-1:]
         _, kills0, deaths0 = since[0]
         lost, killed = view.deaths_cost - deaths0, view.kills_cost - kills0
-        floor = max(C.TRADE_LOSS_MIN, C.TRADE_LOSS_ARMY_SHARE * self.attack_army)
+        # Scaled by the bigger of the army we attacked with and the one we have
+        # now (0ee93a05 retreated an 8500 army over 1500 lost, its floor set by
+        # the 3900 it started the attack with).
+        floor = max(C.TRADE_LOSS_MIN, C.TRADE_LOSS_ARMY_SHARE * max(self.attack_army, view.army_value))
         return lost >= floor and lost > C.TRADE_LOSS_RATIO * killed
 
     # -- internals ---------------------------------------------------------------

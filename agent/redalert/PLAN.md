@@ -73,7 +73,13 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
   see or remember, the most we saw in the last 3 minutes less our kills
   since, and 0.8 x (our army + our deaths - our kills). Attacks, retreats and
   the advisor's posture all weigh this, never just what is visible (08560d9b).
-- **Retreat** at losses over 1.3x kills (was 2x). The massing army attacks
+- **Committed attacks**: an attack goes on until the retreat rule ends it (no
+  drop back to massing when the estimate dips; 82908a24 flipped 9 times).
+  The fog prior scales by their known refineries / ours (floor 0.5): a
+  one-refinery rusher can't field our army. An aggressive read brings
+  turrets, not a standing hold (0ee93a05 held 13 minutes). Before the war
+  factory, a warning gets one turret; an attack on the base gets the full set.
+- **Retreat** at losses over 1.3x kills and over 25% of the army (the bigger of at the start and now). The massing army attacks
   anything worth more than a small raid within 12 cells of it.
 - **Expansion MCV**: trained only with 8+ fighters and not outgunned;
   cancelled (money back) if outgunned while it trains.

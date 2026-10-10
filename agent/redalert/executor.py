@@ -61,7 +61,8 @@ def plan(
     under_attack = under_attack or getattr(advice, "enemy_style", None) == "aggressive"
     if not rusher or under_attack:   # testrush: the rusher builds turrets only when attacked
         out += buildplan.defense_orders(view, under_attack=under_attack,
-                                        expansion_site=exp_def if expansion is not None else None, home=home)
+                                        expansion_site=exp_def if expansion is not None else None, home=home,
+                                        attacked=mode in (Mode.DEFEND_RUSH, Mode.DEFEND_BASE))
     out += _economy_orders(view, harvest_orders)
     out += _rally_orders(view)
     out += _production_orders(view, mode, rusher=rusher, threat=threat)

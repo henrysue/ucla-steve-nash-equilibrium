@@ -1092,7 +1092,10 @@ def test_the_army_commits_instead_of_flip_flopping():
     agent.choose_action(_state(_t=380.0, buildings=BASE, units=tanks, military=behind), CTX)
     assert agent._mode is Mode.ALL_IN                            # 10 s in: stays committed
     agent.choose_action(_state(_t=400.0, buildings=BASE, units=tanks, military=behind), CTX)
-    assert agent._mode is Mode.BUILD                             # 30 s in: may switch
+    assert agent._mode is Mode.ALL_IN                            # 30 s in: still committed (82908a24 flipped 9x)
+    beaten = {"army_value": 2800, "visible_enemy_value": 4000}   # edge 0.7: the retreat rule ends it
+    agent.choose_action(_state(_t=405.0, buildings=BASE, units=tanks, military=beaten), CTX)
+    assert agent._mode is Mode.RETREAT
 
 
 def test_raids_use_light_vehicles_when_infantry_is_short_and_spare_other_squads():
@@ -1195,10 +1198,10 @@ def test_no_trade_retreat_in_the_first_seconds_of_a_fight():
 
 def test_trade_retreat_scales_with_the_army():
     agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
-    agent._mode_since, agent._commander.attack_army = 700.0, 14000.0    # floor: 15% of 14000 = 2100
+    agent._mode_since, agent._commander.attack_army = 700.0, 14000.0    # floor: 25% of 14000 = 3500
     agent._commander.losing_trades(_view(_t=700.0, military={"kills_cost": 15000, "deaths_cost": 22000}))
-    assert not agent._commander.losing_trades(_view(_t=720.0, military={"kills_cost": 15300, "deaths_cost": 23500}))  # lost 1500
-    assert agent._commander.losing_trades(_view(_t=725.0, military={"kills_cost": 15300, "deaths_cost": 25000}))      # lost 3000
+    assert not agent._commander.losing_trades(_view(_t=720.0, military={"kills_cost": 15300, "deaths_cost": 25000}))  # lost 3000
+    assert agent._commander.losing_trades(_view(_t=725.0, military={"kills_cost": 15300, "deaths_cost": 26000}))      # lost 4000
 
 
 def test_no_new_attack_until_the_army_has_regrown():
@@ -3559,7 +3562,7 @@ def test_the_advisors_read_shapes_posture_expansion_and_mistakes():
                                                  _view(), 100.0)
     a = read_(enemy_style="aggressive", balance="more_army",
               mistakes=[{"kind": "bank_piling", "note": "3000 unspent"}, {"kind": "nonsense", "note": "x"}])
-    assert a.posture == "hold" and a.expand == "wait"                        # defend, units first
+    assert a.posture == "default" and a.expand == "wait"                     # turrets (not a hold), units first
     assert a.mistakes == ({"kind": "bank_piling", "note": "3000 unspent"},)   # unknown kinds dropped
     b = read_(enemy_style="macro", balance="more_economy")
     assert b.posture == "default" and b.expand == "now"
@@ -3650,3 +3653,35 @@ def test_the_outpost_comes_back_at_any_notice_unless_its_expansion_is_attacked()
     assert len(g.unit_ids) == 2                                               # their expansion is attacked: stay
     o = g.orders(v, e)
     assert o and o[0]["cmd"] == "attack_move" and tuple(o[0]["to"]) in {(22, 8), (23, 8)}   # and fight it
+
+
+# -- match 0ee93a05: a 13-minute hold against a crippled rusher -------------------------------------
+
+
+def test_an_aggressive_read_brings_turrets_not_a_standing_hold():
+    a = ra_advisor.parse_advice({**_ANSWER, "posture": "default", "enemy_style": "aggressive"}, _view(), 100.0)
+    assert a.posture == "default" and a.enemy_style == "aggressive"
+
+
+def test_the_fog_prior_scales_with_the_refineries_we_have_seen():
+    ours = BASE + [{"id": 20 + i, "type": "proc"} for i in range(4)]
+    one = [{"id": 90, "type": "proc", "x": 40, "y": 40, "hp": 100}]
+    blind = _view(_t=500.0, buildings=ours, military={"army_value": 6000, "deaths_cost": 1000})
+    assert brain.enemy_estimate(blind) == 0.8 * 7000                          # nothing known: equal income
+    seen = _view(_t=500.0, buildings=ours, visible_enemy_buildings=one, military={"army_value": 6000, "deaths_cost": 1000})
+    assert brain.enemy_estimate(seen) == 0.8 * 7000 * 0.5                     # one refinery to our four: floored at half
+
+
+def test_the_retreat_floor_grows_with_the_army():
+    c = Commander()
+    c.mode, c.mode_since, c.attack_army = Mode.ALL_IN, 900.0, 3900.0
+    c.losing_trades(_view(_t=900.0, military={"army_value": 8500, "kills_cost": 29000, "deaths_cost": 21000}))
+    assert not c.losing_trades(_view(_t=930.0, military={"army_value": 8500, "kills_cost": 30000, "deaths_cost": 22500}))
+
+
+def test_a_scout_alarm_before_the_war_factory_gets_one_turret():
+    blds = [{"id": 10, "type": "fact", "x": 10, "y": 10}, {"id": 11, "type": "tent", "x": 14, "y": 10},
+            {"id": 12, "type": "pbox", "x": 13, "y": 15}]
+    v = _view(base_center=[11, 11], buildings=blds, available_production=["pbox", "e1"], economy={"cash": 3000})
+    assert buildplan.defense_orders(v, under_attack=True, attacked=False) == []      # one is up: the war factory next
+    assert buildplan.defense_orders(v, under_attack=True, attacked=True) != []       # the base is hit: more

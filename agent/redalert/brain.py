@@ -97,6 +97,12 @@ def choose_mode(
     # The model can't override this.
     if prev_mode in AGGRESSIVE and (edge < C.RETREAT_ARMY_EDGE or losing_trades):
         return Mode.RETREAT
+    # Committed: an attack under way goes on until the retreat rule calls it
+    # off — not back to massing when the estimate dips under the attack bar
+    # (match 82908a24 flipped attack/build nine times, every 25 s: the army
+    # marched out and back). A model "hold" doesn't recall it either.
+    if prev_mode in AGGRESSIVE:
+        return Mode.ALL_IN
     if prev_mode is Mode.RETREAT and not can_attack:
         return Mode.BUILD if _regrouped(view, scout_id, squad_ids) else Mode.RETREAT
 
@@ -140,8 +146,21 @@ def enemy_estimate(view: View) -> float:
     army adjusted by the trades (their losses are our kills). Match 08560d9b
     attacked with 3900 "against 1400"; they had 5000-6000, and showed 4000
     fifteen seconds before."""
-    prior = C.ENEMY_PRIOR_SHARE * (view.army_value + view.deaths_cost - view.kills_cost)
+    prior = C.ENEMY_PRIOR_SHARE * (view.army_value + view.deaths_cost - view.kills_cost) * _economy_ratio(view)
     return max(view.enemy_army_value, view.enemy_army_peak, prior, 0.0)
+
+
+def _economy_ratio(view: View) -> float:
+    """Their known refineries over ours (capped at 1, floored at
+    ``ENEMY_ECONOMY_FLOOR``): a rusher on one refinery can't field an army
+    the size of ours (match 0ee93a05 held 13 minutes against one on 1-3
+    harvesters, its estimate assuming equal income). 1 with none known."""
+    seen = {b.id: b for b in list(view.known_enemy_buildings) + list(view.enemy_buildings)
+            if b.id is not None and not b.wreck and b.type == C.REFINERY}
+    ours = sum(1 for b in view.buildings if b.type == C.REFINERY and not b.wreck)
+    if not seen or not ours:
+        return 1.0
+    return max(C.ENEMY_ECONOMY_FLOOR, min(1.0, len(seen) / ours))
 
 
 def _army_edge(view: View) -> float:

@@ -89,7 +89,8 @@ squad hunts their harvesters. The first turret faces the road in. Two infantry h
 YOUR READ:
 - enemy_style: what the enemy is playing, from their buildings, army and moves:
   "aggressive": early or repeated pushes, 2+ barracks or an early war factory on one refinery, units \
-  at our base. The engine holds at home, puts up to 3 turrets on the approach, and wins on macro.
+  at our base. The engine puts up to 3 turrets on the approach and wins on macro; once their pushes \
+  are spent and their economy is behind ours, punish them (a rusher on one refinery can't rebuild).
   "macro": many refineries or harvesters, fast expansions, few units, no pressure. The engine sends \
   a bigger raid party round the flank to their harvesters and expansions.
   "standard": a normal build and army: the engine plays its plan. "unknown": not enough seen yet.
@@ -101,8 +102,10 @@ money piles up while units are few (no extra refineries, dome or expansion for n
 over-index: a big bank with a small army and a big army on 4 harvesters are both mistakes.
 - mistakes: up to 3 problems you see, each {"kind", "note"}: "idle_units" (fighters standing \
 around while there is work), "exposed_harvesters" (harvesters hit or mining far from cover), \
-"bank_piling" (money unspent), "stuck_units" (units not moving where sent), "losing_fight" (a \
-fight going badly that the engine has not left), "other". The note: one short sentence with cells \
+"bank_piling" (bank over 2000 for a minute: a few hundred is just the next purchase), \
+"stuck_units" (units not moving where sent), "losing_fight" (a fight going badly that the engine \
+has not left; a retreat in progress is the engine leaving it), "other". The units in \
+situation.scouts are pickets and scouts posted far from the army on purpose: not idle. The note: one short sentence with cells \
 or ids. Empty when all is well.
 
 YOUR CALLS (null or "default"/"auto" = the engine decides; each works inside the plan's limits):
@@ -197,8 +200,6 @@ def parse_advice(answer: Any, view: View, made_at: float) -> Advice | None:
         for m in (answer.get("mistakes") or [])[:3]
         if isinstance(m, dict) and m.get("kind") in MISTAKES)
     posture = answer.get("posture") if answer.get("posture") in ("attack", "hold", "default") else "default"
-    if posture == "default" and style == "aggressive":
-        posture = "hold"                   # an aggressive enemy: defend and win on macro
     expand = answer.get("expand") if answer.get("expand") in ("now", "wait") else "auto"
     if expand == "auto":
         expand = {"more_economy": "now", "more_army": "wait"}.get(balance, "auto")

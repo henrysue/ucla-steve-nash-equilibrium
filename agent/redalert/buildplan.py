@@ -759,7 +759,7 @@ def perimeter_spot(view: View, base: tuple[int, int], toward, item: str = "pbox"
 
 
 def defense_orders(view: View, under_attack: bool, expansion_site: tuple[int, int] | None = None,
-                   home: tuple[int, int] | None = None) -> list[dict]:
+                   home: tuple[int, int] | None = None, attacked: bool = True) -> list[dict]:
     """Zero or one ``build`` for a base defense (its own Defense queue, so it
     never holds up the Building queue).
 
@@ -792,6 +792,10 @@ def defense_orders(view: View, under_attack: bool, expansion_site: tuple[int, in
     have = sum(1 for b in view.buildings if b.type in C.DEFENSES and b.cell is not None
                and not b.wreck and dist2(b.cell, base) <= r2)
     cap = C.MAX_DEFENSES if under_attack else (C.STANDING_DEFENSES if view.has_building(C.WAR_FACTORY) else 0)
+    if under_attack and not attacked and not view.has_building(C.WAR_FACTORY):
+        # A warning, not an attack: one turret, then the war factory
+        # (0ee93a05 put three pillboxes ahead of it; it came at 3:16, not 2:40).
+        cap = min(cap, 1)
     if home is not None:
         cap = max(cap, C.ACTIVE_BASE_DEFENSES)
     if have >= 1 and view.cash + view.ore < C.DEFENSE_ADD_FUNDS:
