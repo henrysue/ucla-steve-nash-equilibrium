@@ -45,5 +45,6 @@ class EnemyIntel:
         return "rush" if self._rush else "economy" if self._economy else None
 
     def rushing(self, view: View) -> bool:
-        """An early rush read, still in the early window."""
-        return self._rush and view.game_seconds < C.EARLY_PUSH_WINDOW_SECONDS
+        """An early rush read, until ``RUSH_HOLD_SECONDS``: a rush arrives by
+        then or it wasn't one (it used to hold the army home until 6:00)."""
+        return self._rush and view.game_seconds < C.RUSH_HOLD_SECONDS

@@ -185,8 +185,8 @@ def test_all_in_with_a_clear_edge():
 
 
 def test_anti_passivity_escalates_late():
-    early = _view(buildings=BASE, _t=120.0, military={"army_value": 2200, "visible_enemy_value": 2000})
-    late = _view(buildings=BASE, _t=500.0, military={"army_value": 2200, "visible_enemy_value": 2000})
+    early = _view(buildings=BASE, _t=120.0, military={"army_value": 3300, "visible_enemy_value": 3000})
+    late = _view(buildings=BASE, _t=500.0, military={"army_value": 3300, "visible_enemy_value": 3000})
     assert brain.choose_mode(early, cheese_since=None) is Mode.BUILD
     assert brain.choose_mode(late, cheese_since=None) is Mode.ALL_IN
 
@@ -278,7 +278,7 @@ def test_live_shape_prices_the_army_from_unit_costs():
 
 @pytest.mark.usefixtures("visible_only")
 def test_live_shape_army_attacks_once_it_is_real():
-    units = [{"id": i, "type": "1tnk", "x": 5, "y": 5, "hp": 100} for i in range(30, 33)]
+    units = [{"id": i, "type": "1tnk", "x": 5, "y": 5, "hp": 100} for i in range(30, 35)]
     agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
     agent.choose_action(GameState.from_mcp_state(_live_raw(_t=196.0, buildings=BASE, units=units)),
                         DecisionContext(session_id="s", tournament_id=None, game_type="red_alert", agent_id="me",
@@ -288,7 +288,7 @@ def test_live_shape_army_attacks_once_it_is_real():
                           seat_position=0, game_config=LIVE_CONFIG)
     dec = agent.choose_action(state, ctx)
     assert agent._mode is Mode.ALL_IN
-    assert {"cmd": "attack_move", "units": [30, 31, 32], "to": [40, 40]} in dec.action["orders"]
+    assert {"cmd": "attack_move", "units": [30, 31, 32, 33, 34], "to": [40, 40]} in dec.action["orders"]
 
 
 def test_a_token_force_does_not_all_in_into_the_fog():
@@ -580,12 +580,12 @@ def test_retreat_attack_moves_back_to_the_staging_point():
 def test_the_agent_retreats_after_its_attack_goes_bad():
     units = [{"id": 30 + i, "type": "1tnk", "x": 38, "y": 38, "hp": 100} for i in range(3)]
     agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
-    agent.choose_action(_state(_t=396.0, buildings=BASE, units=units, military={"army_value": 2100}), CTX)
-    agent.choose_action(_state(_t=400.0, buildings=BASE, units=units, military={"army_value": 2100}), CTX)
+    agent.choose_action(_state(_t=396.0, buildings=BASE, units=units, military={"army_value": 3100}), CTX)
+    agent.choose_action(_state(_t=400.0, buildings=BASE, units=units, military={"army_value": 3100}), CTX)
     assert agent._mode is Mode.ALL_IN                                       # confirmed 4 s later
     enemies = [{"id": 70 + i, "type": "1tnk", "x": 39, "y": 39, "hp": 100} for i in range(5)]
     dec = agent.choose_action(_state(_t=400.0, buildings=BASE, units=units, visible_enemies=enemies,
-                                     military={"army_value": 2100, "visible_enemy_value": 3500}), CTX)
+                                     military={"army_value": 3100, "visible_enemy_value": 5000}), CTX)
     assert agent._mode is Mode.RETREAT
     # they fight back on the way out, to the massing point in front of the base
     assert {"cmd": "attack_move", "units": [30, 31, 32], "to": [11, 11]} in dec.action["orders"]
@@ -660,18 +660,18 @@ def test_an_opening_attack_is_still_a_rush():
 
 
 def test_the_threat_window_runs_from_the_last_sighting():
-    near = [{"id": 50 + i, "type": "3tnk", "x": 7, "y": 7, "hp": 100} for i in range(6)]   # a real threat
+    near = [{"id": 50 + i, "type": "3tnk", "x": 7, "y": 7, "hp": 100} for i in range(8)]   # a real threat
     assert brain.update_cheese_since(_view(_t=300.0, visible_enemies=near), 100.0) == 300.0
-    assert brain.update_cheese_since(_view(_t=305.0), 300.0) == 300.0  # one clear view doesn't end it
-    assert brain.update_cheese_since(_view(_t=311.0), 300.0) is None   # 10 s clear: back out (mid-game)
+    assert brain.update_cheese_since(_view(_t=311.0), 300.0) == 300.0  # 11 s clear doesn't end it (no bouncing)
+    assert brain.update_cheese_since(_view(_t=321.0), 300.0) is None   # 20 s clear: back out (mid-game)
 
 
 def test_a_small_raid_mid_game_does_not_recall_the_army():
     two = [{"id": 50, "type": "e1", "x": 7, "y": 7, "hp": 100}, {"id": 51, "type": "e1", "x": 8, "y": 8, "hp": 100}]
     assert scout.detect_cheese(_view(_t=300.0, visible_enemies=two)) is None            # home units handle it
     assert scout.detect_cheese(_view(_t=100.0, visible_enemies=[{"id": 50 + i, "type": "e1", "x": 7, "y": 7, "hp": 100} for i in range(6)])) is not None   # early: a rush
-    six = [{"id": 50 + i, "type": "3tnk", "x": 7, "y": 7, "hp": 100} for i in range(6)]
-    assert scout.detect_cheese(_view(_t=300.0, visible_enemies=six)) is not None        # a real attack
+    six = [{"id": 50 + i, "type": "3tnk", "x": 7, "y": 7, "hp": 100} for i in range(8)]
+    assert scout.detect_cheese(_view(_t=300.0, visible_enemies=six)) is not None        # a real attack (2400)
     guards = [{"id": 30 + i, "type": "3tnk", "x": 6, "y": 6, "hp": 100} for i in range(8)]
     assert scout.detect_cheese(_view(_t=300.0, visible_enemies=six, units=guards)) is None   # home holds it
 
@@ -931,8 +931,11 @@ _ANSWER = {"posture": "hold", "attack_route": "auto", "expand": "auto", "army_ta
 
 
 def _settled(adv, view):
-    adv.poll(view, {})
-    adv._future.result()
+    """Two answers (its posture and read take effect once two agree)."""
+    for _ in range(2):
+        adv.poll(view, {})
+        if adv._future is not None:
+            adv._future.result()
     return adv.poll(view, {})
 
 
@@ -1085,15 +1088,15 @@ def test_model_hold_cannot_stop_an_overwhelming_attack():
 def test_the_army_commits_instead_of_flip_flopping():
     tanks = [{"id": 30 + i, "type": "1tnk", "x": 22, "y": 22, "hp": 100} for i in range(4)]
     agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
-    agent.choose_action(_state(_t=366.0, buildings=BASE, units=tanks, military={"army_value": 2800}), CTX)
-    agent.choose_action(_state(_t=370.0, buildings=BASE, units=tanks, military={"army_value": 2800}), CTX)
+    agent.choose_action(_state(_t=366.0, buildings=BASE, units=tanks, military={"army_value": 3500}), CTX)
+    agent.choose_action(_state(_t=370.0, buildings=BASE, units=tanks, military={"army_value": 3500}), CTX)
     assert agent._mode is Mode.ALL_IN
-    behind = {"army_value": 2800, "visible_enemy_value": 2500}   # edge 1.12: the policy would say BUILD
+    behind = {"army_value": 3500, "visible_enemy_value": 3100}   # edge 1.13: the policy would say BUILD
     agent.choose_action(_state(_t=380.0, buildings=BASE, units=tanks, military=behind), CTX)
     assert agent._mode is Mode.ALL_IN                            # 10 s in: stays committed
     agent.choose_action(_state(_t=400.0, buildings=BASE, units=tanks, military=behind), CTX)
     assert agent._mode is Mode.ALL_IN                            # 30 s in: still committed (82908a24 flipped 9x)
-    beaten = {"army_value": 2800, "visible_enemy_value": 4000}   # edge 0.7: the retreat rule ends it
+    beaten = {"army_value": 3500, "visible_enemy_value": 5000}   # edge 0.7: the retreat rule ends it
     agent.choose_action(_state(_t=405.0, buildings=BASE, units=tanks, military=beaten), CTX)
     assert agent._mode is Mode.RETREAT
 
@@ -2328,10 +2331,10 @@ def test_no_flanking_before_ten_minutes_unless_decisively_ahead():
 
 
 def test_an_early_push_is_spotted_and_we_hold_at_home():
-    seen = [{"id": 50 + i, "type": "e1", "x": 36, "y": 36, "hp": 100} for i in range(14)]
+    seen = [{"id": 50 + i, "type": "e1", "x": 36, "y": 36, "hp": 100} for i in range(16)]
     v = read(_live_raw(_t=150.0, buildings=BASE, visible_enemies=seen,
                        units=[{"id": 30 + i, "type": "e1", "x": 15, "y": 15, "hp": 100} for i in range(10)]), LIVE_CONFIG)
-    assert scout.early_push_warning(v)                                      # 1400 seen vs 1000 ours
+    assert scout.early_push_warning(v)                                      # 1600 seen vs 1000 ours
     assert brain.choose_mode(v, cheese_since=None, prev_mode=Mode.BUILD) is Mode.BUILD
     assert scout.choke_cell(v) == (6, 6)                                    # mass beside the base
     late = dataclasses.replace(v, game_seconds=400.0)
@@ -2339,7 +2342,7 @@ def test_an_early_push_is_spotted_and_we_hold_at_home():
 
 
 def test_an_early_push_unlocks_turrets_and_unit_training():
-    seen = [{"id": 50 + i, "type": "e1", "x": 36, "y": 36, "hp": 100} for i in range(14)]
+    seen = [{"id": 50 + i, "type": "e1", "x": 36, "y": 36, "hp": 100} for i in range(16)]
     yard = [{"id": 10, "type": "fact", "x": 4, "y": 4}, {"id": 11, "type": "tent", "x": 8, "y": 4},
             {"id": 12, "type": "weap", "x": 4, "y": 8}, {"id": 13, "type": "pbox", "x": 9, "y": 9}]
     v = read(_live_raw(_t=200.0, buildings=yard, visible_enemies=seen, available_production=["pbox", "e1"],
@@ -2597,13 +2600,13 @@ def test_a_big_hunting_army_sweeps_several_points_at_once():
 
 @pytest.mark.usefixtures("visible_only")
 def test_no_all_in_before_the_economy_is_up_even_against_a_small_seen_army():
-    v = _view(_t=65.0, buildings=BASE, military={"army_value": 2300, "visible_enemy_value": 500})   # 1:05, "4.6x"
+    v = _view(_t=65.0, buildings=BASE, military={"army_value": 3300, "visible_enemy_value": 500})   # 1:05, "6.6x"
     assert brain.choose_mode(v, cheese_since=None) is Mode.BUILD
     assert brain.choose_mode(v, cheese_since=None, model_pref=Mode.ALL_IN) is Mode.BUILD
     with_factory = _view(_t=65.0, buildings=BASE + [{"id": 12, "type": "weap", "x": 4, "y": 8}],
-                         military={"army_value": 2300, "visible_enemy_value": 500})
+                         military={"army_value": 3300, "visible_enemy_value": 500})
     assert brain.choose_mode(with_factory, cheese_since=None) is Mode.ALL_IN
-    later = _view(_t=200.0, buildings=BASE, military={"army_value": 2300, "visible_enemy_value": 500})
+    later = _view(_t=200.0, buildings=BASE, military={"army_value": 3300, "visible_enemy_value": 500})
     assert brain.choose_mode(later, cheese_since=None) is Mode.ALL_IN
 
 
@@ -3063,7 +3066,7 @@ def test_a_distracted_enemy_army_opens_the_centre_for_our_main_army():
     ours = [{"id": 40 + i, "type": "3tnk", "x": 10, "y": 10, "hp": 100} for i in range(8)]
     theirs = [{"id": 80 + i, "type": "3tnk", "x": 30, "y": 30, "hp": 100} for i in range(6)]
     v = _view(_t=400.0, buildings=BASE + [{"id": 12, "type": "weap", "x": 4, "y": 8}], units=ours,
-              visible_enemies=theirs, military={"army_value": 2400, "visible_enemy_value": 2000})
+              visible_enemies=theirs, military={"army_value": 3600, "visible_enemy_value": 3000})
     assert brain.choose_mode(v, cheese_since=None, prev_mode=Mode.BUILD) is Mode.BUILD        # edge 1.2: hold
     assert brain.choose_mode(v, cheese_since=None, prev_mode=Mode.BUILD, distraction=True) is Mode.ALL_IN
     weaker = dataclasses.replace(v, units=v.units[:4])
@@ -3137,10 +3140,14 @@ def test_mid_game_pickets_and_a_regular_base_check():
 
 def test_a_scout_killed_out_front_raises_the_alarm():
     corps = ScoutCorps()
-    corps.roles = {"left": 30}
-    corps.update(_view(_t=100.0, units=[{"id": 30, "type": "e1", "x": 30, "y": 30, "hp": 100}]))
+    corps.roles = {"left": 30, "right": 31}
+    scouts = [{"id": 30, "type": "e1", "x": 30, "y": 30, "hp": 100}, {"id": 31, "type": "e1", "x": 32, "y": 28, "hp": 100}]
+    corps.update(_view(_t=100.0, units=scouts))
+    corps.update(_view(_t=103.0, units=scouts[1:]))
+    assert not corps.alarm(_view(_t=104.0))                                 # one dead scout is just a dead scout
+    corps.roles["right"] = 31
     corps.update(_view(_t=105.0))
-    assert corps.alarm(_view(_t=110.0)) and not corps.alarm(_view(_t=140.0))
+    assert corps.alarm(_view(_t=110.0)) and not corps.alarm(_view(_t=170.0))
 
 
 def test_a_kennel_follows_the_war_factory_when_dogs_exist():
@@ -3220,13 +3227,13 @@ def test_the_mcv_escort_beats_the_attack_look_ahead_for_the_massing_point():
 def test_a_confirmation_made_during_the_anti_flip_window_starts_the_attack_when_it_ends():
     tanks = [{"id": 30 + i, "type": "3tnk", "x": 10, "y": 10, "hp": 100} for i in range(6)]
     agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
-    agent._mode, agent._mode_since = Mode.BUILD, 400.0                      # just changed: window until 425
+    agent._mode, agent._mode_since = Mode.BUILD, 400.0                      # just changed: window until 440
     strong = {"army_value": 5000, "visible_enemy_value": 1000}
-    for t in (405.0, 410.0, 420.0):
+    for t in (405.0, 410.0, 435.0):
         agent.choose_action(_state(_t=t, buildings=BASE, units=tanks, military=strong), CTX)
         assert agent._mode is Mode.BUILD
     assert agent._confirm_at == 405.0                                       # confirmed, held by the window
-    agent.choose_action(_state(_t=426.0, buildings=BASE, units=tanks, military=strong), CTX)
+    agent.choose_action(_state(_t=441.0, buildings=BASE, units=tanks, military=strong), CTX)
     assert agent._mode is Mode.ALL_IN                                       # at once, no second look
 
 
@@ -3685,3 +3692,31 @@ def test_a_scout_alarm_before_the_war_factory_gets_one_turret():
     v = _view(base_center=[11, 11], buildings=blds, available_production=["pbox", "e1"], economy={"cash": 3000})
     assert buildplan.defense_orders(v, under_attack=True, attacked=False) == []      # one is up: the war factory next
     assert buildplan.defense_orders(v, under_attack=True, attacked=True) != []       # the base is hit: more
+
+
+# -- steadier: a real army before the push, two agreeing advisor answers ---------------------------
+
+
+@pytest.mark.usefixtures("visible_only")
+def test_no_push_until_a_real_army_is_built():
+    small = _view(_t=500.0, buildings=BASE, military={"army_value": 2400, "visible_enemy_value": 500})
+    assert brain.choose_mode(small, cheese_since=None) is Mode.BUILD                 # 4.8x, but 2400: keep building
+    built = _view(_t=500.0, buildings=BASE, military={"army_value": 3200, "visible_enemy_value": 500})
+    assert brain.choose_mode(built, cheese_since=None) is Mode.ALL_IN
+
+
+def test_one_odd_advisor_answer_does_not_swing_the_plan():
+    answers = iter([{**_ANSWER, "posture": "attack"}, {**_ANSWER, "posture": "hold"},
+                    {**_ANSWER, "posture": "hold"}])
+
+    class Seq:
+        def complete_structured(self, *a, **k):
+            return next(answers)
+
+    adv = ra_advisor.Advisor(Seq(), log=lambda *_: None, clock=lambda: 0.0, interval=0.0)
+    seen = []
+    for _ in range(3):
+        adv.poll(_view(_t=100.0), {})
+        adv._future.result()
+        seen.append(adv.poll(_view(_t=100.0), {}).posture)
+    assert seen == ["default", "default", "hold"]                                     # adopted once two agree

@@ -84,7 +84,9 @@ def choose_mode(
     regrow_expired = retreated_at is not None and view.game_seconds - retreated_at >= C.RETREAT_REGROW_MAX_SECONDS
     regrown = (behind_late or regrow_expired or retreat_army is None
                or view.army_value >= C.REATTACK_ARMY_GROWTH * retreat_army)
-    can_attack = edge >= threshold and _has_real_army(view) and not cooling_down and regrown
+    # A solid plan: build a real army first (PUSH_ARMY_VALUE), then push.
+    built = view.army_value >= C.PUSH_ARMY_VALUE or behind_late
+    can_attack = edge >= threshold and _has_real_army(view) and built and not cooling_down and regrown
     # Into turrets only with the right army: a big infantry mass (kills them
     # fast) or tanks/artillery. (Match 654f1b2e: three attacks with a mixed
     # army into three flame towers, three losing trades and retreats.) An
@@ -116,7 +118,7 @@ def choose_mode(
         can_attack = False
     # Their army is busy with our raid squad and our units outweigh theirs
     # (units only, no buildings): the main army goes down the centre now.
-    if (distraction and not can_attack and not early and _has_real_army(view) and not cooling_down
+    if (distraction and not can_attack and not early and _has_real_army(view) and built and not cooling_down
             and our_unit_value(view) > enemy_unit_value(view) and (behind_late or can_break_defenses(view))):
         can_attack = True
     policy_choice = Mode.ALL_IN if can_attack else Mode.BUILD

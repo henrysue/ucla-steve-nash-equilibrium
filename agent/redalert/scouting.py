@@ -50,13 +50,15 @@ class ScoutCorps:
         return next(iter(self.roles.values()), None)
 
     def alarm(self, view: View) -> bool:
-        """A scout killed past the middle early, within ``SCOUT_ALARM_SECONDS``:
-        something is out there — an early-push alarm."""
+        """``SCOUT_ALARM_LOSSES`` scouts killed past the middle early, within
+        ``SCOUT_ALARM_SECONDS``: something is out there — an early-push alarm.
+        One dead scout is just a dead scout (it held the army home for 30 s)."""
         base, enemy = view.base_center, enemy_spawn_guess(view)
         if base is None or enemy is None or view.game_seconds >= C.EARLY_PUSH_WINDOW_SECONDS:
             return False
-        return any(view.game_seconds - t <= C.SCOUT_ALARM_SECONDS and dist2(c, enemy) < dist2(c, base)
-                   for t, c, _ in self._lost)
+        recent = [c for t, c, _ in self._lost
+                  if view.game_seconds - t <= C.SCOUT_ALARM_SECONDS and dist2(c, enemy) < dist2(c, base)]
+        return len(recent) >= C.SCOUT_ALARM_LOSSES
 
     # -- each view -----------------------------------------------------------------
 

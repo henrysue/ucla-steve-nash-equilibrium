@@ -54,6 +54,7 @@ import os
 import time
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
+import dataclasses
 from dataclasses import dataclass
 from typing import Any
 
@@ -129,6 +130,7 @@ Use only cells inside map.bounds and ids you are shown. Be decisive and brief.\
 """
 
 _CELL = {"type": ["array", "null"], "items": {"type": "integer"}}
+STEADY_FIELDS = ("posture", "enemy_style", "balance", "expand", "attack_route")
 STYLES = ("aggressive", "macro", "standard", "unknown")
 BALANCES = ("more_army", "more_economy", "balanced")
 MISTAKES = ("idle_units", "exposed_harvesters", "bank_piling", "stuck_units", "losing_fight", "other")
@@ -285,6 +287,8 @@ class Advisor:
         self._last_call = float("-inf")
         self._backoff_until = 0.0
         self._errors_in_row = 0
+        self._last_raw: dict = {}
+        self._steady_values: dict = {k: getattr(Advice(made_at=0.0), k) for k in STEADY_FIELDS}
         self._advice: Advice | None = None
         self.calls = 0
 
@@ -321,6 +325,17 @@ class Advisor:
             timeout=C.ADVISOR_TIMEOUT_SECONDS, effort="none",
         )
 
+    def _steady(self, advice: "Advice") -> "Advice":
+        """Its posture, read, balance, expand and route take effect only when
+        two answers in a row agree (about 12 s): one odd answer doesn't swing
+        the plan. Targets and notes pass straight through."""
+        raw = {k: getattr(advice, k) for k in STEADY_FIELDS}
+        for k, v in raw.items():
+            if self._last_raw.get(k) == v:
+                self._steady_values[k] = v
+        self._last_raw = raw
+        return dataclasses.replace(advice, **self._steady_values)
+
     def _collect(self, view: View, now: float) -> None:
         future, self._future = self._future, None
         try:
@@ -335,6 +350,7 @@ class Advisor:
         advice = parse_advice(answer, view, self._asked_game_seconds)
         if advice is None:
             return
+        advice = self._steady(advice)
         self._advice = advice
         if self._on_advice is not None:
             self._on_advice(advice, now - self._asked_at)

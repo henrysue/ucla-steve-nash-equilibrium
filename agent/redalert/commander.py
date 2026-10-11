@@ -73,8 +73,8 @@ class Commander:
         )
         if forced is not None:                     # testrush (TEST ONLY)
             mode = forced
-        if escorting and mode is Mode.ALL_IN and not brain.must_attack(view) and not hunting:
-            mode = Mode.BUILD                      # defend the haul
+        if escorting and mode is Mode.ALL_IN and prev is not Mode.ALL_IN and not brain.must_attack(view) and not hunting:
+            mode = Mode.BUILD                      # defend the haul: no new attack (one under way goes on)
         mode = self._confirm(view, prev, mode, skip=rushing or hunting or brain._catching_up(view))
         if ({prev, mode} == {Mode.BUILD, Mode.ALL_IN}
                 and view.game_seconds - self.mode_since < C.MODE_MIN_DWELL_SECONDS):
