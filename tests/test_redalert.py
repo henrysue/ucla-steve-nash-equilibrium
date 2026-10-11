@@ -1543,15 +1543,39 @@ def test_a_second_expansion_waits_unless_the_ore_runs_out():
     assert e.state == "scouting"                                             # harvesters idle 35 s: expand now
 
 
-def test_a_refused_deploy_tries_spots_around_the_site_not_toward_home():
+def test_a_refused_deploy_moves_to_the_nearest_valid_spot_at_once():
     e = Expansion()
     e.state, e.site, e.mcv_id = "moving", (20, 8), 70
-    e._spots = [(23, 8), (17, 8)]
     there = [{"id": 70, "type": "mcv", "x": 20, "y": 8, "hp": 100}]
-    for t in (300.0, 304.0):
-        e.orders(_exp_view(t=t, units=there))
-    o = e.orders(_exp_view(t=308.0, units=there))
-    assert o == [{"cmd": "move", "units": [70], "to": [23, 8]}]
+    assert e.orders(_exp_view(t=300.0, units=there)) == [{"cmd": "deploy", "units": [70]}]   # where it stands
+    assert e.orders(_exp_view(t=301.0, units=there)) == []                    # a beat to unfold
+    (o,) = e.orders(_exp_view(t=304.0, units=there))                          # still an MCV: refused
+    assert o["cmd"] == "move" and tuple(o["to"]) != (20, 8)
+    assert (o["to"][0] - 20) ** 2 + (o["to"][1] - 8) ** 2 <= 2                # the next cell over, not 3 out
+    moved = [{"id": 70, "type": "mcv", "x": o["to"][0], "y": o["to"][1], "hp": 100}]
+    assert e.orders(_exp_view(t=306.0, units=moved)) == [{"cmd": "deploy", "units": [70]}]   # and again
+    assert (20, 8) in e._bad_spots
+
+
+def test_no_deploy_onto_a_unit_or_beside_the_ore_when_a_clear_spot_is_near():
+    from agent.redalert.expand import deploy_ok, nearest_deploy_spot
+    v = _exp_view(t=300.0, units=[{"id": 70, "type": "mcv", "x": 20, "y": 8, "hp": 100},
+                                   {"id": 71, "type": "e1", "x": 20, "y": 9, "hp": 100}])
+    assert not deploy_ok((20, 8), v, 70)                                      # a rifleman in the yard's way
+    assert deploy_ok((20, 8), _exp_view(t=300.0, units=[{"id": 70, "type": "mcv", "x": 20, "y": 8, "hp": 100}]), 70)
+    ore = dataclasses.replace(_exp_view(t=300.0), ore_cells=tuple((22 + i, 6 + j) for i in range(3) for j in range(4)))
+    spot = nearest_deploy_spot((20, 8), ore)
+    assert spot is not None and all(abs(spot[0] + i - ox) > 1 or abs(spot[1] + j - oy) > 1
+                                    for i in (-1, 0, 1) for j in (-1, 0, 1, 2) for ox, oy in ore.ore_cells)
+
+
+def test_an_expansion_refinery_keeps_clear_of_the_ore_and_retries_there_at_once():
+    e = _deployed_expansion()
+    d = e.done[0]
+    d["asked_at"] = 330.0
+    assert e.refinery_misplaced((d["ore"][0] - 2, d["ore"][1]))
+    assert d["asked_at"] is None                                              # asked for again now
+    assert not e.refinery_misplaced((90, 90))                                 # not one of ours
 
 
 def test_each_expansion_gets_a_turret_on_its_enemy_side():
@@ -1642,9 +1666,10 @@ def test_a_slow_mcv_deploys_where_it_stands_then_gives_up():
     e.state, e.site, e.mcv_id, e._since = "moving", (40, 8), 70, 300.0
     stuck = [{"id": 70, "type": "mcv", "x": 25, "y": 9, "hp": 100}]
     e.update(_exp_view(t=395.0, units=stuck), Mode.BUILD)
-    assert e.state == "moving" and e.site == (25, 9)                         # 95 s: deploy here instead
-    assert e.orders(_exp_view(t=396.0, units=stuck)) == [{"cmd": "deploy", "units": [70]}]
-    e.update(_exp_view(t=425.0, units=stuck), Mode.BUILD)
+    assert e.state == "moving" and (e.site[0] - 25) ** 2 + (e.site[1] - 9) ** 2 <= 2   # 95 s: the nearest valid spot
+    here = [{"id": 70, "type": "mcv", "x": e.site[0], "y": e.site[1], "hp": 100}]
+    assert e.orders(_exp_view(t=396.0, units=here)) == [{"cmd": "deploy", "units": [70]}]
+    e.update(_exp_view(t=425.0, units=here), Mode.BUILD)
     assert e.state == "idle" and not e.escorting                             # 125 s: abandoned, army free
 
 
@@ -4367,3 +4392,13 @@ def test_behind_on_army_the_bank_goes_into_units():
     assert buildplan.build_reserve(even) >= 3000                               # even: the economy keeps its money
     assert buildplan.build_reserve(even, units_first=True) < 500               # the advisor's "more_army" too
     assert not brain.behind_on_army(_banked(120.0, enemy=10000))               # the opening: its own plan
+
+
+@pytest.mark.usefixtures("visible_only")
+def test_behind_on_army_no_new_refinery_or_mcv_unless_home_runs_dry():
+    behind = _banked(420.0, enemy=10000)
+    ore = tuple((16 + i, 16 + j) for i in range(8) for j in range(6))
+    v = dataclasses.replace(behind, ore_cells=ore, production=())
+    assert not any(o.get("item") == "proc" for o in buildplan.next_build_orders(v))
+    e = Expansion()
+    assert not e._gates(v, Mode.BUILD, None)                                 # no MCV while 2x behind

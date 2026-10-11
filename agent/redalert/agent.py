@@ -567,6 +567,10 @@ class RedAlertAgent:
                     # expansion refinery spot three times): ask elsewhere for a while.
                     for c in buildplan._cells(item, tuple(p["asked"])):
                         self._failed_cells[c] = view.game_seconds
+                    if item == C.REFINERY:
+                        # An expansion's refinery came up elsewhere: the next
+                        # one at once, at the nearest valid spot there.
+                        self._expansion.refinery_misplaced(p["asked"])
                 del self._placing[item]
             elif view.game_seconds - p["t"] > 15.0:
                 del self._placing[item]

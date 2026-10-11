@@ -35,7 +35,7 @@ from __future__ import annotations
 
 from . import config as C
 from . import orders
-from .brain import our_unit_value, outgunned
+from .brain import behind_on_army, our_unit_value, outgunned
 from .modes import DEFENSIVE, Mode
 from .observe import View, dist2, enemy_spawn_guess
 
@@ -54,9 +54,9 @@ class Expansion:
         self._seen_at: float | None = None
         self._cooldown_until = 0.0
         self._failures = 0
-        self._last_deploy = float("-inf")
-        self._deploy_tries = 0
-        self._spots: list[tuple[int, int]] = []     # other deploy spots around the site
+        self._deploy_at: float | None = None        # when the last deploy was sent...
+        self._deploy_cell: tuple[int, int] | None = None   # ...from this cell
+        self._bad_spots: set = set()                # cells a deploy was refused at
         self._idle_since: float | None = None       # harvesters idling: the ore is running out
         self._strapped_since: float | None = None   # money under EXPAND_STRAPPED_FUNDS since
         self._even = False                          # trades about even or better (last view)
@@ -183,7 +183,7 @@ class Expansion:
             mcvs = [u for u in view.units_of(C.MCV) if u.id is not None]
             if fresh and mcvs:
                 self.mcv_id = mcvs[0].id
-                self._spots = _spots_around(self.site, view)
+                self._bad_spots = set()
                 self._yards_before = self._yard_ids(view)
                 self._go("moving", t)
             elif fresh and C.MCV in view.available and self._gates(view, mode, advice):
@@ -195,7 +195,7 @@ class Expansion:
             mcvs = [u for u in view.units_of(C.MCV) if u.id is not None]
             if mcvs:
                 self.mcv_id = mcvs[0].id
-                self._spots = _spots_around(self.site, view)
+                self._bad_spots = set()
                 self._yards_before = self._yard_ids(view)
                 self._go("moving", t)
             elif t - self._since > C.EXPAND_TRAIN_TIMEOUT_SECONDS:
@@ -205,11 +205,9 @@ class Expansion:
             mcv = next((u for u in view.units if u.id == self.mcv_id), None)
             if mcv is not None and mcv.cell is not None and t - self._since > C.EXPAND_MOVE_TIMEOUT_SECONDS:
                 if not self._timed_out:
-                    # Taking too long: deploy where it stands (and around it).
+                    # Taking too long: deploy at the nearest valid spot to where it stands.
                     self._timed_out = True
-                    self.site = roomy_spot(mcv.cell, view) or mcv.cell
-                    self._spots = _spots_around(self.site, view)
-                    self._deploy_tries = 0
+                    self.site = nearest_deploy_spot(mcv.cell, view, mcv.id, self._bad_spots) or mcv.cell
                 elif t - self._since > C.EXPAND_MOVE_TIMEOUT_SECONDS + C.EXPAND_GIVE_UP_SECONDS:
                     self._failures += 1
                     return self._abort(t)    # give up: the escort ends, the army is free
@@ -233,8 +231,8 @@ class Expansion:
         if self.state in ("scouting", "training") and C.MCV in view.available and not view.units_of(C.MCV):
             # Checked again when it trains, not just when the expansion began
             # (08560d9b: the gates passed at 2:30, the MCV trained at 4:22 with 3 fighters).
-            if outgunned(view):
-                # Outgunned while preparing: the expansion is called off (MCV
+            if outgunned(view) or (behind_on_army(view) and not getattr(self, "_ore_running_out", False)):
+                # Outgunned (or well behind on army, with ore left at home) while preparing: the expansion is called off (MCV
                 # cancelled, the money back, the cooldown); a new one must pass
                 # every gate again. Kept alive, it queued and cancelled its MCV
                 # each time the balance tipped (b90e492f: 2.5 minutes of it).
@@ -251,27 +249,34 @@ class Expansion:
         mcv = next((u for u in view.units if u.id == self.mcv_id), None)
         if mcv is None or mcv.cell is None:
             return []
+        t = view.game_seconds
         if dist2(mcv.cell, self.site) > C.EXPAND_DEPLOY_RADIUS_CELLS ** 2:
-            stuck = (mcv.idle and view.game_seconds - self._since >= C.EXPAND_STUCK_AFTER_SECONDS
+            stuck = (mcv.idle and t - self._since >= C.EXPAND_STUCK_AFTER_SECONDS
                      and dist2(mcv.cell, self.site) <= C.EXPAND_STUCK_RADIUS_CELLS ** 2)
             if not stuck:
                 return [orders.move([mcv.id], list(self.site))]
-            # Stopped short (the exact cell may be unreachable): unfold at the
-            # nearest roomy spot around where it stands.
-            self.site = roomy_spot(mcv.cell, view) or mcv.cell
-            self._spots = _spots_around(self.site, view)
+            # Stopped short (the exact cell may be unreachable): the nearest
+            # valid spot to where it stands.
+            self.site = nearest_deploy_spot(mcv.cell, view, mcv.id, self._bad_spots) or mcv.cell
             if dist2(mcv.cell, self.site) > C.EXPAND_DEPLOY_RADIUS_CELLS ** 2:
                 return [orders.move([mcv.id], list(self.site))]
-        if view.game_seconds - self._last_deploy < C.EXPAND_DEPLOY_RETRY_SECONDS:
-            return []
-        self._last_deploy = view.game_seconds
-        self._deploy_tries += 1
-        if self._deploy_tries > 2 and self._spots:
-            # No room to unfold here: try the next spot around the site (not a
-            # march toward home — match f9f06e34 walked ~25 cells that way).
-            self.site = self._spots.pop(0)
-            self._deploy_tries = 0
-            return [orders.move([mcv.id], list(self.site))]
+        # At the spot. A deploy was sent and it is still an MCV a beat later:
+        # that cell won't take the yard (ore that spread, a unit on it) — never
+        # again; the nearest valid spot instead, at once (match 52a77fb1 tried
+        # one spot three times, then walked 3 cells at a time for 2 minutes).
+        if self._deploy_at is not None:
+            if t - self._deploy_at < C.EXPAND_DEPLOY_RETRY_SECONDS:
+                return []
+            self._bad_spots.add(self._deploy_cell)
+            self._deploy_at = None
+        if not deploy_ok(mcv.cell, view, mcv.id, self._bad_spots):
+            spot = nearest_deploy_spot(mcv.cell, view, mcv.id, self._bad_spots)
+            if spot is None:
+                return []                    # nothing in reach: the move timeout takes over
+            self.site = spot
+            return [orders.move([mcv.id], list(spot))]
+        # The yard unfolds around the MCV's own cell: deploy where it stands.
+        self._deploy_at, self._deploy_cell = t, mcv.cell
         return [orders.deploy(mcv.id)]
 
     # -- internals ---------------------------------------------------------------
@@ -319,6 +324,18 @@ class Expansion:
         site = self.defense_site(view)
         if site is not None:
             next(d for d in self.done if d["site"] == site)["defense_asked_at"] = view.game_seconds
+
+    def refinery_misplaced(self, asked) -> bool:
+        """The engine moved an expansion's refinery away (asked for beside its
+        ore, it came up elsewhere): ask for the next one at once, not after
+        the retry window — every expansion gets its refinery eventually (the
+        failed spot is skipped: agent._failed_cells)."""
+        r2 = C.EXPAND_REFINERY_RADIUS_CELLS ** 2
+        for d in self.done:
+            if d.get("ore") is not None and dist2(tuple(asked), d["ore"]) <= r2:
+                d["asked_at"] = None
+                return True
+        return False
 
     def _track_refinery_requests(self, view: View) -> None:
         """Note when an expansion's refinery has been put in production."""
@@ -375,6 +392,9 @@ class Expansion:
             and view.has_building(C.WAR_FACTORY)
             and view.army_value >= C.EXPAND_MIN_ARMY_VALUE
             and not outgunned(view)
+            # Well behind on army: units first, unless home is running dry (52a77fb1:
+            # an MCV in production at 2-3x behind).
+            and not (behind_on_army(view) and not getattr(self, "_ore_running_out", False))
             and mode not in DEFENSIVE and mode is not Mode.RETREAT
             and (view.remaining_seconds is None or view.game_seconds <= C.EXPAND_LAST_START_SECONDS)
         )
@@ -455,6 +475,46 @@ def has_room(cell, view: View) -> bool:
     return not _clashes(C.CONSTRUCTION_YARD, (x - 1, y - 1), view)
 
 
+def _yard_cells(cell) -> list[tuple[int, int]]:
+    x, y = cell
+    return [(x + i, y + j) for i in (-1, 0, 1) for j in (-1, 0, 1, 2)]
+
+
+def ore_clear(cells, view: View, margin: int) -> bool:
+    """No starting ore within ``margin`` cells (Chebyshev) of ``cells``: ore
+    spreads from its mines all game, so a spot touching the field at 0:00
+    may be ore by 10:00."""
+    if margin <= 0:
+        return True
+    ore = view.ore_cells
+    if not ore:
+        return True
+    near = {(c[0] + i, c[1] + j) for c in cells for i in range(-margin, margin + 1) for j in range(-margin, margin + 1)}
+    return not near.intersection(ore)
+
+
+def deploy_ok(cell, view: View, mcv_id=None, bad=()) -> bool:
+    """An MCV standing at ``cell`` can unfold there: room (:func:`has_room`),
+    no unit but the MCV on the yard's cells, and not a cell a deploy was
+    refused at."""
+    if cell is None or cell in bad or not has_room(cell, view):
+        return False
+    foot = set(_yard_cells(cell))
+    return not any(u.id != mcv_id and u.cell in foot and not u.wreck
+                   for u in list(view.units) + list(view.enemy_units))
+
+
+def nearest_deploy_spot(cell, view: View, mcv_id=None, bad=()) -> tuple[int, int] | None:
+    """The nearest cell to ``cell`` (within ``EXPAND_ROOM_SEARCH_CELLS``) an
+    MCV can unfold at (:func:`deploy_ok`), one clear of the starting ore when
+    there is one."""
+    r = C.EXPAND_ROOM_SEARCH_CELLS
+    near = sorted(((cell[0] + i, cell[1] + j) for i in range(-r, r + 1) for j in range(-r, r + 1)),
+                  key=lambda c: dist2(c, cell))
+    ok = [c for c in near if deploy_ok(c, view, mcv_id, bad)]
+    return next((c for c in ok if ore_clear(_yard_cells(c), view, 1)), ok[0] if ok else None)
+
+
 def roomy_spot(cell, view: View) -> tuple[int, int] | None:
     """The nearest cell to ``cell`` (within ``EXPAND_ROOM_SEARCH_CELLS``) with
     room to unfold an MCV."""
@@ -462,22 +522,6 @@ def roomy_spot(cell, view: View) -> tuple[int, int] | None:
     near = sorted(((cell[0] + i, cell[1] + j) for i in range(-r, r + 1) for j in range(-r, r + 1)),
                   key=lambda c: dist2(c, cell))
     return next((c for c in near if has_room(c, view)), None)
-
-
-def _spots_around(site, view: View) -> list[tuple[int, int]]:
-    """Other deploy spots in rings around ``site`` with room to unfold,
-    nearest first — those that can walk back to ``site`` (same side of any
-    cliff) before the rest."""
-    from .terrain import walk_distances
-
-    walk = walk_distances(view, [site], 12)
-    out = []
-    for r in (3, 5, 7):
-        for dx, dy in ((r, 0), (-r, 0), (0, r), (0, -r), (r, r), (-r, -r), (r, -r), (-r, r)):
-            spot = (site[0] + dx, site[1] + dy)
-            if spot not in out and has_room(spot, view):
-                out.append(spot)
-    return sorted(out, key=lambda c: c not in walk)
 
 
 _FIELDS_CACHE: dict = {}
@@ -628,7 +672,8 @@ def walkable_site(view: View, ore, base, field=None) -> tuple[int, int] | None:
     spots = [c for c, d in walk.items() if C.EXPAND_SITE_MIN_STEPS <= d <= C.EXPAND_SITE_WALK_STEPS and has_room(c, view)]
     if not spots:
         return None
-    return min(spots, key=lambda c: (walk[c], dist2(c, base)))
+    # One cell clear of the starting ore when possible (it spreads).
+    return min(spots, key=lambda c: (not ore_clear(_yard_cells(c), view, 1), walk[c], dist2(c, base)))
 
 
 def _toward(cell, target, cells: float, view: View) -> tuple[int, int]:

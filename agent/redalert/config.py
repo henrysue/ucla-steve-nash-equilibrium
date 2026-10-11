@@ -365,7 +365,9 @@ EXPAND_MOVE_TIMEOUT_SECONDS = 90.0 # then deploy where it stands...
 EXPAND_GIVE_UP_SECONDS = 30.0      # ...then abandon it
 EXPAND_STUCK_RADIUS_CELLS = 8      # stopped this close after EXPAND_STUCK_AFTER_SECONDS = arrived
 EXPAND_STUCK_AFTER_SECONDS = 10.0
-EXPAND_ROOM_SEARCH_CELLS = 5       # search radius for a 3x3 spot to unfold
+EXPAND_ROOM_SEARCH_CELLS = 8       # search radius for a spot to unfold (nearest first)
+ORE_SPREAD_MARGIN_CELLS = 2        # ore spreads from its mines all game: expansion buildings keep this clear of
+                                   # the starting ore when they can (52a77fb1, ee2ac21b: refineries beside it moved home)
 EXPAND_REFINERY_RADIUS_CELLS = 10  # a refinery this close to the new ore serves it
 EXPAND_REFINERY_RETRY_SECONDS = 90.0
 EXPAND_COOLDOWN_SECONDS = 60.0

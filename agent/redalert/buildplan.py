@@ -117,7 +117,9 @@ def next_build_orders(view: View, expansion_ore: tuple[int, int] | None = None,
 
     # Past the build order, no more refineries while outgunned, or when the
     # advisor reads that our army needs the money (balance "more_army").
-    short = outgunned(view) or units_first
+    # Behind on army too (52a77fb1 kept adding refineries at 2-3x behind).
+    from .brain import behind_on_army
+    short = outgunned(view) or units_first or behind_on_army(view)
 
     # Interrupt 2c: more refineries over time (each comes with a harvester).
     if (not short and money >= C.REFINERY_ADD_FUNDS
@@ -775,10 +777,24 @@ def _beside_ore(view: View, ore, item: str, near=None) -> tuple[int, int] | None
     nw, nh = _footprint(item)
     spots = legal_spots(view, item, near)
 
+    from .expand import ore_clear
+
+    def spread_risk(spot):
+        """At an expansion: 0 with ``ORE_SPREAD_MARGIN_CELLS`` clear of the
+        starting ore, 1 with one clear cell, 2 touching it (ore spreads all
+        game, and a refinery asked for on ore is built at home instead)."""
+        if near is None:
+            return 0
+        solid = _solid(item, spot)
+        for risk, margin in enumerate(range(C.ORE_SPREAD_MARGIN_CELLS, 0, -1)):
+            if ore_clear(solid, view, margin):
+                return risk
+        return C.ORE_SPREAD_MARGIN_CELLS
+
     def score(spot):
         steps = steps_from_rect(walk, _rect(item, spot))
         walkable = steps is not None and steps <= C.REFINERY_ORE_WALK_STEPS
-        return (not walkable, dist2((spot[0] + (nw - 1) / 2, spot[1] + (nh - 1) / 2), ore))
+        return (not walkable, spread_risk(spot), dist2((spot[0] + (nw - 1) / 2, spot[1] + (nh - 1) / 2), ore))
 
     return _pick(view, item, spots, score)
 

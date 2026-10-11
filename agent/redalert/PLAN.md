@@ -167,6 +167,15 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
   "more_army"), past 3:00: no money held for an MCV, refineries, depot or dome —
   only power, barracks, war factories and harvesters keep theirs (52a77fb1
   banked 1200-3800 for 4 minutes at 2-3x behind).
+- **Expansions that always take** (52a77fb1, ee2ac21b): ore spreads from its
+  mines all game and the platform drops a building asked for on ore (or on a
+  unit) next to the main yard. The MCV unfolds where it stands only on a cell
+  with room, no unit in the yard's way and (when one is near) one cell clear of
+  the starting ore; a deploy still refused a beat later marks that cell bad and
+  sends it to the nearest valid cell at once (was: three tries, then 3-7 cells
+  at a time for two minutes). Expansion refineries prefer spots 2 cells clear
+  of the starting ore; one that comes up elsewhere is asked for again at once,
+  its spot skipped. Behind on army: no new refinery or MCV unless home runs dry.
 - **A lost war factory is rebuilt first** (past 3:00), jumping the dome, depot,
   kennel or silo in the queue, its money kept even while defending.
 - **No blind attacks**: past 7:00, an attack call whose estimate is mostly the
