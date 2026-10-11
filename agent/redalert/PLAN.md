@@ -103,6 +103,14 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
 - **The hunt** (c4caa45e: a barracks survived a 100-unit hunt): up to 8
   groups of 6+, every cell where we once knew an enemy building is a search
   point, and a point counts as checked within 5 cells (about sight).
+- **Choke towers** (screenshot potential-towers): from the terrain alone (any
+  map), the narrowest points of the enemy's walking path to each of our yards
+  (11 cells across or less, 4-16 cells out, on their side) are chokes; each
+  base's first tower goes within 5 cells of its choke when a legal spot is
+  there, else on that base's edge facing it; with no choke in range, facing
+  the road in. Sidestep's middle gap is 2-3 wide, Trapped's island passage 6-7.
+- **Attack a weak enemy we have seen**: a scout round of their base in the last
+  45 s showing our army 2x what we saw overrides the "about our size" prior.
 - **Harass and scout further** (f333a770, from the replay: both armies walked
   behind their bases for a minute to escort an MCV to a safe site; neither seat
   found any of the other's 2-3 expansions; raids hit the defended main field):

@@ -68,3 +68,48 @@ def steps_from_rect(dist: dict, rect) -> int | None:
     """Fewest steps from a footprint's edge to the sources of ``dist``."""
     best = [dist[c] for c in ring(rect) if c in dist]
     return min(best) if best else None
+
+
+def walk_path(view: View, start, goal, max_steps: int = 400) -> list[tuple[int, int]]:
+    """The shortest walking path from ``start`` to ``goal`` (both cells), or []."""
+    walk = walk_distances(view, [tuple(goal)], max_steps)
+    if not walk:
+        return []
+    cur = tuple(start)
+    if cur not in walk:
+        cur = min(walk, key=lambda c: (c[0] - start[0]) ** 2 + (c[1] - start[1]) ** 2)
+    path = [cur]
+    while walk[cur] > 0:
+        cur = min(((cur[0] + dx, cur[1] + dy) for dx, dy in _STEPS if (cur[0] + dx, cur[1] + dy) in walk),
+                  key=lambda c: walk[c])
+        path.append(cur)
+    return path
+
+
+def passage_width(view: View, cell, limit: int = 12) -> int:
+    """How narrow the way is at ``cell``: the shortest walkable span through it
+    (horizontal, vertical or diagonal, impassable ground or the map edge at
+    both ends). A gap in a cliff line is narrow across at least one of them;
+    open ground is wide in all four."""
+    best = None
+    for ax, ay in ((1, 0), (0, 1), (1, 1), (1, -1)):
+        width = 1
+        for sign in (1, -1):
+            for k in range(1, limit + 1):
+                c = (cell[0] + sign * ax * k, cell[1] + sign * ay * k)
+                if c in view.blocked_cells:
+                    break
+                if view.bounds is not None:
+                    x, y, w, h = view.bounds
+                    if not (x <= c[0] < x + w and y <= c[1] < y + h):
+                        break
+                width += 1
+        best = width if best is None else min(best, width)
+    return best
+
+
+def chokes(view: View, start, goal) -> list[tuple[tuple[int, int], int]]:
+    """(cell, width) along the walking path from ``start`` to ``goal``: the
+    narrowest points are chokes (:func:`passage_width`)."""
+    path = walk_path(view, start, goal)
+    return [(c, passage_width(view, c)) for c in path[3:-3]]

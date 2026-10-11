@@ -265,9 +265,10 @@ def placement_orders(
                 at = _beside_ore(view, live, item) if live is not None else \
                     _crawl_toward(view, open_ore(view, depleted, radius=None), item)
             elif item in C.DEFENSES and expansion_defense is not None:
-                # The expansion's turret, on its enemy-facing edge.
-                at = perimeter_spot(view, expansion_defense, enemy_spawn_guess(view), item,
-                                    near=expansion_defense, strict=False)
+                # The expansion's turret: watching a choke in range, else on its enemy-facing edge.
+                at = (_watch_spot(view, item, expansion_defense, near=expansion_defense)
+                      or perimeter_spot(view, expansion_defense, scout_watch(view, expansion_defense)
+                                        or enemy_spawn_guess(view), item, near=expansion_defense, strict=False))
             else:
                 at = placement_cell(view, item, defense_at, home)
             seen.add(item)
@@ -352,10 +353,15 @@ def placement_cell(view: View, item: str, defense_at: tuple[int, int] | None = N
 
         threats = [a.cell for a in enemy_threat_near_base(view) if a.cell is not None]
         prefer = min(threats, key=lambda c: dist2(c, base)) if threats else None
-        # Facing the road in; the advisor may pick the side, but only one facing the enemy.
+        # Watching the choke on the enemy's way in when one is in range (any
+        # map: from the terrain), else facing the road in; the advisor may pick
+        # the side, but only one facing the enemy.
         from .scout import approach_cell
 
-        enemy = approach_cell(view) if home is None else enemy_spawn_guess(view)
+        watch = _watch_spot(view, item, base, near=home)
+        if watch is not None:
+            return watch
+        enemy = scout_watch(view, base) or (approach_cell(view) if home is None else enemy_spawn_guess(view))
         if defense_at is not None and _within_degrees(base, defense_at, enemy, C.DEFENSE_SIDE_MAX_DEGREES):
             prefer = defense_at
         return perimeter_spot(view, base, enemy, item, prefer=prefer, strict=False, near=home)
@@ -727,6 +733,26 @@ def _beside_ore(view: View, ore, item: str, near=None) -> tuple[int, int] | None
         return (not walkable, dist2((spot[0] + (nw - 1) / 2, spot[1] + (nh - 1) / 2), ore))
 
     return _pick(view, item, spots, score)
+
+
+def scout_watch(view: View, base) -> tuple[int, int] | None:
+    from .scout import watch_point
+    return watch_point(view, base)
+
+
+def _watch_spot(view: View, item: str, base, near=None) -> tuple[int, int] | None:
+    """A legal spot within ``WATCH_SPOT_CELLS`` of the base's choke, while no
+    defense of ours stands there yet (the screenshot "potential-towers": a
+    forward tower at each gap on the enemy's way in)."""
+    watch = scout_watch(view, base)
+    if watch is None:
+        return None
+    r2 = C.WATCH_SPOT_CELLS ** 2
+    if any(b.type in C.DEFENSES and b.cell is not None and not b.wreck and dist2(b.cell, watch) <= r2
+           for b in view.buildings):
+        return None                    # it has its watch tower
+    spots = [s for s in legal_spots(view, item, near) if dist2(s, watch) <= r2]
+    return _pick(view, item, spots, lambda s: dist2(s, watch)) if spots else None
 
 
 def perimeter_spot(view: View, base: tuple[int, int], toward, item: str = "pbox", near=None,

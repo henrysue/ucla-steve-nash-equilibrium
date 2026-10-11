@@ -403,3 +403,32 @@ class Hunter:
                     cells.append(c)
         self._grid = (key, cells)
         return cells
+
+
+_WATCH: dict = {}
+
+
+def watch_point(view: View, yard) -> tuple[int, int] | None:
+    """The choke a base's first tower should watch: the narrowest point
+    (``CHOKE_MAX_WIDTH`` across or less) on the enemy's walking path to
+    ``yard``, ``CHOKE_MIN_CELLS``-``CHOKE_MAX_CELLS`` from it on their side,
+    so a tower there sees units coming one by one. From the terrain alone:
+    any map. None when the way in is open."""
+    from .observe import enemy_spawn_guess
+    from .terrain import chokes
+
+    enemy = enemy_spawn_guess(view)
+    if yard is None or enemy is None or not view.blocked_cells:
+        return None
+    key = (id(view.blocked_cells), tuple(yard), tuple(enemy))
+    hit = _WATCH.get(key)
+    if hit is not None and hit[0] is view.blocked_cells:
+        return hit[1]
+    lo2, hi2 = C.CHOKE_MIN_CELLS ** 2, C.CHOKE_MAX_CELLS ** 2
+    near = [(c, w) for c, w in chokes(view, enemy, yard)
+            if w <= C.CHOKE_MAX_WIDTH and lo2 <= dist2(c, yard) <= hi2 and dist2(c, enemy) < dist2(yard, enemy)]
+    point = min(near, key=lambda r: (r[1], -dist2(r[0], yard)))[0] if near else None
+    if len(_WATCH) > 32:
+        _WATCH.clear()
+    _WATCH[key] = (view.blocked_cells, point)
+    return point

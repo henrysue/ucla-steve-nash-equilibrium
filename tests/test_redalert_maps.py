@@ -172,3 +172,13 @@ def test_the_first_turret_faces_the_road_in(path):
     assert _legal(view, "ftur", spot) is None
     bearing = lambda c: math.degrees(math.atan2(c[1] - base[1], c[0] - base[0]))  # noqa: E731
     assert abs((bearing(spot) - bearing(road) + 180) % 360 - 180) <= 35, (spot, road)
+
+
+@pytest.mark.parametrize("path", FIXTURES, ids=[p.stem for p in FIXTURES])
+def test_chokes_are_found_from_the_terrain_on_real_maps(path):
+    fx = _load(path)
+    view = _view(fx, fx["states"][0], path.stem)
+    found = terrain.chokes(view, tuple(fx["enemy_spawn"]), tuple(fx["base_center"]))
+    assert found and min(w for _, w in found) <= C.CHOKE_MAX_WIDTH         # the middle passages
+    for cell, _ in found:
+        assert cell not in view.blocked_cells

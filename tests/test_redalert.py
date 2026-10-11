@@ -4038,3 +4038,16 @@ def test_a_fresh_look_at_a_weak_enemy_starts_an_attack():
     assert brain.choose_mode(looked, cheese_since=None) is Mode.ALL_IN                 # we looked: they are weak
     strong = dataclasses.replace(looked, enemy_army_value=3000.0)
     assert brain.choose_mode(strong, cheese_since=None) is Mode.BUILD                  # 4000 vs 3000 seen: not weak
+
+
+def test_the_first_tower_watches_a_choke_in_range():
+    # a wall of cliffs with a 5-cell gap between our yard (10,10) and the enemy (40,40)
+    gap = {(x, y) for x in range(0, 48) for y in range(16, 19) if not (20 <= x <= 24)}
+    blds = [{"id": 10, "type": "fact", "x": 10, "y": 10}, {"id": 11, "type": "powr", "x": 14, "y": 10},
+            {"id": 12, "type": "tent", "x": 17, "y": 12}, {"id": 13, "type": "proc", "x": 20, "y": 11}]
+    v = dataclasses.replace(_view(base_center=[11, 11], buildings=blds, available_production=["pbox"]),
+                            blocked_cells=frozenset(gap))
+    watch = scout.watch_point(v, (11, 11))
+    assert watch is not None and 20 <= watch[0] <= 24 and 15 <= watch[1] <= 19   # the gap
+    spot = buildplan.placement_cell(v, "pbox")
+    assert (spot[0] - watch[0]) ** 2 + (spot[1] - watch[1]) ** 2 <= C.WATCH_SPOT_CELLS ** 2
