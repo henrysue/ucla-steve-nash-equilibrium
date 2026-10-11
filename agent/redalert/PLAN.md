@@ -15,15 +15,18 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
 - **Rules play every view** (no model on the hot path): `agent.py` reads the
   state, `commander.py` makes the army's one decision (policy in `brain.py`),
   `executor.py` builds one order batch.
-- **The advisor** (`advisor.py`, a model, every ~6 s, off the hot path) reads
-  the enemy (style, balance, mistakes) and may set posture, route, expansion,
+- **The advisor** (`advisor.py`, a model, every ~6 s from the first second,
+  off the hot path) reads the enemy from the scouting report (every enemy
+  building and unit the first time our scouts see it: `intel.report`),
+  predicts their posture and first push early, and may set posture, route, expansion,
   army and raid targets, turret side, the waiting army's stance and the guard
   — each inside the rules' limits. Advice is validated and expires; safety
   rules win. Haiku squad leads (`squadlead.py`) are off unless
   `REDALERT_SQUAD_LEADS=on`.
 - **Logs**: `matchlog.py` writes a JSONL and a summary per match to
   `matchlogs/` (samples every 15 s, mode changes, refusals, advice, attacked
-  spots, the outbox).
+  spots, the outbox, first sightings — kind "scouted" — with a "What the scouts
+  saw first" section); the console prints each new sighting.
 
 | Module | Role |
 |---|---|

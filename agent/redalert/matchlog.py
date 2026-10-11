@@ -59,6 +59,7 @@ class MatchLog:
         self._ended = False
         self._advice_count = 0
         self._squad_counts: dict[str, int] = {}
+        self._first_seen: dict = {}            # enemy type -> (game s, kind, cell) first seen (summary)
         self._latencies: list[float] = []
         self._plans: list[dict] = []
 
@@ -92,6 +93,15 @@ class MatchLog:
             row = {**self._sample(raw, view, mode_s), **(extra or {})}
             self._samples.append(row)
             self._write("sample", row)
+
+    def scouted(self, t: float, items: list[dict]) -> None:
+        """Enemy buildings and units seen for the first time this view."""
+        if self._disabled or self._path is None or not items:
+            return
+        self._write("scouted", {"t": round(t), "items": items})
+        for it in items:
+            if it["type"] not in self._first_seen:
+                self._first_seen[it["type"]] = (it["t"], it["kind"], it["cell"])
 
     def placement(self, data: dict) -> None:
         """A building we placed: the asked top-left cell and where it stands."""
@@ -261,6 +271,9 @@ class MatchLog:
         lines += [f"- {m['t']}s: {m['from']} -> {m['to']} (army {m['army']} vs seen {m['enemy_seen']})" for m in self._modes]
         lines += ["", "## Buildings lost", ""]
         lines += [f"- {b['t']}s: {b.get('type')}" for b in self._buildings_lost] or ["- none"]
+        lines += ["", "## What the scouts saw first", ""]
+        lines += [f"- {t}s: {kind} {kind_type} at {cell}" for kind_type, (t, kind, cell) in
+                  sorted(self._first_seen.items(), key=lambda kv: kv[1][0])] or ["- nothing"]
         lines += ["", "## Model plan", ""]
         if self._advice_count:
             avg = sum(self._latencies) / len(self._latencies)

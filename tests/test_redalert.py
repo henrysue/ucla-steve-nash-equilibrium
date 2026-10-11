@@ -3445,10 +3445,9 @@ def test_the_advisor_sees_what_the_rules_see():
             pass
 
     agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0, advisor_factory=lambda log, on_advice: Spy())
-    agent._opening_done = True
     agent.choose_action(_state(_t=300.0, buildings=BASE, units=_raid_army(2, 6)), CTX)
     for key in ("mode", "confirming_attack", "massing_point", "our_unit_value", "enemy_unit_value_known",
-                "enemy_turrets_known", "raid_squad", "scouts", "intel"):
+                "enemy_turrets_known", "raid_squad", "scouts", "intel", "scouting"):
         assert key in seen, key
     assert set(seen["intel"]) == {"enemy_opening", "enemy_turtling", "threat_alarm", "their_base_seen_at"}
 
@@ -3593,22 +3592,31 @@ def test_a_winning_attack_goes_on_while_their_push_hits_our_base():
         assert (mode in (Mode.DEFEND_BASE, Mode.DEFEND_RUSH)) is defends, (prev, mode)
 
 
-def test_the_opening_is_the_build_orders_unless_a_rush_is_read():
-    calls = []
+def test_the_advisor_reads_the_scouts_from_the_first_second():
+    seen = []
 
     class Spy:
         def poll(self, view, situation):
-            calls.append(view.game_seconds)
+            seen.append((view.game_seconds, situation["scouting"]))
             return None
         def close(self):
             pass
 
-    agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0, advisor_factory=lambda log, on_advice: Spy())
-    agent.choose_action(_state(_t=100.0, buildings=BASE), CTX)
-    assert calls == []                                   # build order not done: the advisor waits
-    done = [{"id": 10 + i, "type": t} for i, t in enumerate(("fact", "powr", "tent", "proc", "proc", "powr", "weap"))]
-    agent.choose_action(_state(_t=300.0, buildings=done), CTX)
-    assert calls == [300.0]
+    lines = []
+    agent = RedAlertAgent(log=lines.append, clock=lambda: 0.0, advisor_factory=lambda log, on_advice: Spy())
+    agent.choose_action(_state(_t=60.0, buildings=BASE), CTX)
+    assert seen and seen[0][0] == 60.0                   # consulted during the opening
+    their = [{"id": 80, "type": "proc", "x": 38, "y": 36, "hp": 100}, {"id": 81, "type": "barr", "x": 36, "y": 38, "hp": 100}]
+    rifles = [{"id": 90 + i, "type": "e1", "x": 35, "y": 35, "hp": 100} for i in range(5)]
+    agent.choose_action(_state(_t=75.0, buildings=BASE, visible_enemy_buildings=their, visible_enemies=rifles), CTX)
+    report = seen[-1][1]
+    assert report["buildings_known"] == {"proc": 1, "barr": 1}
+    assert report["first_seen"] == {"proc": 75, "barr": 75, "e1": 75}
+    assert {(s["kind"], s["type"]) for s in report["recent_sightings"]} == {("building", "proc"), ("building", "barr"),
+                                                                            ("unit", "e1")}
+    assert any("scouts t=75s saw:" in line and "proc" in line and "e1 x5" in line for line in lines)   # the console
+    agent.choose_action(_state(_t=76.0, buildings=BASE, visible_enemy_buildings=their, visible_enemies=rifles), CTX)
+    assert len(seen[-1][1]["recent_sightings"]) == 7     # each actor once, not every view
 
 
 def test_after_the_opening_refinery_three_and_the_depot_only_when_not_outgunned():

@@ -95,6 +95,18 @@ not flank before 10:00 unless decisively ahead. Raid squads go only for enemy ex
 scouts found; when they hold part of their army, the main army is judged against the rest and \
 attacks away from the raid.
 
+EARLY GAME (you are consulted from the first second): situation.scouting is what our scouts \
+have seen — buildings_known, first_seen (enemy type -> game second), recent_sightings, the rules' \
+own read and our scouts alive/lost. Predict their posture from it as soon as our scouts reach \
+their base (~1:00-1:40), and say in plan when and from where you expect their first push. Tells:
+  rush: one refinery by 1:40, a second barracks or an early war factory, 5+ riflemen in front of \
+  their base before 2:00, our scouts killed on the way in;
+  macro: two or three refineries, an early MCV or second yard, few units;
+  turtle: pillboxes/turrets before 3:00, units kept home;
+  standard: the double-refinery build into a war factory (~2:40).
+An "aggressive" read puts up a warning turret on the road in (one before our war factory); keep \
+"unknown" until the scouts have actually seen their base.
+
 YOUR READ:
 - enemy_style: what the enemy is playing, from their buildings, army and moves:
   "aggressive": early or repeated pushes, 2+ barracks or an early war factory on one refinery, units \

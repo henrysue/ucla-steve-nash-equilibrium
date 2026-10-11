@@ -22,6 +22,10 @@ class EnemyIntel:
         self._rush = False
         self._economy = False
         self._push_at: float | None = None   # their fighters last seen pushing near our base
+        self._seen_ids: set = set()
+        self.first_seen: dict[str, float] = {}   # enemy type -> game s it was first seen
+        self.sightings: list[dict] = []          # first sightings of each enemy actor, newest last
+        self.fresh: list[dict] = []              # this view's first sightings
 
     @staticmethod
     def buildings(view: View) -> Counter:
@@ -31,6 +35,7 @@ class EnemyIntel:
         return Counter(seen.values())
 
     def update(self, view: View) -> None:
+        self._note_sightings(view)
         self._track_pushes(view)
         c = self.buildings(view)
         if sum(c.values()) < C.INTEL_MIN_BUILDINGS:
@@ -74,6 +79,33 @@ class EnemyIntel:
             return False
         c = self.buildings(view)
         return sum(c.values()) >= C.INTEL_MIN_BUILDINGS and c.get(C.REFINERY, 0) <= 1
+
+    def _note_sightings(self, view: View) -> None:
+        """Every enemy building and unit the first time we see it: when, what,
+        where (the scouting report the advisor reads, and the match log)."""
+        t = view.game_seconds
+        new = []
+        for group, kind in ((view.enemy_buildings, "building"), (view.enemy_units, "unit")):
+            for a in group:
+                if a.id is None or a.wreck or a.cell is None or a.id in self._seen_ids:
+                    continue
+                self._seen_ids.add(a.id)
+                self.first_seen.setdefault(a.type, round(t))
+                new.append({"t": round(t), "kind": kind, "type": a.type, "cell": list(a.cell)})
+        self.fresh = new
+        self.sightings = (self.sightings + new)[-60:]
+
+    def report(self, view: View) -> dict:
+        """What our scouts have seen of them, for the advisor: the buildings
+        we know by type, when each enemy type was first seen, the latest first
+        sightings, and the rules' own reads."""
+        return {
+            "buildings_known": dict(self.buildings(view)),
+            "first_seen": dict(self.first_seen),
+            "recent_sightings": self.sightings[-15:],
+            "rules_read": {"opening": self.opening(), "rush_suspected": self.suspect(view),
+                           "turtling": self.turtling(view)},
+        }
 
     def _track_pushes(self, view: View) -> None:
         from .scout import our_yards

@@ -62,7 +62,6 @@ class RedAlertAgent:
         self._log = self._tagged
         self._clock = clock
         self._commander = Commander()   # the army's one decision each view (commander.py)
-        self._opening_done = False      # the standard build order stands (buildplan.opening_done)
         self._failed_cells: dict = {}   # cell -> game time the engine moved a building off it
         self._enemy_seen: list = []     # (game s, enemy army seen, our kills then): brain.enemy_estimate
         # The batch play_action answers next; refused order key -> blocked
@@ -146,17 +145,19 @@ class RedAlertAgent:
         if self._patrol.alarm(view):
             self._intel.scouts_lost(view)
         threat = self._patrol.alarm(view) or self._intel.rushing(view)
-        # The opening is the standard build order's: the advisor is consulted
-        # once it stands, or sooner if a rush is read or the base is attacked.
-        self._opening_done = self._opening_done or buildplan.opening_done(view)
+        # What the scouts saw for the first time: the log and the console.
+        self._log_sightings(view)
         # sparring (TEST ONLY): against ourselves in a test match, one seat
         # plays a fixed archetype (rusher / turtler / macro), without the advisor.
         spar = self._sparring.resolve(context, raw.get("your_seat"))
         if spar is not None:
             advice = spar.advice(view)
         else:
-            advice = (self._poll_advisor(view)
-                      if self._opening_done or threat or self._commander.cheese_since is not None else None)
+            # From the first second: it reads what the scouts see and predicts
+            # their posture while the opening runs (it used to wait for the
+            # build order to stand, ~3 minutes, so the scouts' look at their
+            # base went unread).
+            advice = self._poll_advisor(view)
         hunting = self._hunter.hunting(view)
         self._break_stall(view)
         rushing = spar is not None and spar.skip_confirm
@@ -507,6 +508,9 @@ class RedAlertAgent:
                 "raid_squad": {"ids": list(self._raid.unit_ids), "situation": raid_state,
                                "drawing_their_army": self._raid.distracting(view)},
                 "scouts": dict(self._patrol.roles),
+                "scouting": {**self._intel.report(view),
+                             "scouts_alive": dict(self._patrol.roles),
+                             "scouts_lost": [{"t": round(t), "cell": list(c)} for t, c, _ in self._patrol._lost]},
                 "intel": {"enemy_opening": self._intel.opening(),
                           "enemy_turtling": view.enemy_turtling,
                           "threat_alarm": self._patrol.alarm(view) or self._intel.rushing(view),
@@ -531,6 +535,22 @@ class RedAlertAgent:
     _retreat_army = property(lambda self: self._commander.retreat_army,
                              lambda self, v: setattr(self._commander, "retreat_army", v))
     _attacks = property(lambda self: self._commander.attacks)
+
+    def _log_sightings(self, view) -> None:
+        """This view's first sightings into the match log, and one console
+        line naming what is new: each building, and each unit type the first
+        time it shows up."""
+        fresh = self._intel.fresh
+        if not fresh:
+            return
+        self._matchlog.scouted(view.game_seconds, fresh)
+        new_types = {it["type"] for it in fresh if self._intel.first_seen.get(it["type"]) == it["t"]}
+        shown = [it for it in fresh if it["kind"] == "building" or it["type"] in new_types]
+        if shown:
+            counts = Counter((it["kind"], it["type"]) for it in shown)
+            where = shown[0]["cell"]
+            what = ", ".join(f"{t}" + (f" x{n}" if n > 1 else "") for (_, t), n in counts.items())
+            self._log(f"[redalert] scouts t={int(view.game_seconds)}s saw: {what} (near {where})")
 
     def _break_stall(self, view) -> None:
         """An attack that kills nothing for ``ATTACK_STALL_SECONDS`` with no
