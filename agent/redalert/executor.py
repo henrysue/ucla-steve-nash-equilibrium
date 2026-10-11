@@ -62,7 +62,8 @@ def plan(
     # warning (intel.suspect: one refinery seen early) only adds the warning turret.
     under_attack = mode in (Mode.DEFEND_RUSH, Mode.DEFEND_BASE) or scout.early_push_warning(view) or threat or warning
     # The advisor reads an aggressive enemy: turrets up on the approach (we win on macro).
-    under_attack = under_attack or getattr(advice, "enemy_style", None) == "aggressive"
+    under_attack = under_attack or (getattr(advice, "enemy_style", None) == "aggressive"
+                                    and getattr(advice, "confidence", 1.0) >= C.ADVISOR_ACT_CONFIDENCE)
     spar_def = sparring.defense(view, under_attack) if sparring is not None else None
     if spar_def is not None:   # sparring: the rusher's none, the turtler's ring
         out += spar_def

@@ -21,8 +21,16 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
   predicts their posture and first push early, and may set posture, route, expansion,
   army and raid targets, turret side, the waiting army's stance and the guard
   — each inside the rules' limits. Advice is validated and expires; safety
-  rules win. Each call carries its memory: its first read of the enemy, its
-  last 4 answers, the read in effect, and our recent mode changes. Haiku squad leads (`squadlead.py`) are off unless
+  rules win. Each call carries its memory: its first read of the enemy (with
+  evidence), its last 4 changes of read (what changed, how many answers and
+  seconds the read before held), its latest answer, the read in effect, what
+  happened since it was last asked (trades, losses, sightings, mode changes),
+  how our recent attacks went, and our past games against this opponent
+  (`opponents.py`, saved at each match end under `REDALERT_PROFILE_DIR` or
+  `<REDALERT_LOG_DIR>/opponents`). Each answer gives a confidence and its
+  evidence: an "aggressive" read raises turrets only at 0.6+, and at 0.8+ with
+  evidence a change takes effect without waiting for a second answer. The
+  system prompt is cached. Haiku squad leads (`squadlead.py`) are off unless
   `REDALERT_SQUAD_LEADS=on`.
 - **Logs**: `matchlog.py` writes a JSONL and a summary per match to
   `matchlogs/` (samples every 15 s, mode changes, refusals, advice, attacked

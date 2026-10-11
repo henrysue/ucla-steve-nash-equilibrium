@@ -700,6 +700,10 @@ class DecisionContext:
     formats, maps). The runner fills it in for real-time games only, once,
     before the first decision; it's ``None`` otherwise or if the server
     couldn't provide it.
+
+    ``opponents`` are the other agents' display names, from the seat's
+    assignment (empty when the server named none): an agent may key what it
+    learned about an opponent by them.
     """
 
     session_id: str
@@ -708,3 +712,4 @@ class DecisionContext:
     agent_id: str
     seat_position: int | None = None
     game_config: dict | None = None
+    opponents: tuple[str, ...] = ()

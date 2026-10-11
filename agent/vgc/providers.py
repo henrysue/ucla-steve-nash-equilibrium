@@ -154,10 +154,15 @@ class AnthropicProvider:
             # empty thinking text. The raw chain of thought is never
             # exposed on any model, so this is the most we can log.
             thinking = {"type": "adaptive", "display": "summarized"}
+        # The system prompt is the same on every call of an agent: cache it
+        # (ignored by the API below its minimum cacheable length).
+        text = "\n\n".join(system)
+        system_arg = ([{"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}]
+                      if text else self._anthropic.NOT_GIVEN)
         return self._client.with_options(timeout=timeout, max_retries=0).messages.create(
             model=self.model,
             max_tokens=MAX_TOKENS,
-            system="\n\n".join(system) or self._anthropic.NOT_GIVEN,
+            system=system_arg,
             messages=turns,
             thinking=thinking,
             output_config={

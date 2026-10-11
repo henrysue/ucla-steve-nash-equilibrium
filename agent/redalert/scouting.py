@@ -47,6 +47,7 @@ class ScoutCorps:
         self._start_at: dict[str, float] = {}        # role -> when its circuit may set out (the stagger)
         self._site_seen: dict[tuple[int, int], float] = {}   # remote ore field -> when a scout last saw it
         self._checks = 0                             # mid-game base checks run (they alternate rings)
+        self.scouts_lost = 0                         # scouts killed this match
 
     # -- what the rest of the agent reads ----------------------------------------
 
@@ -89,6 +90,7 @@ class ScoutCorps:
                 cell = self._last_cell.get(uid)
                 if cell is not None:
                     self._lost.append((view.game_seconds, cell, role in self._circling))
+                    self.scouts_lost += 1
                 self._lost = self._lost[-6:]
                 del self.roles[role]
                 self._circling.discard(role)

@@ -736,6 +736,7 @@ def run_tournament_once(
                 agent_spec=agent_spec, execution_id=state.execution_id,
                 tournament_id=assignment.tournament_id,
                 agent_session=session_token() if callable(session_token) else None,
+                opponents=tuple(assignment.opponents),
             )
             process = process_factory(target=_tournament_process_entry, args=(worker_input,), daemon=True)
             process.start()

@@ -26,6 +26,7 @@ class EnemyIntel:
         self.first_seen: dict[str, float] = {}   # enemy type -> game s it was first seen
         self.sightings: list[dict] = []          # first sightings of each enemy actor, newest last
         self.fresh: list[dict] = []              # this view's first sightings
+        self.first_push_at: int | None = None    # when their fighters first pushed near our base
 
     @staticmethod
     def buildings(view: View) -> Counter:
@@ -95,6 +96,11 @@ class EnemyIntel:
         self.fresh = new
         self.sightings = (self.sightings + new)[-60:]
 
+    @property
+    def sighted(self) -> int:
+        """Enemy actors seen so far."""
+        return len(self._seen_ids)
+
     def report(self, view: View) -> dict:
         """What our scouts have seen of them, for the advisor: the buildings
         we know by type, when each enemy type was first seen, the latest first
@@ -117,6 +123,8 @@ class EnemyIntel:
         cost = lambda k: view.unit_costs.get(k) or C.KNOWN_COSTS.get(k, C.DEFAULT_UNIT_COST)  # noqa: E731
         if sum(cost(a.type) for a in near) >= C.PUSH_SEEN_VALUE:
             self._push_at = view.game_seconds
+            if self.first_push_at is None:
+                self.first_push_at = round(view.game_seconds)
 
     def turtling(self, view: View) -> bool:
         """They turtle: ``TURTLE_READ_DEFENSES`` ground turrets known, past

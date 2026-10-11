@@ -251,6 +251,9 @@ class TournamentWorkerInput(NamedTuple):
     # Handed over the process pipe only; kept out of repr like execution_id.
     # None (or an expired one) just means the worker signs in itself.
     agent_session: str | None = None
+    # The other agents' display names from the assignment, handed to the
+    # contestant as DecisionContext.opponents.
+    opponents: tuple[str, ...] = ()
 
     def __repr__(self) -> str:
         return (
@@ -369,6 +372,7 @@ def run_tournament_worker(
             game_type=grant.game_type,
             agent_id=grant.agent_id,
             seat_position=grant.seat_position,
+            opponents=tuple(worker_input.opponents or ()),
         )
         final_state = run_game_fn(game, context, contestant)
         print_line(f"{label} {finished_line(final_state, grant.agent_id, grant.seat_position)}")

@@ -25,7 +25,7 @@ from altruagent.console import print_line
 
 from . import brain, buildplan, executor, micro, orders, scout, squadlead
 from . import sparring  # TEST ONLY (self-play sparring archetypes; never in a tournament)
-from . import intel, scouting
+from . import intel, opponents, scouting
 from .commander import Commander
 from .expand import Expansion
 from .expand import enemy_expansions as _enemy_expansions
@@ -95,6 +95,11 @@ class RedAlertAgent:
         # Per-match review log (off unless a log directory is configured).
         self._matchlog = MatchLog(self._log, directory=log_dir)
         self._mode_changes: list[dict] = []           # our army's recent mode changes (the advisor's memory)
+        self._attack_open: dict | None = None          # the attack under way: when, who called it, trades then
+        self._attack_results: list[dict] = []          # how our recent attacks went (the advisor's memory)
+        self._opponents: tuple = ()                    # their display names (DecisionContext.opponents)
+        self._match_info: dict = {}                    # map, their faction (the opponent profile)
+        self._trades = (0.0, 0.0)                      # kills, deaths at the last view
         self._game_seconds: float | None = None
         # Flank route for the current attack (executor.choose_flank).
         self._flank_via: tuple[int, int] | None = None
@@ -114,6 +119,7 @@ class RedAlertAgent:
 
         if self._seat is None:
             self._seat = _seat_number(raw.get("your_seat"), getattr(context, "seat_position", None))
+            self._start_profile(raw, context)
         view = read(raw, getattr(context, "game_config", None))
         if not view.ok:
             return WAIT
@@ -179,9 +185,11 @@ class RedAlertAgent:
             view = dataclasses.replace(view, attack_avoid=self._commander.attack_avoid)
         # A blind attack call: a scout looks where their army masses first.
         self._patrol.look = scout.enemy_staging(view) if self._commander.wants_look else None
+        self._trades = (view.kills_cost, view.deaths_cost)
         if self._commander.changed:
             self._mode_changes = (self._mode_changes + [
                 {"t": round(view.game_seconds), "to": str(self._mode)}])[-C.ADVISOR_MEMORY_READS - 2:]
+            self._track_attack(view, advice)
             # While the raid squad holds their army, straight down the centre.
             self._flank_via = (None if self._mode is not Mode.ALL_IN or self._raid.distracting(view)
                                else self._pick_route(view, advice))
@@ -330,8 +338,14 @@ class RedAlertAgent:
             self._matchlog.refused(order, reason, detail, self._game_seconds)
 
     def on_match_end(self, final_state: Any, context: DecisionContext) -> None:
-        """Record how the match ended (the runner calls this once)."""
+        """Record how the match ended (the runner calls this once), and what we
+        learned about the opponent for next time (opponents.py)."""
         self._matchlog.end(final_state, context)
+        if self._opponents:
+            try:
+                opponents.save(self._opponents, self._profile_record(final_state))
+            except Exception as exc:  # noqa: BLE001 - the profile must never break the end of a match
+                self._log(f"[redalert] opponent profile not saved: {type(exc).__name__}: {exc}")
         if self._advisor is not None:
             self._advisor.close()
         for lead in self._leads.values():
@@ -486,7 +500,8 @@ class RedAlertAgent:
             self._last_plan = key
             mistakes = "; ".join(f"{m['kind']}: {m['note']}" for m in advice.mistakes)
             self._log(
-                f"[redalert] advisor t={int(advice.made_at)}s ({latency_s:.1f}s) {advice.posture}, enemy {advice.enemy_style}, "
+                f"[redalert] advisor t={int(advice.made_at)}s ({latency_s:.1f}s) {advice.posture}, enemy {advice.enemy_style} "
+                f"({advice.confidence:.0%} sure), "
                 f"{advice.balance}: {advice.plan or '(no plan)'} | why: {advice.reasoning or '-'}"
                 + (f" | mistakes: {mistakes}" if mistakes else "")
             )
@@ -501,6 +516,10 @@ class RedAlertAgent:
                 "mode": str(self._mode),
                 "mode_for_seconds": round(self._game_seconds - self._mode_since) if self._game_seconds else 0,
                 "mode_changes": list(self._mode_changes),
+                "attack_results": list(self._attack_results),
+                "counters": {"kills": round(view.kills_cost), "deaths": round(view.deaths_cost),
+                             "units_lost": self._damage.units_lost, "buildings_lost": self._damage.buildings_lost,
+                             "scouts_lost": self._patrol.scouts_lost, "sightings": self._intel.sighted},
                 "confirming_attack": self._commander.confirming,
                 "massing_point": list(scout.choke_cell(view) or []) or None,
                 "ore_runway_seconds": (round(self._harvest.runway_seconds)
@@ -539,6 +558,51 @@ class RedAlertAgent:
     _retreat_army = property(lambda self: self._commander.retreat_army,
                              lambda self, v: setattr(self._commander, "retreat_army", v))
     _attacks = property(lambda self: self._commander.attacks)
+
+    def _start_profile(self, raw: dict, context) -> None:
+        """Our past games against this opponent go to the advisor's memory."""
+        self._opponents = tuple(n for n in (getattr(context, "opponents", None) or ()) if isinstance(n, str))
+        obs = raw.get("observation") if isinstance(raw.get("observation"), dict) else {}
+        self._match_info = {"map": (raw.get("map") or {}).get("id") if isinstance(raw.get("map"), dict) else None,
+                            "our_faction": obs.get("faction"), "their_faction": obs.get("enemy_faction")}
+        if self._advisor is not None and self._opponents:
+            self._advisor.opponent_history = opponents.load(self._opponents)
+            if self._advisor.opponent_history:
+                self._log(f"[redalert] {len(self._advisor.opponent_history)} past games against this opponent "
+                          "go to the advisor")
+
+    def _profile_record(self, final_state) -> dict:
+        """One game against this opponent: what they did and how it went."""
+        raw = getattr(final_state, "raw", None)
+        raw = raw if isinstance(raw, dict) else {}
+        result = getattr(final_state, "final_result", None) or raw.get("result")
+        adv = self._advisor
+        return {
+            "date": time.strftime("%Y-%m-%d %H:%M"), **self._match_info,
+            "result": result.get("your_return") if isinstance(result, dict) else None,
+            "their_opening": self._intel.opening(),
+            "their_first_push_at": self._intel.first_push_at,
+            "first_seen": {k: v for k, v in self._intel.first_seen.items() if v <= 300},
+            "our_first_read": adv.first_read if adv is not None else None,
+            "our_final_read": adv.memory()["in_effect"].get("enemy_style") if adv is not None else None,
+            "kills": round(self._trades[0]), "deaths": round(self._trades[1]),
+            "attacks": list(self._attack_results),
+        }
+
+    def _track_attack(self, view, advice) -> None:
+        """When an attack starts, who called it and the trades then; when it
+        ends, how it went (the advisor's memory: attack_results)."""
+        t = view.game_seconds
+        if self._mode is Mode.ALL_IN:
+            self._attack_open = {"t": round(t), "kills": view.kills_cost, "deaths": view.deaths_cost,
+                                 "army": round(view.army_value),
+                                 "called_by": "advisor" if getattr(advice, "posture", None) == "attack" else "rules"}
+        elif self._attack_open is not None:
+            a, self._attack_open = self._attack_open, None
+            self._attack_results = (self._attack_results + [{
+                "t": a["t"], "called_by": a["called_by"], "seconds": round(t - a["t"]), "army": a["army"],
+                "killed": round(view.kills_cost - a["kills"]), "lost": round(view.deaths_cost - a["deaths"]),
+                "ended": str(self._mode)}])[-3:]
 
     def _log_sightings(self, view) -> None:
         """This view's first sightings into the match log, and one console
@@ -795,6 +859,8 @@ class DamageScan:
         self._last: dict[int, tuple[tuple[int, int], str]] = {}
         self.recent: list[tuple[float, tuple[int, int], str]] = []
         self.sold: set = set()                        # buildings we sold: they vanish, nobody hit them
+        self.units_lost = 0                           # ours that vanished (the advisor's since_last_ask)
+        self.buildings_lost = 0
 
     def update(self, view) -> list[tuple[int, int]]:
         t = view.game_seconds
@@ -817,6 +883,10 @@ class DamageScan:
         for aid, (cell, kind) in self._last.items():
             if aid not in cur and kind != C.MCV and aid not in self.sold:   # an MCV that deployed became a yard
                 self.recent.append((t, cell, "vanished"))
+                if kind in C.ALL_BUILDING_TYPES:
+                    self.buildings_lost += 1
+                else:
+                    self.units_lost += 1
         self._last = cur
         self.recent = [r for r in self.recent if t - r[0] <= C.RETALIATE_SECONDS]
         return [c for _, c, _ in self.recent]

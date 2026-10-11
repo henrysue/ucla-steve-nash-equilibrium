@@ -3436,7 +3436,8 @@ def test_the_commander_keeps_the_bookkeeping():
 def test_the_advisor_schema_has_only_fields_the_rules_use():
     props = set(ra_advisor.ADVICE_SCHEMA["properties"])
     assert props == {"enemy_style", "balance", "mistakes", "posture", "attack_route", "expand", "army_target",
-                     "raid_target_id", "raid_target_cell", "defense_at", "army_stance", "guard", "plan", "reasoning"}
+                     "raid_target_id", "raid_target_cell", "defense_at", "army_stance", "guard", "confidence",
+                     "evidence", "plan", "reasoning"}
     for word in ("double refinery", "rush", "concave", "army_value_estimate", "aggressive", "macro",
                  "over-index", "mistakes", "generally good"):
         assert word in ra_advisor.SYSTEM_PROMPT, word
@@ -4937,36 +4938,6 @@ def test_concave_slots_stick_and_a_new_unit_does_not_reshuffle_the_line():
     assert all(executor._SLOTS["of"][i] == s for i, s in slot.items())             # everyone kept their slot
 
 
-def test_the_advisor_remembers_its_first_read_and_its_last_answers():
-    asked = []
-
-    class Recorder(_FakeProvider):
-        def complete_structured(self, messages, name, schema, *, timeout, effort):
-            asked.append(json.loads(messages[1]["content"])["memory"])
-            return super().complete_structured(messages, name, schema, timeout=timeout, effort=effort)
-
-    import json
-    answers = [{**_ANSWER, "enemy_style": "unknown", "plan": "scouts on the way"},
-               {**_ANSWER, "enemy_style": "aggressive", "plan": "one refinery, two barracks: push at 2:40",
-                "reasoning": "proc x1, barr x2 at 1:30"},
-               {**_ANSWER, "enemy_style": "aggressive", "plan": "hold for the push"}]
-    provider = Recorder(answers[0])
-    adv = ra_advisor.Advisor(provider, log=lambda *_: None, clock=lambda: 0.0, interval=0.0)
-    for i, answer in enumerate(answers + [answers[-1]]):
-        provider.answer = answer
-        adv.poll(_view(_t=60.0 + 15 * i), {})
-        if adv._future is not None:
-            adv._future.result()
-    adv.poll(_view(_t=125.0), {})
-    first = asked[0]
-    assert first == {"first_read": None, "recent_reads": [], "in_effect": first["in_effect"]}   # nothing yet
-    last = asked[-1]
-    assert last["first_read"]["enemy_style"] == "aggressive" and last["first_read"]["t"] == 75   # the scouts' read
-    assert "two barracks" in last["first_read"]["plan"] and last["first_read"]["reasoning"]
-    assert [r["enemy_style"] for r in last["recent_reads"]] == ["unknown", "aggressive", "aggressive"]
-    assert last["in_effect"]["enemy_style"] == "aggressive"                    # two agreed: it acts on it
-
-
 def test_the_advisor_sees_our_recent_mode_changes():
     seen = {}
 
@@ -4981,3 +4952,140 @@ def test_the_advisor_sees_our_recent_mode_changes():
     agent.choose_action(_state(_t=300.0, buildings=BASE, units=_raid_army(2, 6)), CTX)
     agent.choose_action(_state(_t=301.0, buildings=BASE, units=_raid_army(2, 6)), CTX)   # it is asked before deciding
     assert seen["mode_changes"] and seen["mode_changes"][-1] == {"t": 300, "to": str(agent._mode)}
+
+
+def _ask_through(answers, situations=None):
+    """An Advisor answered by ``answers`` in turn (one poll per answer, then
+    one more); returns (advisor, the memory sent with each call)."""
+    import json
+    asked = []
+
+    class Recorder(_FakeProvider):
+        def complete_structured(self, messages, name, schema, *, timeout, effort):
+            asked.append(json.loads(messages[1]["content"])["memory"])
+            return super().complete_structured(messages, name, schema, timeout=timeout, effort=effort)
+
+    provider = Recorder(answers[0])
+    adv = ra_advisor.Advisor(provider, log=lambda *_: None, clock=lambda: 0.0, interval=0.0)
+    for i, answer in enumerate(answers + [answers[-1]]):
+        provider.answer = answer
+        situation = (situations or [{}] * (len(answers) + 1))[i]
+        adv.poll(_view(_t=60.0 + 15 * i), situation)
+        if adv._future is not None:
+            adv._future.result()
+    return adv, asked
+
+
+def test_the_advisor_remembers_its_changes_of_read_not_just_its_last_answers():
+    unknown = {**_ANSWER, "enemy_style": "unknown", "plan": "scouts on the way"}
+    rush = {**_ANSWER, "enemy_style": "aggressive", "plan": "one refinery, two barracks: push at 2:40",
+            "reasoning": "proc x1, barr x2 at 1:30", "evidence": ["2 barracks at 1:35"], "confidence": 0.7}
+    attack = {**rush, "posture": "attack", "plan": "their push is spent: go"}
+    adv, asked = _ask_through([unknown, rush, rush, rush, attack])
+    assert asked[0]["first_read"] is None and asked[0]["read_changes"] == []
+    last = asked[-1]
+    assert last["first_read"]["read"]["enemy_style"] == "aggressive" and last["first_read"]["t"] == 75
+    assert last["first_read"]["evidence"] == ["2 barracks at 1:35"]
+    changes = last["read_changes"]
+    assert changes[0]["changed"] == "first answer"
+    assert changes[1]["changed"] == {"enemy_style": ["unknown", "aggressive"]} and changes[1]["answers_between"] == 1
+    assert changes[2]["changed"] == {"posture": ["hold", "attack"]}
+    assert changes[2]["answers_between"] == 3 and changes[2]["seconds_between"] == 45   # the read held 3 answers
+    assert last["changes_so_far"] == 3 and last["answers_so_far"] == 5
+    assert last["latest"]["answers_unchanged"] == 1
+
+
+def test_a_sure_read_with_evidence_takes_effect_at_once():
+    sure = {**_ANSWER, "enemy_style": "aggressive", "confidence": 0.9, "evidence": ["8 riflemen at their exit 1:50"]}
+    unsure = {**_ANSWER, "enemy_style": "macro", "confidence": 0.9, "evidence": []}
+    adv = ra_advisor.Advisor(_FakeProvider(sure), log=lambda *_: None, clock=lambda: 0.0, interval=0.0)
+    adv.poll(_view(_t=100.0), {})
+    adv._future.result()
+    assert adv.poll(_view(_t=101.0), {}).enemy_style == "aggressive"           # one answer was enough
+    adv._future.result()
+    adv._provider.answer = unsure
+    adv.poll(_view(_t=106.0), {})
+    adv._future.result()
+    assert adv.poll(_view(_t=107.0), {}).enemy_style == "aggressive"           # no evidence: waits for a second
+
+
+def test_an_unsure_aggressive_read_puts_up_no_turret():
+    blds = [{"id": 10, "type": "fact", "x": 4, "y": 4}, {"id": 11, "type": "tent", "x": 8, "y": 4},
+            {"id": 12, "type": "weap", "x": 4, "y": 8}, {"id": 13, "type": "pbox", "x": 14, "y": 14}]
+    v = _view(_t=200.0, buildings=blds, economy={"cash": 3000}, available_production=["pbox", "e1"])
+    unsure = ra_advisor.parse_advice({**_ANSWER, "enemy_style": "aggressive", "confidence": 0.3}, v, 200.0)
+    sure = ra_advisor.parse_advice({**_ANSWER, "enemy_style": "aggressive", "confidence": 0.8}, v, 200.0)
+    count = lambda adv: sum(1 for o in executor.plan(v, Mode.BUILD, advice=adv)                 # noqa: E731
+                            if o.get("cmd") == "build" and o.get("item") == "pbox")
+    assert count(sure) == 1 and count(unsure) == 0                              # the standing one only, unless sure
+    assert ra_advisor.parse_advice({**_ANSWER, "confidence": 7}, v, 1.0).confidence == 1.0       # clamped
+    assert ra_advisor.parse_advice({**_ANSWER, "confidence": "high"}, v, 1.0).confidence == 0.5
+
+
+def test_the_advisor_hears_what_happened_since_it_was_last_asked():
+    counters = lambda k, d, b: {"counters": {"kills": k, "deaths": d, "buildings_lost": b},   # noqa: E731
+                                "scouting": {"recent_sightings": [{"t": 70, "type": "weap"}, {"t": 50, "type": "proc"}]},
+                                "mode_changes": [{"t": 72, "to": "defend_base"}]}
+    _, asked = _ask_through([_ANSWER, _ANSWER], [counters(0, 0, 0), counters(1200, 300, 1), counters(1200, 300, 1)])
+    assert asked[0]["since_last_ask"] is None
+    since = asked[1]["since_last_ask"]
+    assert since["seconds"] == 15 and since["kills"] == 1200 and since["deaths"] == 300 and since["buildings_lost"] == 1
+    assert [s["type"] for s in since["new_sightings"]] == ["weap"] and since["mode_changes"] == [{"t": 72, "to": "defend_base"}]
+
+
+def test_our_attacks_are_scored_for_the_advisor():
+    agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
+    agent._commander.mode = Mode.ALL_IN
+    start = _view(_t=400.0, military={"army_value": 5000, "kills_cost": 1000, "deaths_cost": 500})
+    agent._track_attack(start, ra_advisor.Advice(made_at=400.0, posture="attack"))
+    agent._commander.mode = Mode.RETREAT
+    agent._track_attack(_view(_t=430.0, military={"kills_cost": 1800, "deaths_cost": 2500}), None)
+    assert agent._attack_results == [{"t": 400, "called_by": "advisor", "seconds": 30, "army": 5000,
+                                      "killed": 800, "lost": 2000, "ended": "retreat"}]
+
+
+def test_what_we_learned_about_an_opponent_comes_back_next_game(tmp_path):
+    from agent.redalert import opponents
+    assert opponents.load(["Yuriko"], tmp_path) == []
+    for i in range(10):
+        assert opponents.save(["Yuriko"], {"game": i, "their_opening": "rush"}, tmp_path)
+    assert [r["game"] for r in opponents.load(["Yuriko"], tmp_path)] == [7, 8, 9]   # the latest few
+    assert opponents.save(["../../evil name"], {"x": 1}, tmp_path)
+    assert all(p.parent == tmp_path for p in tmp_path.iterdir())                    # never outside its folder
+    (tmp_path / "Broken.json").write_text("{not json", encoding="utf-8")
+    assert opponents.load(["Broken"], tmp_path) == []
+    assert opponents.save([], {"x": 1}, tmp_path) is False
+
+
+def test_an_opponent_profile_is_written_at_the_end_and_read_at_the_start(tmp_path, monkeypatch):
+    monkeypatch.setenv("REDALERT_PROFILE_DIR", str(tmp_path))
+    ctx = DecisionContext(session_id="s", tournament_id="t", game_type="red_alert", agent_id="me", seat_position=0,
+                          opponents=("Yuriko",))
+    agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0,
+                          advisor_factory=lambda log, on_advice: ra_advisor.Advisor(
+                              _FakeProvider(_ANSWER), log=log, clock=lambda: 0.0, interval=1e9))
+    agent.choose_action(_state(_t=60.0, buildings=BASE), ctx)
+    agent.on_match_end(types.SimpleNamespace(raw={"result": {"your_return": 1}}, final_result=None), ctx)
+    nxt = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0,
+                        advisor_factory=lambda log, on_advice: ra_advisor.Advisor(
+                            _FakeProvider(_ANSWER), log=log, clock=lambda: 0.0, interval=1e9))
+    nxt.choose_action(_state(_t=1.0, buildings=BASE), ctx)
+    (record,) = nxt._advisor.opponent_history
+    assert record["result"] == 1 and "their_opening" in record and record["kills"] == 0
+
+
+def test_the_system_prompt_is_cached():
+    from agent.vgc import providers
+    sent = {}
+
+    class Messages:
+        def create(self, **kw):
+            sent.update(kw)
+            return None
+
+    p = providers.AnthropicProvider.__new__(providers.AnthropicProvider)
+    p.model = "m"
+    p._anthropic = types.SimpleNamespace(NOT_GIVEN=object())
+    p._client = types.SimpleNamespace(with_options=lambda **_: types.SimpleNamespace(messages=Messages()))
+    p._create(["you are a pro"], [{"role": "user", "content": "x"}], {"type": "object"}, 5.0, "low", True)
+    assert sent["system"] == [{"type": "text", "text": "you are a pro", "cache_control": {"type": "ephemeral"}}]

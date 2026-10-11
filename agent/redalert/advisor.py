@@ -107,12 +107,25 @@ their base (~1:00-1:40), and say in plan when and from where you expect their fi
 An "aggressive" read puts up a warning turret on the road in (one before our war factory); keep \
 "unknown" until the scouts have actually seen their base.
 
-MEMORY (memory): first_read is your first read of this enemy, from the early scouting; \
-recent_reads your last answers, oldest first; in_effect the read and posture the engine acts on now. \
-situation.mode_changes are our army's recent moves (attack, retreat, defend). Build on them: keep \
-your read unless new evidence contradicts it, and when you change enemy_style or posture, name the \
-evidence in reasoning (what was seen, when). Track your first-push prediction: if it came, say how \
-it went; if it didn't, say what changed.
+MEMORY (memory) — build on it, don't start over each time:
+- first_read: your first read of this enemy, from the early scouting, with its evidence.
+- read_changes: your last changes of read, oldest first — what changed, and how many answers \
+(answers_between) and seconds the read before held; latest: your newest answer and how many answers \
+it has held; in_effect: what the engine acts on now. Keep your read unless new evidence contradicts \
+it; when you change it, put that evidence in evidence and reasoning. Flip-flopping (changes a few \
+answers apart) marches the army out and back: change only on something new.
+- since_last_ask: what happened since you were last asked — our kills and losses, units, buildings \
+and scouts lost, new sightings, our army's mode changes. Read the change, not just the snapshot.
+- opponent_history: our past games against this opponent (their opening, first push, your read, \
+the result). Expect the same unless the scouting says otherwise, and say so in your first read.
+- situation.attack_results: how our recent attacks went (who called them, seconds, killed, lost, how \
+they ended) — calibrate your posture on them. situation.mode_changes: our army's recent moves.
+Track your first-push prediction: if it came, say how it went; if it didn't, say what changed.
+
+CONFIDENCE: confidence (0-1) is how sure you are of enemy_style and your posture; evidence lists \
+what backs it (sightings with times, e.g. "2 barracks at 1:35", "12 riflemen at their exit 2:10"). \
+An "aggressive" read puts up turrets only at 0.6+; at 0.8+ with evidence your change takes effect at \
+once instead of waiting for a second answer.
 
 YOUR READ:
 - enemy_style: what the enemy is playing, from their buildings, army and moves:
@@ -187,11 +200,13 @@ ADVICE_SCHEMA = {
         "defense_at": _CELL,
         "army_stance": {"type": "string", "enum": ["auto", "defend", "attack_anything", "return_fire", "hold_fire"]},
         "guard": {"type": "string", "enum": ["on", "off"]},
+        "confidence": {"type": "number"},
+        "evidence": {"type": "array", "items": {"type": "string"}},
         "plan": {"type": "string"},
         "reasoning": {"type": "string"},
     },
     "required": ["enemy_style", "balance", "mistakes", "posture", "attack_route", "expand", "army_target", "raid_target_id", "raid_target_cell",
-                 "defense_at", "army_stance", "guard", "plan", "reasoning"],
+                 "defense_at", "army_stance", "guard", "confidence", "evidence", "plan", "reasoning"],
     "additionalProperties": False,
 }
 
@@ -211,6 +226,8 @@ class Advice:
     defense_at: tuple[int, int] | None = None
     army_stance: str = "auto"            # the waiting army's stance (executor.stance_orders)
     guard: str = "on"                    # the massing army's guard response
+    confidence: float = 0.5              # how sure it is of its read (0-1)
+    evidence: tuple = ()                 # what it saw that backs the read (short notes)
     plan: str = ""
     reasoning: str = ""
 
@@ -258,9 +275,18 @@ def parse_advice(answer: Any, view: View, made_at: float) -> Advice | None:
         defense_at=cell(answer.get("defense_at")),
         army_stance=answer.get("army_stance") if answer.get("army_stance") in C.ARMY_STANCES else "auto",
         guard="off" if answer.get("guard") == "off" else "on",
+        confidence=_confidence(answer.get("confidence")),
+        evidence=tuple(" ".join(e.split())[:120] for e in (answer.get("evidence") or [])[:4]
+                       if isinstance(e, str) and e.strip()),
         plan=" ".join(str(answer.get("plan") or "").split())[:300],
         reasoning=" ".join(str(answer.get("reasoning") or "").split())[:300],
     )
+
+
+def _confidence(value) -> float:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return max(0.0, min(1.0, float(value)))
+    return 0.5
 
 
 def build_prompt(view: View, situation: dict) -> dict:
@@ -332,9 +358,15 @@ class Advisor:
         self._advice: Advice | None = None
         self.calls = 0
         # Its memory, sent with every call (memory()): the first read once the
-        # scouts had seen their base, and its last few answers as given.
+        # scouts had seen their base, the changes of its read, what happened
+        # since it was last asked, and our past games against this opponent.
         self.first_read: dict | None = None
-        self._reads: list[dict] = []
+        self._changes: list[dict] = []           # each change of its read (STEADY_FIELDS), oldest first
+        self._latest: dict | None = None         # its newest answer, briefly
+        self._answers = 0
+        self._changed_at: tuple[int, float] | None = None   # (answer number, game s) of the last change
+        self._last_ask: dict | None = None       # {"t", "counters"} when it was last asked
+        self.opponent_history: list[dict] = []   # opponents.load: our past games against them
 
     def poll(self, view: View, situation: dict) -> Advice | None:
         """Collect a finished answer, start a call if one is due, and return
@@ -356,7 +388,7 @@ class Advisor:
     # -- internals -------------------------------------------------------------
 
     def _start(self, view: View, situation: dict, now: float) -> None:
-        prompt = {**build_prompt(view, situation), "memory": self.memory()}
+        prompt = {**build_prompt(view, situation), "memory": {**self.memory(), "since_last_ask": self._since(view, situation)}}
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": json.dumps(prompt, separators=(",", ":"), default=str)},
@@ -372,29 +404,80 @@ class Advisor:
 
     def memory(self) -> dict:
         """What it said before, so its read stays consistent and changes on
-        evidence: its first read of the enemy (once our scouts had seen them),
-        its last ``ADVISOR_MEMORY_READS`` answers (as given), and the read and
-        posture in effect (two answers must agree before one takes effect)."""
+        evidence:
+
+        - ``first_read``: its first read of the enemy (once our scouts had
+          seen them), with its evidence;
+        - ``read_changes``: its last ``ADVISOR_MEMORY_READS`` changes of read
+          (posture, style, balance, expansion, route) — what changed, and how
+          many answers and seconds the read before held;
+        - ``latest``: its newest answer and how many answers it has held;
+        - ``in_effect``: the read the engine acts on (a change takes effect
+          once two answers agree, or at once when it is sure and says why);
+        - ``opponent_history``: our past games against this opponent."""
         return {
             "first_read": self.first_read,
-            "recent_reads": self._reads[-C.ADVISOR_MEMORY_READS:],
+            "read_changes": self._changes[-C.ADVISOR_MEMORY_READS:],
+            "changes_so_far": len(self._changes),
+            "answers_so_far": self._answers,
+            "latest": self._latest,
             "in_effect": dict(self._steady_values),
+            "opponent_history": self.opponent_history,
         }
 
     def _remember(self, advice: "Advice") -> None:
-        read = {"t": round(advice.made_at), "enemy_style": advice.enemy_style, "posture": advice.posture,
-                "balance": advice.balance, "plan": (advice.plan or "")[:240]}
-        self._reads = (self._reads + [read])[-2 * C.ADVISOR_MEMORY_READS:]
+        read = {k: getattr(advice, k) for k in STEADY_FIELDS}
+        t = round(advice.made_at)
+        self._answers += 1
+        before = self._latest["read"] if self._latest else None
+        if read != before:
+            entry = {"t": t, "read": read, "plan": (advice.plan or "")[:200],
+                     "confidence": advice.confidence, "evidence": list(advice.evidence)}
+            if before is None:
+                entry["changed"] = "first answer"
+            else:
+                entry["changed"] = {k: [before[k], v] for k, v in read.items() if before[k] != v}
+                n, since = self._changed_at
+                entry["answers_between"] = self._answers - n         # how long the read before held
+                entry["seconds_between"] = t - round(since)
+            self._changes = (self._changes + [entry])[-2 * C.ADVISOR_MEMORY_READS:]
+            self._changed_at = (self._answers, advice.made_at)
+        n, _ = self._changed_at
+        self._latest = {"t": t, "read": read, "plan": (advice.plan or "")[:200], "confidence": advice.confidence,
+                        "answers_unchanged": self._answers - n + 1}   # answers giving this read
         if self.first_read is None and advice.enemy_style != "unknown":
-            self.first_read = {**read, "reasoning": (advice.reasoning or "")[:240]}
+            self.first_read = {"t": t, "read": read, "plan": (advice.plan or "")[:240],
+                               "reasoning": (advice.reasoning or "")[:240], "evidence": list(advice.evidence),
+                               "confidence": advice.confidence}
+
+    def _since(self, view: View, situation: dict) -> dict | None:
+        """What happened since it was last asked: seconds, our kills and
+        losses, units, buildings and scouts lost, the first sightings and our
+        army's mode changes in between (``situation.counters`` and the
+        scouting report). None the first time."""
+        counters = situation.get("counters") or {}
+        t = view.game_seconds
+        last, self._last_ask = self._last_ask, {"t": t, "counters": dict(counters)}
+        if last is None:
+            return None
+        sightings = (situation.get("scouting") or {}).get("recent_sightings") or []
+        return {
+            "seconds": round(t - last["t"]),
+            **{k: round(v - last["counters"].get(k, 0)) for k, v in counters.items()
+               if isinstance(v, (int, float))},
+            "new_sightings": [s for s in sightings if s.get("t", 0) > last["t"]][:10],
+            "mode_changes": [m for m in situation.get("mode_changes") or [] if m.get("t", 0) > last["t"]],
+        }
 
     def _steady(self, advice: "Advice") -> "Advice":
         """Its posture, read, balance, expand and route take effect only when
         two answers in a row agree (about 12 s): one odd answer doesn't swing
-        the plan. Targets and notes pass straight through."""
+        the plan — unless it is sure (``ADVISOR_FAST_CONFIDENCE``) and gives
+        its evidence. Targets and notes pass straight through."""
         raw = {k: getattr(advice, k) for k in STEADY_FIELDS}
+        sure = advice.confidence >= C.ADVISOR_FAST_CONFIDENCE and bool(advice.evidence)
         for k, v in raw.items():
-            if self._last_raw.get(k) == v:
+            if self._last_raw.get(k) == v or sure:   # sure, and says why: at once
                 self._steady_values[k] = v
         self._last_raw = raw
         return dataclasses.replace(advice, **self._steady_values)
