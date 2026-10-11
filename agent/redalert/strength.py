@@ -155,7 +155,7 @@ def army_odds(view, turrets=(), busy_ids=frozenset(), busy_value: float = 0.0) -
     return odds(view, [u.type for u in view.combat_units], list(theirs.values()) + list(turrets), believed)
 
 
-TURRETS = frozenset({"pbox", "hbox", "ftur", "gun", "tsla"})
+TURRETS = frozenset(C.TURRETS)
 
 
 def rifles_per_rocket(theirs) -> int:

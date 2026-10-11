@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from . import config as C
 from . import orders
-from .modes import DEFENSIVE, Mode
+from .modes import Mode
 from .observe import View, dist2
 
 _POST_RADIUS_CELLS = 2

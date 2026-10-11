@@ -319,7 +319,7 @@ class Expansion:
 
     def _track_defense_requests(self, view: View) -> None:
         """Note when an expansion's turret has been put in production."""
-        if not any(view.queued_count(d) for d in C.DEFENSES):
+        if not any(view.queued_count(d) for d in C.TURRETS):
             return
         site = self.defense_site(view)
         if site is not None:
@@ -370,7 +370,7 @@ class Expansion:
 
     def _defenses(self, view: View, site) -> int:
         r2 = C.EXPAND_REFINERY_RADIUS_CELLS ** 2
-        return sum(1 for b in view.buildings if b.type in C.DEFENSES and b.cell is not None
+        return sum(1 for b in view.buildings if b.type in C.TURRETS and b.cell is not None
                    and not b.wreck and dist2(b.cell, site) <= r2)
 
     def _gates(self, view: View, mode: Mode, advice) -> bool:
@@ -391,7 +391,6 @@ class Expansion:
             and len(view.units_of(C.HARVESTER)) >= C.EXPAND_MIN_HARVESTERS
             and _count(view, C.REFINERY) >= C.EXPAND_MIN_REFINERIES
             and view.has_building(C.WAR_FACTORY)
-            and view.army_value >= C.EXPAND_MIN_ARMY_VALUE
             and not outgunned(view)
             # Well behind on army: units first, unless home is running dry (52a77fb1:
             # an MCV in production at 2-3x behind).
@@ -591,7 +590,7 @@ def expansion_defenses(view: View, cell) -> int:
     """Known enemy defenses near an enemy expansion."""
     r2 = C.EXPAND_CLUSTER_CELLS ** 2
     return sum(1 for b in list(view.enemy_buildings) + list(view.known_enemy_buildings)
-               if b.type in C.DEFENSES and b.cell is not None and dist2(b.cell, cell) <= r2)
+               if b.type in C.TURRETS and b.cell is not None and dist2(b.cell, cell) <= r2)
 
 
 def choose_site(view: View, exclude=()) -> tuple[tuple[int, int], tuple[int, int]] | None:

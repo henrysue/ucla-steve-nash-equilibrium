@@ -268,7 +268,7 @@ class RaidCorps:
             for s in self.squads:
                 s.results.clear()
         steps = 0 if t < self._backoff_until else raid_steps(view)
-        allowed = min(C.RAID_MAX_SQUADS, 1 + steps)
+        allowed = 1 if t < self._backoff_until else squads_allowed(view)
         while len(self.squads) < allowed:
             self.squads.append(Raid())
         fighters = [u for u in view.combat_units if u.id is not None and u.id != scout_id and u.id not in taken]

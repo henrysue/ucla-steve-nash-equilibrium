@@ -277,7 +277,7 @@ def _production_orders(view: View, mode: Mode, *, sparring=None, threat: bool = 
         ratio = C.RIFLE_TO_ROCKET if funds(view) >= C.ROCKET_RATIO_CREDIT_SWITCH else C.RIFLE_TO_ROCKET_EARLY
         # The counter: more rockets as their army turns to armor (a rifleman
         # does 125/s to a tank, a rocket soldier 2500/s).
-        theirs = _enemy_kinds(view)
+        theirs = strength.enemy_kinds(view)
         if len(theirs) >= C.MATCHUP_MIN_UNITS:
             ratio = min(ratio, strength.rifles_per_rocket(theirs))
         if view.queued_count(rifle) < depth:
@@ -304,7 +304,7 @@ def enemy_defenses(view: View) -> list:
     """Enemy defenses we can see or remember."""
     seen = {}
     for a in list(view.enemy_buildings) + list(view.known_enemy_buildings):
-        if a.type in C.ENEMY_DEFENSE_TYPES and a.cell is not None and not a.wreck:
+        if a.type in C.TURRETS and a.cell is not None and not a.wreck:
             seen[a.id if a.id is not None else a.cell] = a
     return list(seen.values())
 
@@ -319,14 +319,6 @@ def ahead_in_queue(view: View, queue: str, item: str) -> str | None:
     if waiting and waiting[0] != item and item in waiting:
         return waiting[0]
     return None
-
-
-def _enemy_kinds(view: View) -> list[str]:
-    """The enemy fighters we see or remember, by type (no harvesters or MCVs)."""
-    skip = set(C.HARVESTER) | {C.MCV}
-    seen = {a.id: a.type for a in list(view.known_enemy_units) + list(view.enemy_units)
-            if a.id is not None and not a.wreck and a.type not in skip}
-    return list(seen.values())
 
 
 def tanks_lag(view: View, tank: str | None) -> bool:

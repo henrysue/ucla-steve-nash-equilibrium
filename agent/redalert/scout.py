@@ -99,7 +99,7 @@ def _base_needs_army(view: View, near: list) -> bool:
         return True
     r2 = C.CHEESE_NEAR_BASE_CELLS ** 2
     home = [u.type for u in view.combat_units if u.cell is not None and dist2(u.cell, base) <= r2]
-    home += [b.type for b in view.buildings if b.type in C.DEFENSES and not b.wreck and b.cell is not None
+    home += [b.type for b in view.buildings if b.type in C.TURRETS and not b.wreck and b.cell is not None
              and dist2(b.cell, base) <= C.DEFENSE_MAIN_RADIUS_CELLS ** 2]
     return strength.odds(view, home, theirs) < C.BASE_DEFEND_HOME_ODDS
 
@@ -225,23 +225,6 @@ def _forward(view: View, anchor, toward, cells: float, base) -> tuple[int, int]:
     return x, y
 
 
-def stage_is_safe(view: View, cell) -> bool:
-    """No known enemy combat unit or defense within
-    ``STAGE_DANGER_RADIUS_CELLS`` of ``cell``."""
-    r2 = C.STAGE_DANGER_RADIUS_CELLS ** 2
-    threats = [a for a in list(view.enemy_units) + list(view.known_enemy_units) if a.type not in _NON_THREAT]
-    threats += [a for a in view.known_enemy_buildings if a.type in C.DEFENSES]
-    return not any(a.cell is not None and dist2(a.cell, cell) <= r2 for a in threats)
-
-
-def stage_is_ours(view: View, cell) -> bool:
-    """``cell`` is on our side: within ``STAGE_MAX_FRACTION`` of the way to the enemy."""
-    base, toward = view.base_center, _enemy_side(view)
-    if base is None or toward is None:
-        return False
-    return dist2(base, cell) <= (C.STAGE_MAX_FRACTION ** 2) * dist2(base, toward)
-
-
 def _enemy_side(view: View):
     from .observe import enemy_spawn_guess
 
@@ -276,38 +259,6 @@ def _along(a, b, fraction: float) -> tuple[int, int]:
 
 
 # -- the roaming scout ---------------------------------------------------------
-
-
-def patrol_route(view: View) -> list[tuple[int, int]]:
-    """A clockwise ring of waypoints around the map, starting at the one
-    nearest our base: the four corners and four edge midpoints, inset from the
-    playable edge. Empty when the map bounds are unknown."""
-    if view.bounds is None:
-        return []
-    x, y, w, h = view.bounds
-    inset = max(1, min(C.SCOUT_INSET_CELLS, w // 4, h // 4))
-    left, top, right, bottom = x + inset, y + inset, x + w - 1 - inset, y + h - 1 - inset
-    midx, midy = (left + right) // 2, (top + bottom) // 2
-    ring = [(left, top), (midx, top), (right, top), (right, midy),
-            (right, bottom), (midx, bottom), (left, bottom), (left, midy)]
-    if view.base_center is not None:
-        start = min(range(len(ring)), key=lambda i: dist2(ring[i], view.base_center))
-        ring = ring[start:] + ring[:start]
-    # Visit the enemy's ore field on every loop, right after the ring point
-    # nearest to it: that is where their harvesters (raid targets) work.
-    from .observe import enemy_ore_field
-
-    stops = [enemy_ore_field(view)]
-    # From 3:30, also the ore fields the enemy is likeliest to expand to.
-    if view.game_seconds >= C.ENEMY_EXPANSION_WATCH_AFTER_SECONDS:
-        from .expand import enemy_expansion_sites
-
-        stops += enemy_expansion_sites(view)[:C.ENEMY_EXPANSION_SCOUT_SITES]
-    for stop in stops:
-        if stop is not None and stop not in ring:
-            after = min(range(len(ring)), key=lambda i: dist2(ring[i], stop))
-            ring.insert(after + 1, stop)
-    return ring
 
 
 class Hunter:
@@ -474,7 +425,7 @@ def _defensive_line(view: View, yard, threat) -> tuple[int, int] | None:
         return round(frm[0] + dx / d * cells), round(frm[1] + dy / d * cells)
 
     mine = [b for b in view.buildings if b.cell is not None and not b.wreck and dist2(b.cell, yard) <= r2]
-    towers = [b.cell for b in mine if b.type in C.DEFENSES]
+    towers = [b.cell for b in mine if b.type in C.TURRETS]
     if towers:
         tower = min(towers, key=lambda c: dist2(c, threat))
         return step(tower, yard, 2)

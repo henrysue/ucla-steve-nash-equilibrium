@@ -203,11 +203,11 @@ class Rusher(Archetype):
 
         if under_attack:
             return None
-        defense = buildplan._available(view, C.DEFENSES)
-        if defense is None or any(view.queued_count(d) for d in C.DEFENSES) or any(
-                p.get("ready") and str(p.get("item") or "").lower() in C.DEFENSES for p in view.production):
+        defense = buildplan._available(view, C.BUILD_TURRETS)
+        if defense is None or any(view.queued_count(d) for d in C.TURRETS) or any(
+                p.get("ready") and str(p.get("item") or "").lower() in C.TURRETS for p in view.production):
             return []
-        have = sum(1 for b in view.buildings if b.type in C.DEFENSES and not b.wreck)
+        have = sum(1 for b in view.buildings if b.type in C.TURRETS and not b.wreck)
         want = _scheduled(RUSH_PILLBOXES, view.game_seconds, 0)
         if have < want and view.cash + view.ore >= RUSH_PILLBOX_FUNDS:
             return [orders.build(defense)]
@@ -248,12 +248,12 @@ class Turtler(_Pusher):
         usual turrets (expansions, under attack)."""
         from . import buildplan
 
-        defense = buildplan._available(view, C.DEFENSES)
-        if defense is None or any(view.queued_count(d) for d in C.DEFENSES) or any(
-                p.get("ready") and str(p.get("item") or "").lower() in C.DEFENSES for p in view.production):
+        defense = buildplan._available(view, C.BUILD_TURRETS)
+        if defense is None or any(view.queued_count(d) for d in C.TURRETS) or any(
+                p.get("ready") and str(p.get("item") or "").lower() in C.TURRETS for p in view.production):
             return None
         want = _scheduled(TURTLE_DEFENSES, view.game_seconds, 0)
-        have = sum(1 for b in view.buildings if b.type in C.DEFENSES and not b.wreck)
+        have = sum(1 for b in view.buildings if b.type in C.TURRETS and not b.wreck)
         if have < min(want, TURTLE_MAX_DEFENSES) and view.cash + view.ore >= TURTLE_DEFENSE_FUNDS:
             return [orders.build(defense)]
         return None

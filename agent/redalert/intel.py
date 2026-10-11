@@ -97,7 +97,7 @@ class EnemyIntel:
         if self._push_at is not None and view.game_seconds - self._push_at < C.TURTLE_QUIET_SECONDS:
             return False
         ids = {(a.id if a.id is not None else a.cell) for a in list(view.known_enemy_buildings) + list(view.enemy_buildings)
-               if a.type in C.GROUND_DEFENSE_TYPES and not a.wreck}
+               if a.type in C.TURRETS and not a.wreck}
         return len(ids) >= C.TURTLE_READ_DEFENSES
 
     def opening(self) -> str | None:

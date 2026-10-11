@@ -354,12 +354,6 @@ def test_no_silo_with_room_to_spare():
 # -- the roaming scout -------------------------------------------------------
 
 
-def test_patrol_route_rings_the_map_from_our_corner():
-    route = scout.patrol_route(_view())  # bounds [0, 0, 48, 48], base [4, 4]
-    assert route[0] == (8, 8) and len(route) == 8
-    assert all(8 <= x <= 39 and 8 <= y <= 39 for x, y in route)
-
-
 def test_the_scout_corps_trains_a_scout_when_none_can_be_claimed():
     from agent.redalert.scouting import ScoutCorps
     corps = ScoutCorps()
@@ -870,12 +864,6 @@ _ORE = ((10, 10), (36, 34), (37, 34), (38, 35), (8, 9))  # ours near [4,4]; thei
 def test_enemy_ore_field_is_the_ore_near_their_spawn():
     v = dataclasses.replace(_view(), ore_cells=_ORE)
     assert enemy_ore_field(v) == (37, 34)
-
-
-def test_scout_route_visits_the_enemy_ore_field():
-    v = dataclasses.replace(_view(), ore_cells=_ORE)
-    route = scout.patrol_route(v)
-    assert (37, 34) in route and len(route) == 9
 
 
 def test_no_raid_on_their_main_ore_field():
@@ -1477,13 +1465,6 @@ def test_likely_enemy_expansion_sites_are_far_from_their_base_on_their_side():
     sites = enemy_expansion_sites(v)
     assert sites and sites[0] in ((40, 14), (41, 14), (40, 15))
     assert all(s not in ((38, 36), (39, 36), (8, 8)) for s in sites)
-
-
-def test_scout_watches_enemy_expansion_sites_from_three_thirty():
-    early = dataclasses.replace(_view(_t=150.0), ore_cells=_THEIR_ORE)
-    late = dataclasses.replace(_view(_t=240.0), ore_cells=_THEIR_ORE)
-    site = enemy_expansion_sites(late)[0]
-    assert site not in scout.patrol_route(early) and site in scout.patrol_route(late)
 
 
 def test_a_far_enemy_building_is_an_expansion_preferring_its_refinery():

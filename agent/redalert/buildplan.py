@@ -61,7 +61,7 @@ def next_build_orders(view: View, expansion_ore: tuple[int, int] | None = None,
         # (Match e4caa28c: a war factory sat ahead of the power plant for 5
         # minutes at 9/130 power.) When we are actually underpowered, cancel
         # whatever is ahead of the power plant; the build order re-queues it.
-        blocker = _ahead_of_power(view, powr)
+        blocker = _ahead_of(view, powr)
         if blocker is not None and view.power_margin < 0:
             return [orders.cancel(blocker)]
         # If power is queued/placing, fall through — don't stall other logic.
@@ -315,7 +315,7 @@ def placement_orders(
                 live = open_ore(view, depleted)
                 at = _beside_ore(view, live, item) if live is not None else \
                     _crawl_toward(view, open_ore(view, depleted, radius=None), item)
-            elif item in C.DEFENSES and expansion_defense is not None:
+            elif item in C.TURRETS and expansion_defense is not None:
                 # The expansion's turret: watching a choke in range, else on its enemy-facing edge.
                 at = (_watch_spot(view, item, expansion_defense, near=expansion_defense)
                       or perimeter_spot(view, expansion_defense, scout_watch(view, expansion_defense)
@@ -399,7 +399,7 @@ def placement_cell(view: View, item: str, defense_at: tuple[int, int] | None = N
     base = home or view.base_center
     if base is None:
         return None
-    if item in C.DEFENSES:
+    if item in C.TURRETS:
         from .scout import enemy_threat_near_base
 
         threats = [a.cell for a in enemy_threat_near_base(view) if a.cell is not None]
@@ -813,7 +813,7 @@ def _watch_spot(view: View, item: str, base, near=None) -> tuple[int, int] | Non
     if watch is None:
         return None
     r2 = C.WATCH_SPOT_CELLS ** 2
-    if any(b.type in C.DEFENSES and b.cell is not None and not b.wreck and dist2(b.cell, watch) <= r2
+    if any(b.type in C.TURRETS and b.cell is not None and not b.wreck and dist2(b.cell, watch) <= r2
            for b in view.buildings):
         return None                    # it has its watch tower
     spots = [s for s in legal_spots(view, item, near) if dist2(s, watch) <= r2]
@@ -843,7 +843,7 @@ def perimeter_spot(view: View, base: tuple[int, int], toward, item: str = "pbox"
         rel = math.degrees(math.atan2(prefer[1] - base[1], prefer[0] - base[0]) - base_angle)
         rel = (rel + 180) % 360 - 180
         slots.sort(key=lambda d: abs(d - rel))
-    defenses = [b.cell for b in view.buildings if b.type in C.DEFENSES and b.cell is not None and not b.wreck]
+    defenses = [b.cell for b in view.buildings if b.type in C.TURRETS and b.cell is not None and not b.wreck]
     gap2 = C.DEFENSE_MIN_GAP_CELLS ** 2
     fallback = None
     for deg in slots:
@@ -852,7 +852,7 @@ def perimeter_spot(view: View, base: tuple[int, int], toward, item: str = "pbox"
         # turrets out toward the enemy one past another.
         # Close to the slot's line beats far forward: a turret beside the
         # road in covers it, one far out to the side covers nothing.
-        spot = grow_spot(view, (math.cos(angle), math.sin(angle)), item, near=near, skip_types=C.DEFENSES,
+        spot = grow_spot(view, (math.cos(angle), math.sin(angle)), item, near=near, skip_types=C.TURRETS,
                          side_weight=C.DEFENSE_SIDE_WEIGHT, slack=C.DEFENSE_UNIT_SLACK)
         if spot is None:
             continue
@@ -873,11 +873,11 @@ def defense_orders(view: View, under_attack: bool, expansion_site: tuple[int, in
     Kept few and cheap: the match is short, and money spent on concrete is
     money not spent on harvesters and tanks.
     """
-    defense = _available(view, C.DEFENSES)
+    defense = _available(view, C.BUILD_TURRETS)
     if defense is None:
         return []
-    if any(view.queued_count(d) for d in C.DEFENSES) or any(
-            p.get("ready") and str(p.get("item") or "").lower() in C.DEFENSES for p in view.production):
+    if any(view.queued_count(d) for d in C.TURRETS) or any(
+            p.get("ready") and str(p.get("item") or "").lower() in C.TURRETS for p in view.production):
         return []
     enemy = enemy_spawn_guess(view)
     # An expansion still without its turret — only if its fan has a free slot.
@@ -893,7 +893,7 @@ def defense_orders(view: View, under_attack: bool, expansion_site: tuple[int, in
     if base is None:
         return []
     r2 = C.DEFENSE_MAIN_RADIUS_CELLS ** 2
-    have = sum(1 for b in view.buildings if b.type in C.DEFENSES and b.cell is not None
+    have = sum(1 for b in view.buildings if b.type in C.TURRETS and b.cell is not None
                and not b.wreck and dist2(b.cell, base) <= r2)
     cap = C.MAX_DEFENSES if under_attack else (C.STANDING_DEFENSES if view.has_building(C.WAR_FACTORY) else 0)
     if under_attack and not attacked and not view.has_building(C.WAR_FACTORY):
@@ -980,32 +980,6 @@ def open_ore(view: View, depleted: frozenset = frozenset(),
     return best[1] if best else None
 
 
-def live_ore_near_yards(view: View, depleted: frozenset = frozenset()) -> tuple[int, int] | None:
-    """The ore cell nearest one of our construction yards that is not in a
-    mined-out field (``depleted`` holds field cells from harvest.py), within
-    reach of a refinery; None if there is none."""
-    from .scout import our_yards
-
-    field2 = (C.EXPAND_CLUSTER_CELLS * 1.5) ** 2
-    reach2 = C.REFINERY_ORE_SEARCH_CELLS ** 2
-    yards = our_yards(view)
-    live = [c for c in view.ore_cells if not any(dist2(c, f) <= field2 for f in depleted)]
-    near = [(min(dist2(c, y) for y in yards), c) for c in live if yards and any(dist2(c, y) <= reach2 for y in yards)]
-    return min(near)[1] if near else None
-
-
-def nearest_live_ore(view: View, depleted: frozenset = frozenset()) -> tuple[int, int] | None:
-    """The live ore cell nearest any of our yards, however far."""
-    from .scout import our_yards
-
-    field2 = (C.EXPAND_CLUSTER_CELLS * 1.5) ** 2
-    yards = our_yards(view)
-    live = [c for c in view.ore_cells if not any(dist2(c, f) <= field2 for f in depleted)]
-    if not live or not yards:
-        return None
-    return min(live, key=lambda c: min(dist2(c, y) for y in yards))
-
-
 def _crawl_toward(view: View, target, item: str) -> tuple[int, int] | None:
     """A spot one step from our frontmost building toward ``target``: the
     base grows that way building by building ("crawl your base toward the new
@@ -1065,20 +1039,6 @@ def _ahead_of(view: View, item: str | None) -> str | None:
         if str(p.get("queue") or "").lower() == "building" and not p.get("ready")
     ]
     if waiting and waiting[0] != item and item in waiting:
-        return waiting[0]
-    return None
-
-
-def _ahead_of_power(view: View, powr: str | None) -> str | None:
-    """The unfinished item at the head of the Building queue when a power
-    plant is waiting behind it, else ``None``."""
-    if powr is None:
-        return None
-    waiting = [
-        str(p.get("item") or "").lower() for p in view.production
-        if str(p.get("queue") or "").lower() == "building" and not p.get("ready")
-    ]
-    if waiting and waiting[0] != powr and powr in waiting:
         return waiting[0]
     return None
 

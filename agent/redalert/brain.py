@@ -222,7 +222,7 @@ def turrets_at_target(view: View) -> list[str]:
     r2 = C.DEFENSE_CLUSTER_CELLS ** 2
     known = {(a.id if a.id is not None else a.cell): a
              for a in list(view.enemy_buildings) + list(view.known_enemy_buildings)
-             if a.type in C.ENEMY_DEFENSE_TYPES and a.cell is not None and not a.wreck
+             if a.type in C.TURRETS and a.cell is not None and not a.wreck
              and dist2(a.cell, target) <= r2}
     return [a.type for a in known.values()]
 

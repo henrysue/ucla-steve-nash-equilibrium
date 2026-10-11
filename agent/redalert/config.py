@@ -22,8 +22,6 @@ SERVICE_DEPOT = "fix"              # unlocks 2tnk/3tnk and the MCV
 RADAR_DOME = "dome"                # unlocks siege units
 RIFLE = "e1"
 ROCKET = "e3"
-LIGHT_TANKS = ("1tnk", "2tnk")     # Allied light / medium
-HEAVY_TANKS = ("3tnk", "4tnk")     # Soviet heavy / mammoth
 # The strongest main battle tank offered, never the light tank when a better
 # one is unlocked (52a77fb1, England: light tanks all game against medium
 # tanks). Pro replays: heavy/medium tanks in every game, light tanks never.
@@ -33,10 +31,11 @@ TANK_VALUE_SHARE = 0.45            # pros keep 45-55% of combat value in tanks: 
 HARVESTER = ("harv",)
 SIEGE_UNITS = ("v2rl", "arty")     # Soviet V2 / Allied artillery: outrange defenses
 SCOUT_VEHICLES = ("jeep", "ftrk")
-SCOUT_FALLBACK = "e1"              # a rifleman scouts until a vehicle exists
 NON_COMBAT = ("e6", "medi", "mech", "spy", "thf", "lst")
 VEHICLE_TYPES = ("1tnk", "2tnk", "3tnk", "4tnk", "jeep", "apc", "ftrk", "arty", "v2rl", "ttnk", "ctnk", "stnk")
-DEFENSES = ("pbox", "ftur", "gun", "tsla")   # cheapest first
+TURRETS = ("pbox", "hbox", "gun", "ftur", "tsla")   # ground turrets, either side: they fight in battles (strength.py),
+                                   # guard attack targets, and siege units shell them (anti-air does none of it)
+BUILD_TURRETS = ("pbox", "ftur", "gun", "tsla")   # what we build: the first one offered (cheapest first)
 ALL_BUILDING_TYPES = frozenset({
     "fact", "powr", "apwr", "tent", "barr", "proc", "weap", "fix", "silo", "dome", "hpad", "afld",
     "spen", "syrd", "atek", "stek", "gap", "sam", "agun", "kenn", "iron", "pdox", "mslo",
@@ -101,7 +100,6 @@ MAX_WAR_FACTORIES = 2              # the second once the service depot stands: t
 # -- end game: radar dome and siege units against turtled bases ---------------------------------
 DOME_AFTER_SECONDS = 420.0         # pros build the dome ~7:00-8:30
 DOME_ADD_FUNDS = 1000
-ENEMY_DEFENSE_TYPES = ("pbox", "hbox", "gun", "ftur", "tsla", "agun", "sam")
 SIEGE_MIN_ENEMY_DEFENSES = 1       # siege units only once we know of enemy defenses
 SIEGE_MAX = 4
 SIEGE_TARGET_RADIUS_CELLS = 10     # siege units fire on known defenses this close first
@@ -116,16 +114,11 @@ PUSH_NEAR_BASE_CELLS = 20          # enemy fighters worth PUSH_SEEN_VALUE this c
 PUSH_SEEN_VALUE = 1000
 SIEGE_MAX_TURTLE = 6               # against a turtle: about one siege unit per turret, up to this...
 SIEGE_ATTACK_MIN = 3               # ...and no attack before this many (unless overwhelming)
-GROUND_DEFENSE_TYPES = ("pbox", "hbox", "gun", "ftur", "tsla")   # turrets that shoot ground units
 DEFENSE_CLUSTER_CELLS = 12         # turrets this close to the attack target defend it
 RAID_FAILED_TARGET_SECONDS = 240.0  # a target where a raid lost more than it killed is left alone this long
-INFANTRY_PER_DEFENSE = 6           # attack defended ground with this many infantry per turret...
-INFANTRY_MASS_MIN = 15             # ...and at least this many...
-ARMOR_PER_DEFENSE = 3              # ...or this many tanks per turret (siege units count double)
 
 # -- building placement ------------------------------------------------------------------------
 REFINERY_ORE_SEARCH_CELLS = 16     # ore this close steers refineries (and keeps power off its side)
-ORE_SIDE_AVOIDANCE = 0.5           # how hard the factory/depot bearing turns off the ore side
 BUILDING_GAP_CELLS = 1             # free cells between buildings (OpenRA allows little more)
 LANE_WIDTH_CELLS = 3               # kept-clear road from the base toward the staging point...
 LANE_KEEP_CLEAR_CELLS = 14         # ...for this many cells
@@ -181,10 +174,8 @@ BASE_DEFEND_EXPIRE_SECONDS = 20.0  # ...and goes back out this long after the ba
 UNDER_ATTACK_FRESH_TICKS = 250     # an under_attack event counts for 10 s
 
 # -- attacking -----------------------------------------------------------------------------------
-ENEMY_PRIOR_SHARE = 0.8            # fog: their army is at least this x (our army + our deaths - our kills)...
-ENEMY_PEAK_SECONDS = 180.0         # ...and the most we saw of it this recently, less what we killed since
-SCOUT_FRESH_SECONDS = 45.0         # a scout round of their base this recent is a fresh look...
-WEAK_ENEMY_EDGE = 2.0              # ...and our army this x what it saw: trust the look (they are weak), not the prior
+ENEMY_PEAK_SECONDS = 180.0         # their army: the most we saw of it this recently, less half what we killed since
+SCOUT_FRESH_SECONDS = 45.0         # a scout round of their base this recent is a fresh look (not blind)
 KILL_ARMY_SHARE = 0.5              # a past sighting loses this share of our kills since (the rest were buildings and trucks)
 ATTACK_ARMY_EDGE = 1.3             # our army / estimated enemy army (brain.enemy_estimate) needed to attack...
 ESCALATED_ARMY_EDGE = 1.15         # ...lowered after ESCALATE_AFTER_SECONDS (1.0 attacked at parity and retreated within seconds: ef66403c)...
@@ -203,22 +194,15 @@ TARGET_PRIORITY = (("powr", "apwr"), ("fact", "weap", "tent", "barr"), ("proc",)
 ATTACK_FOCUS_RADIUS_CELLS = 10     # priority applies among buildings this close to the nearest
 STAGE_FORWARD_CELLS = 10           # mass (and rally new units) at least this far in front of the base, toward the enemy...
 STAGE_SHARE = 0.25                 # ...or this share of the way to the enemy base if farther (big maps: Shadowfiend II 17 cells)...
-STAGE_FALLBACK_CELLS = 3           # ...or this far if enemies are near that spot...
 STAGE_FRACTION = 0.30              # ...never farther than this share of the way to the enemy
-STAGE_MAX_FRACTION = 0.40          # the advisor's stage point must be on our side of this
-STAGE_DANGER_RADIUS_CELLS = 10
-STAGE_ENGAGE_CELLS = 12            # enemies worth more than a small raid this close to the massing army: it fights them...
-ENGAGE_MIN_RATIO = 0.8             # ...if worth at least this share of them; outnumbered, it falls back into the base
-ENGAGE_MIN_EDGE = 1.25             # by strength (strength.edge) under this, a push is met at our turret line, not in front of it
-MATCHUP_MIN_UNITS = 5              # both sides need this many known units before the mix counts (strength.matchup)
-MATCHUP_LIMITS = (0.6, 1.5)        # the mix moves the army edge at most this much
+STAGE_ENGAGE_CELLS = 12            # enemies this close to the army or the main base: the army's fight (executor.army_contact)
+ENGAGE_MIN_EDGE = 1.25             # the army's odds (strength.odds) under this: a fight at the main base is held at the turret line
+MATCHUP_MIN_UNITS = 5              # this many enemy fighters known before their mix moves our rifle:rocket ratio
 ARMOR_HEAVY_SHARE = 0.6            # their hit points this armored: one rocket soldier per rifleman
 OUTBOX_MAX_AGE_SECONDS = 1.5       # orders that didn't fit a batch go first in the next one, while this fresh
 RETALIATE_SECONDS = 6.0            # a spot of ours attacked (event) or lost this recently, no attacker in sight...
 RESPOND_RADIUS_CELLS = 12          # ...and any enemy group draw every idle fighter this close (executor.respond)
 GROUP_CELLS = 6                    # enemy fighters this close to each other are one group
-GUARD_RADIUS_CELLS = 8             # enemy fighters this close to the massing army: every idle unit goes at them
-                                   # in one order, and walks back to its slot after
 UNSEEN_LEAD_MIN = 2000             # nothing of their army seen counts as nothing left only this far ahead on trades
 CONCAVE_ORDERS_PER_VIEW = 6        # formation slot orders per view (the batch holds 20; the rest walk to the centre)
 STAGING_RADIUS_CELLS = 4           # idle units already this close to the stage are left alone
@@ -269,7 +253,6 @@ REGROUP_RADIUS_CELLS = 8           # ...within this of the staging point
 RETREAT_COOLDOWN_SECONDS = 60.0    # no new attack this soon after a retreat
 REATTACK_ARMY_GROWTH = 1.3         # ...nor before the army regrows this much...
 RETREAT_REGROW_MAX_SECONDS = 120.0 # ...unless this long has passed
-RETURN_FIRE_RADIUS_CELLS = 4       # retreating units this close to an enemy fight back
 
 # -- end of the match (tiebreak: kills - deaths, then assets) -----------------------------------
 PROTECT_LEAD_REMAINING_SECONDS = 120.0  # final 2 minutes with a lead of PROTECT_LEAD_MIN_MARGIN...
@@ -279,16 +262,11 @@ CATCH_UP_REMAINING_SECONDS = 180.0      # behind or level this late: attack rega
 
 # -- squads: scout, raids, home guard, garrison ---------------------------------------------------
 SCOUT_INSET_CELLS = 8              # patrol ring this far inside the map edge
-SCOUT_MIN_LEG_SECONDS = 2.0
-EARLY_SCOUT_SECONDS = 300.0        # before 5:00 the scout shuttles: their base <-> our approach
-EARLY_SCOUT_STANDOFF_CELLS = 12    # watch the ground in front of their base (where a push masses) from this far out...
-EARLY_SCOUT_SIDE_CELLS = 4         # ...and this far to the flank's side of their approach
 SCOUT_FLANK_FRACTION = 0.30        # the scout's path bows out sideways this share of the base-to-base distance
-SCOUT_REPLACE_SECONDS = 90.0       # a dead rifle scout is replaced only after this (vehicles at once)
 SQUAD_CLAIM_RADIUS_CELLS = 14      # guards and garrisons take only units this close to home, never from the field
 EARLY_PUSH_WINDOW_SECONDS = 360.0  # an early push: before 6:00, known enemy army of at least...
 EARLY_PUSH_MIN_VALUE = 1500        # ...this value
-EARLY_PUSH_RATIO = 1.0             # ...and this share of ours: hold at home, no attacks, turrets up
+EARLY_PUSH_RATIO = 1.0             # ...and our odds against it no better than this: hold at home, no attacks, turrets up
 ENEMY_ORE_RADIUS_CELLS = 20        # their ore field: ore this close to their spawn
 ENEMY_EXPANSION_WATCH_AFTER_SECONDS = 210.0
 ENEMY_EXPANSION_SCOUT_SITES = 2
@@ -352,12 +330,10 @@ SCOUT_PEEK_SECONDS = 45.0          # the lane scouts alternate their post with a
 SCOUT_PEEK_BACK_CELLS = 6          # the look stops this short of their massing point (it sees ~5 cells)...
 SCOUT_PEEK_SIDE_CELLS = 6          # ...and this far to its own side (never down the centre lane)
 INTERCEPT_MIN_VALUE = 1500         # an enemy army this big seen in our half: the army sets up across its path...
-INTERCEPT_MIN_EDGE = 1.0           # ...if it is at least as strong (strength.edge); else the turret line
 INTERCEPT_HOLD_SECONDS = 20.0      # the intercept point holds this long after the last sighting (no dithering)
 # -- committing to an attack --
 CONFIRM_SECONDS = 4.0              # an attack call is re-checked this long later, the army edging forward to see...
-CONFIRM_BLIND_MAX_SECONDS = 40.0   # an attack call on a blind estimate (BLIND_PRIOR_RATIO) waits up to this for a scout's look
-BLIND_PRIOR_RATIO = 2.0            # blind: our "about as big as us" prior over twice what we saw lately
+CONFIRM_BLIND_MAX_SECONDS = 40.0   # an attack call knowing little of their army (BLIND_SEEN_SHARE) waits up to this for a look
 CONFIRM_TRADE_BAND = 200           # ...only while kills - losses are this close to even (clearly ahead/behind: go at once)
 PROBE_FRACTION = 0.3               # ...to this share of the way from the massing point to the target
 ATTACK_GROUPS = 3                  # the army attacks in this many groups, a semi-concave...
@@ -373,7 +349,6 @@ EXPAND_EARLIEST_SECONDS = 180.0
 EXPAND_LAST_START_SECONDS = 840.0  # none after this: it can't pay off
 EXPAND_MIN_HARVESTERS = 3
 EXPAND_MIN_REFINERIES = 2
-EXPAND_MIN_ARMY_VALUE = 0
 EXPAND_MIN_FIGHTERS = 8            # no expansion MCV with fewer fighters (08560d9b trained one with 3, and with 5)...
 EXPAND_MCV_ARMY_VALUE = 2000       # ...or less army than this (the count includes the scouts: c4caa45e flipped at 8)
 EXPAND_MAX_EXPANSIONS = 3
@@ -434,7 +409,6 @@ HARVESTER_SETTLE_SECONDS = 30.0    # a moved harvester stays put at least this l
 
 # -- units: micro, movement, stances --------------------------------------------------------------
 FOCUS_RADIUS_CELLS = 4             # focus fire on the weakest enemy fighter this close (about weapon range); the target sticks
-PULL_BACK_HP = 35                  # vehicles below this (%) leave attacks
 STUCK_SECONDS = 10.0               # an ordered unit that hasn't moved this long gets a stop
 ENGAGED_RADIUS_CELLS = 7           # ...unless an enemy is this close
 # The concave: ranks on arcs round a kill point FORMATION_FOCUS_AHEAD cells in
@@ -456,10 +430,8 @@ ENEMY_UNIT_MEMORY_SECONDS = 90.0   # forget an unseen enemy unit after this
 MEMORY_CLEAR_RADIUS_CELLS = 4      # or when we stand on its last cell and it isn't there
 ATTACK_STALL_SECONDS = 40.0        # attacking with no kills and nothing in sight this long: a stale target
 TRANSFORM_RADIUS_CELLS = 4         # an enemy MCV this close to a remembered yard: the yard packed up
-HOME_RAID_RADIUS_CELLS = 10        # enemies this close to a yard or harvester of ours are raiding us...
-SMALL_RAID_VALUE = 1500            # ...and if worth at most this, units at home deal with them
-RESPONSE_VALUE_RATIO = 2.0         # send at least this x the raiders' value...
-RESPONSE_MIN_UNITS = 2             # ...and at least this many units (infantry first, nearest first)
+HOME_RAID_RADIUS_CELLS = 10        # a group this close to the main base (buildings, trucks) also draws the idle units at home...
+SMALL_RAID_VALUE = 1500            # ...and a group worth at most this is the idle units' job, more is the army's
 RUSH_MIN_VALUE = 600               # in the opening, enemies at our base worth less are scouts, not a rush
 SECOND_FACTORY_SECONDS = 360.0     # a second war factory from this (service depot up, its price in hand)
 STALL_FORGET_CELLS = 10            # ...forget remembered buildings this close to the army...

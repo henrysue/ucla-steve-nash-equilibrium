@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from . import config as C
 from . import orders
-from .modes import DEFENSIVE, Mode
+from .modes import Mode
 from .observe import Actor, View, dist2
 
 
@@ -35,7 +35,7 @@ def plan(view: View, mode: Mode, skip: frozenset, stage: tuple[int, int] | None)
     # Siege units (V2 / artillery) shell visible enemy defenses first: they
     # outrange them, which is the whole point of building them.
     defenses = [a for a in view.enemy_buildings
-                if a.type in C.ENEMY_DEFENSE_TYPES and a.id is not None and a.cell is not None and not a.wreck]
+                if a.type in C.TURRETS and a.id is not None and a.cell is not None and not a.wreck]
     s2 = C.SIEGE_TARGET_RADIUS_CELLS ** 2
     for u in fighters:
         if u.type in C.SIEGE_UNITS and u.id not in controlled:
