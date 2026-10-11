@@ -1365,6 +1365,7 @@ def test_expansion_waits_for_time_economy_and_army():
 
 def test_expansion_scouts_then_trains_moves_and_deploys(monkeypatch):
     monkeypatch.setattr(C, "EXPAND_MIN_FIGHTERS", 0)          # (the fighters gate has its own test)
+    monkeypatch.setattr(C, "EXPAND_MCV_ARMY_VALUE", 0)
     e = Expansion()
     e.update(_exp_view(), Mode.BUILD)
     assert e.state == "scouting" and e.scout_target == e.site
@@ -3833,3 +3834,33 @@ def test_one_refinery_seen_early_is_a_suspicion_worth_one_turret():
     v = _view(_t=108.0, base_center=[11, 11], buildings=blds, available_production=["pbox", "e1"], economy={"cash": 2000})
     assert {"cmd": "build", "item": "pbox"} not in executor.plan(v, Mode.BUILD)
     assert {"cmd": "build", "item": "pbox"} in executor.plan(v, Mode.BUILD, warning=True)
+
+
+# -- match c4caa45e: a barracks survived a 100-unit hunt ------------------------------------------
+
+
+def test_the_hunt_searches_every_cell_where_we_once_knew_a_building():
+    h = scout.Hunter()
+    barracks = [{"id": 90, "type": "barr", "x": 13, "y": 44, "hp": 100}]
+    h.hunting(_view(_t=900.0, visible_enemy_buildings=barracks))              # seen once...
+    v = _view(_t=1121.0, units=[{"id": 30, "type": "3tnk", "x": 40, "y": 40, "hp": 100}])
+    assert (13, 44) in h.targets(v, 20)                                      # ...searched after it is forgotten
+
+
+def test_a_big_army_hunts_in_many_groups():
+    units = [{"id": 100 + i, "type": "3tnk", "x": 30, "y": 30, "hp": 100} for i in range(60)]
+    v = _view(_t=1121.0, buildings=BASE, units=units, military={"kills_cost": 60000, "deaths_cost": 30000})
+    points = [(5, 40), (40, 5), (44, 44), (20, 44), (44, 20), (10, 10), (30, 44), (44, 30)]
+    o = executor._army_orders(v, Mode.ALL_IN, hunt=points[0], hunt_points=points)
+    assert len(o) == 8                                                       # 60 units: eight search groups
+
+
+def test_running_out_of_ore_overrides_the_advisors_wait():
+    import types
+    wait = types.SimpleNamespace(expand="wait")
+    e = Expansion()
+    v = _exp_view(t=600.0)
+    e._ore_running_out = False
+    assert not e._gates(v, Mode.BUILD, wait)                                 # "wait": no expansion...
+    e._ore_running_out = True
+    assert e._gates(v, Mode.BUILD, wait)                                     # ...unless the ore runs out

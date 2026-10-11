@@ -35,7 +35,7 @@ from __future__ import annotations
 
 from . import config as C
 from . import orders
-from .brain import outgunned
+from .brain import our_unit_value, outgunned
 from .modes import DEFENSIVE, Mode
 from .observe import View, dist2, enemy_spawn_guess
 
@@ -229,7 +229,8 @@ class Expansion:
             if view.queued_count(C.MCV):
                 if outgunned(view):
                     return out + [orders.cancel(C.MCV)]   # units first: the money comes back
-            elif not outgunned(view) and len(view.combat_units) >= C.EXPAND_MIN_FIGHTERS:
+            elif (not outgunned(view) and len(view.combat_units) >= C.EXPAND_MIN_FIGHTERS
+                  and our_unit_value(view) >= C.EXPAND_MCV_ARMY_VALUE):
                 return out + [orders.train(C.MCV, count=1)]
         return out + self._mcv_orders(view)
 
@@ -346,7 +347,10 @@ class Expansion:
 
     def _gates(self, view: View, mode: Mode, advice) -> bool:
         wish = getattr(advice, "expand", "auto")
-        if wish == "wait" and not self._push(view.game_seconds):
+        # Running out of ore overrides a "wait" (match c4caa45e: the advisor's
+        # "more_army" read meant "wait" in 151 of 159 answers, and the ore ran
+        # out with a second site free).
+        if wish == "wait" and not self._push(view.game_seconds) and not getattr(self, "_ore_running_out", False):
             return False   # broke and trading even: income beats the advisor's caution
         earliest = C.EXPAND_EARLIEST_SECONDS if wish == "now" else C.EXPAND_AFTER_SECONDS
         return (

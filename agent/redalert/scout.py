@@ -303,6 +303,7 @@ class Hunter:
     def __init__(self) -> None:
         self._checked: set[tuple[int, int]] = set()
         self._most_buildings = 0       # the most enemy buildings we have known at once
+        self._ever: list[tuple[int, int]] = []   # every cell where we knew an enemy building
 
     def hunting(self, view: View) -> bool:
         """Their base is (nearly) razed: we once knew at least twice
@@ -311,8 +312,12 @@ class Hunter:
         Time to finish them (match 0561274e: an 80-unit army stood on the
         ruins for 6 minutes; b7fcbd4e: a 40k army spent its last 5 minutes
         10 cells from the enemy's last building, a radar dome)."""
-        known = {a.id for a in list(view.enemy_buildings) + list(view.known_enemy_buildings) if not a.wreck}
+        seen = [a for a in list(view.enemy_buildings) + list(view.known_enemy_buildings) if not a.wreck]
+        known = {a.id for a in seen}
         self._most_buildings = max(self._most_buildings, len(known))
+        for a in seen:
+            if a.cell is not None and all(dist2(a.cell, c) > 9 for c in self._ever):
+                self._ever.append(a.cell)
         return (self._most_buildings >= 2 * C.FINISH_MAX_BUILDINGS and len(known) <= C.FINISH_MAX_BUILDINGS
                 and view.kills_cost > view.deaths_cost)
 
@@ -322,8 +327,14 @@ class Hunter:
 
     def targets(self, view: View, k: int) -> list[tuple[int, int]]:
         """Up to ``k`` unchecked search points: the enemy spawn first while it
-        is unchecked, then the points nearest the army."""
+        is unchecked, then the points nearest the army. Every cell where we
+        once knew an enemy building is one (match c4caa45e: a barracks our
+        memory had dropped survived 80 s of a 100-unit hunt that searched
+        the spawn, ore fields and corners)."""
         points = self._points(view)
+        for c in self._ever:
+            if all(dist2(c, p) > 36 for p in points):
+                points.append(c)
         if not points:
             return []
         r2 = C.HUNT_CHECKED_CELLS ** 2

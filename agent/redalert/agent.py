@@ -402,6 +402,8 @@ class RedAlertAgent:
                 "mode_for_seconds": round(self._game_seconds - self._mode_since) if self._game_seconds else 0,
                 "confirming_attack": self._commander.confirming,
                 "massing_point": list(scout.choke_cell(view) or []) or None,
+                "ore_runway_seconds": (round(self._harvest.runway_seconds)
+                                       if self._harvest.runway_seconds is not None else None),
                 "our_unit_value": round(brain.our_unit_value(view)),
                 "enemy_unit_value_known": round(brain.enemy_unit_value(view)),
                 "enemy_turrets_known": len(executor.enemy_defenses(view)),

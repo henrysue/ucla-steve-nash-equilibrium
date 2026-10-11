@@ -97,10 +97,13 @@ YOUR READ:
   "standard": a normal build and army: the engine plays its plan. "unknown": not enough seen yet.
   Change it only on new evidence.
 - balance: where our money should go, from our bank (cash + ore), harvesters, refineries, \
-production and army against enemy.army_value_estimate. "more_army" when our army trails theirs or \
-money piles up while units are few (no extra refineries, dome or expansion for now); \
-"more_economy" when we are safe and our income trails theirs; "balanced" otherwise. Never \
-over-index: a big bank with a small army and a big army on 4 harvesters are both mistakes.
+production, situation.ore_runway_seconds and army against enemy.army_value_estimate. "balanced" \
+is the default and the usual answer. "more_army" only when we clearly trail (our army under \
+about 0.7x their estimate) or are under attack (no extra refineries, dome or expansion for now). \
+"more_economy" when the ore we mine runs out within 3 minutes (situation.ore_runway_seconds under \
+180: the next expansion and its refinery come first), or we are safe and our income trails theirs. \
+Never over-index: a big bank with a small army and a big army on 4 harvesters are both mistakes, \
+and so is "more_army" all game.
 - mistakes: up to 3 problems you see, each {"kind", "note"}: "idle_units" (fighters standing \
 around while there is work), "exposed_harvesters" (harvesters hit or mining far from cover), \
 "bank_piling" (bank over 2000 for a minute: a few hundred is just the next purchase), \
