@@ -1563,10 +1563,13 @@ def test_no_deploy_onto_a_unit_or_beside_the_ore_when_a_clear_spot_is_near():
                                    {"id": 71, "type": "e1", "x": 20, "y": 9, "hp": 100}])
     assert not deploy_ok((20, 8), v, 70)                                      # a rifleman in the yard's way
     assert deploy_ok((20, 8), _exp_view(t=300.0, units=[{"id": 70, "type": "mcv", "x": 20, "y": 8, "hp": 100}]), 70)
-    ore = dataclasses.replace(_exp_view(t=300.0), ore_cells=tuple((22 + i, 6 + j) for i in range(3) for j in range(4)))
-    spot = nearest_deploy_spot((20, 8), ore)
-    assert spot is not None and all(abs(spot[0] + i - ox) > 1 or abs(spot[1] + j - oy) > 1
-                                    for i in (-1, 0, 1) for j in (-1, 0, 1, 2) for ox, oy in ore.ore_cells)
+    field = [(22 + i, 6 + j) for i in range(3) for j in range(4)]
+    rows = [("".join("M" if (x, y) == (23, 7) else "$" if (x, y) in field else "." for x in range(40))) for y in range(40)]
+    ore = dataclasses.replace(_exp_view(t=600.0), ore_cells=tuple(field + [(23, 7)]),
+                              map_picture={"origin": [0, 0], "rows": rows})
+    spot = nearest_deploy_spot((20, 8), ore)                                  # 10:00: the field has grown 2 cells
+    assert spot is not None and all(abs(spot[0] + i - ox) > 2 or abs(spot[1] + j - oy) > 2
+                                    for i in (-1, 0, 1) for j in (-1, 0, 1, 2) for ox, oy in field)
 
 
 def test_an_expansion_refinery_keeps_clear_of_the_ore_and_retries_there_at_once():
@@ -4402,3 +4405,17 @@ def test_behind_on_army_no_new_refinery_or_mcv_unless_home_runs_dry():
     assert not any(o.get("item") == "proc" for o in buildplan.next_build_orders(v))
     e = Expansion()
     assert not e._gates(v, Mode.BUILD, None)                                 # no MCV while 2x behind
+
+
+def test_ore_grows_only_around_fields_with_a_mine_and_only_with_time():
+    from agent.redalert import oregrowth
+    mined = [(10 + i, 10 + j) for i in range(3) for j in range(3)]
+    dead = [(30 + i, 30 + j) for i in range(3) for j in range(3)]
+    rows = ["".join("M" if (x, y) == (11, 11) else "$" if (x, y) in mined + dead else "." for x in range(40))
+            for y in range(40)]
+    v = lambda t: dataclasses.replace(_view(_t=t), ore_cells=tuple(mined + dead),  # noqa: E731
+                                      map_picture={"origin": [0, 0], "rows": rows})
+    assert oregrowth.predicted_ore(v(30.0)) == frozenset()                    # the opening: as on the map
+    one, two = oregrowth.predicted_ore(v(300.0)), oregrowth.predicted_ore(v(600.0))
+    assert (13, 11) in one and (14, 11) not in one and (14, 11) in two        # 1 cell by 5:00, 2 by 10:00
+    assert not any(abs(x - 31) <= 3 and abs(y - 31) <= 3 for x, y in two)     # no mine: it never grows

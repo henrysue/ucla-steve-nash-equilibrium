@@ -469,7 +469,10 @@ def has_room(cell, view: View) -> bool:
         bx, by, bw, bh = view.bounds
         if not (bx + 1 <= x - 1 and x + 1 <= bx + bw - 2 and by + 1 <= y - 1 and y + 2 <= by + bh - 2):
             return False
-    taken = view.blocked_cells | frozenset(view.ore_cells)
+    from .oregrowth import predicted_ore
+
+    # Ore at the start, and where its mines will have spread it (oregrowth.py).
+    taken = view.blocked_cells | frozenset(view.ore_cells) | predicted_ore(view, C.ORE_GROWTH_LOOKAHEAD_SECONDS)
     if any((x + i, y + j) in taken for i in (-1, 0, 1) for j in (-1, 0, 1, 2)):
         return False
     return not _clashes(C.CONSTRUCTION_YARD, (x - 1, y - 1), view)
@@ -478,19 +481,6 @@ def has_room(cell, view: View) -> bool:
 def _yard_cells(cell) -> list[tuple[int, int]]:
     x, y = cell
     return [(x + i, y + j) for i in (-1, 0, 1) for j in (-1, 0, 1, 2)]
-
-
-def ore_clear(cells, view: View, margin: int) -> bool:
-    """No starting ore within ``margin`` cells (Chebyshev) of ``cells``: ore
-    spreads from its mines all game, so a spot touching the field at 0:00
-    may be ore by 10:00."""
-    if margin <= 0:
-        return True
-    ore = view.ore_cells
-    if not ore:
-        return True
-    near = {(c[0] + i, c[1] + j) for c in cells for i in range(-margin, margin + 1) for j in range(-margin, margin + 1)}
-    return not near.intersection(ore)
 
 
 def deploy_ok(cell, view: View, mcv_id=None, bad=()) -> bool:
@@ -506,13 +496,12 @@ def deploy_ok(cell, view: View, mcv_id=None, bad=()) -> bool:
 
 def nearest_deploy_spot(cell, view: View, mcv_id=None, bad=()) -> tuple[int, int] | None:
     """The nearest cell to ``cell`` (within ``EXPAND_ROOM_SEARCH_CELLS``) an
-    MCV can unfold at (:func:`deploy_ok`), one clear of the starting ore when
-    there is one."""
+    MCV can unfold at (:func:`deploy_ok`: clear of the ore as it will have
+    spread, and of units)."""
     r = C.EXPAND_ROOM_SEARCH_CELLS
     near = sorted(((cell[0] + i, cell[1] + j) for i in range(-r, r + 1) for j in range(-r, r + 1)),
                   key=lambda c: dist2(c, cell))
-    ok = [c for c in near if deploy_ok(c, view, mcv_id, bad)]
-    return next((c for c in ok if ore_clear(_yard_cells(c), view, 1)), ok[0] if ok else None)
+    return next((c for c in near if deploy_ok(c, view, mcv_id, bad)), None)
 
 
 def roomy_spot(cell, view: View) -> tuple[int, int] | None:
@@ -672,8 +661,7 @@ def walkable_site(view: View, ore, base, field=None) -> tuple[int, int] | None:
     spots = [c for c, d in walk.items() if C.EXPAND_SITE_MIN_STEPS <= d <= C.EXPAND_SITE_WALK_STEPS and has_room(c, view)]
     if not spots:
         return None
-    # One cell clear of the starting ore when possible (it spreads).
-    return min(spots, key=lambda c: (not ore_clear(_yard_cells(c), view, 1), walk[c], dist2(c, base)))
+    return min(spots, key=lambda c: (walk[c], dist2(c, base)))
 
 
 def _toward(cell, target, cells: float, view: View) -> tuple[int, int]:

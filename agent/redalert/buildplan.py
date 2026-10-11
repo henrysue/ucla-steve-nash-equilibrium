@@ -777,19 +777,15 @@ def _beside_ore(view: View, ore, item: str, near=None) -> tuple[int, int] | None
     nw, nh = _footprint(item)
     spots = legal_spots(view, item, near)
 
-    from .expand import ore_clear
+    from .oregrowth import predicted_ore
+
+    grown = predicted_ore(view) if near is not None else frozenset()
 
     def spread_risk(spot):
-        """At an expansion: 0 with ``ORE_SPREAD_MARGIN_CELLS`` clear of the
-        starting ore, 1 with one clear cell, 2 touching it (ore spreads all
-        game, and a refinery asked for on ore is built at home instead)."""
-        if near is None:
-            return 0
-        solid = _solid(item, spot)
-        for risk, margin in enumerate(range(C.ORE_SPREAD_MARGIN_CELLS, 0, -1)):
-            if ore_clear(solid, view, margin):
-                return risk
-        return C.ORE_SPREAD_MARGIN_CELLS
+        """At an expansion: whether the spot covers ore its mine will have
+        spread by now (oregrowth.py) — a refinery asked for on ore is built
+        at home instead (52a77fb1, ee2ac21b)."""
+        return any(c in grown for c in _solid(item, spot))
 
     def score(spot):
         steps = steps_from_rect(walk, _rect(item, spot))

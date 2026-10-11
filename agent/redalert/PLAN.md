@@ -173,9 +173,15 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
   with room, no unit in the yard's way and (when one is near) one cell clear of
   the starting ore; a deploy still refused a beat later marks that cell bad and
   sends it to the nearest valid cell at once (was: three tries, then 3-7 cells
-  at a time for two minutes). Expansion refineries prefer spots 2 cells clear
-  of the starting ore; one that comes up elsewhere is asked for again at once,
+  at a time for two minutes). Expansion refineries avoid predicted ore; one that
+  comes up elsewhere is asked for again at once,
   its spot skipped. Behind on army: no new refinery or MCV unless home runs dry.
+- **Ore growth model** (oregrowth.py): a Monte Carlo of the engine's seeding
+  rules (each mine adds ore every 3 s along a random walk past full cells) on
+  Shadowfiend II, Sidestep and Trapped: fields with a mine grow 1 cell past the
+  starting ore by ~1:30-5:00, 2 by 8:00-15:00, 3 by ~17:00+; fields without a
+  mine never grow. MCV deploy spots (looking a minute ahead) and expansion
+  refineries keep off that ring.
 - **A lost war factory is rebuilt first** (past 3:00), jumping the dome, depot,
   kennel or silo in the queue, its money kept even while defending.
 - **No blind attacks**: past 7:00, an attack call whose estimate is mostly the
