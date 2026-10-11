@@ -5249,6 +5249,8 @@ def test_the_analysis_keeps_whole_sentences_and_drops_filler():
     assert postgame._tidy(padded, 2, 400) == "Hold until tank-heavy, then all-in. Raid their second refinery."
     assert postgame._tidy("One. Two. Three is a long one.", 5, 12) == "One. Two."
     assert postgame._tidy("a" * 50 + " " + "b" * 50, 1, 60).endswith("\u2026")
+    assert postgame._tidy("Army stayed riflemen (e.g. 20 of 26). Next.", 1, 200) == "Army stayed riflemen (e.g. 20 of 26)."
+    assert postgame._tidy("Attack after a won fight.}", 2, 200) == "Attack after a won fight."
 
 
 def test_a_lone_scout_in_the_base_draws_a_pair_not_the_concave():
