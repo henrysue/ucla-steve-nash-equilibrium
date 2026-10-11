@@ -404,15 +404,10 @@ def placement_cell(view: View, item: str, defense_at: tuple[int, int] | None = N
 
         threats = [a.cell for a in enemy_threat_near_base(view) if a.cell is not None]
         prefer = min(threats, key=lambda c: dist2(c, base)) if threats else None
-        # Watching the choke on the enemy's way in when one is in range (any
-        # map: from the terrain), else facing the road in; the advisor may pick
-        # the side, but only one facing the enemy.
-        from .scout import approach_cell
-
-        watch = _watch_spot(view, item, base, near=home)
-        if watch is not None:
-            return watch
-        enemy = scout_watch(view, base) or (approach_cell(view) if home is None else enemy_spawn_guess(view))
+        # A line on the front edge straight toward the enemy (the diagonal
+        # between the bases); the advisor may pick the side, within
+        # DEFENSE_SIDE_MAX_DEGREES of the enemy.
+        enemy = enemy_spawn_guess(view)
         if defense_at is not None and _within_degrees(base, defense_at, enemy, C.DEFENSE_SIDE_MAX_DEGREES):
             prefer = defense_at
         return perimeter_spot(view, base, enemy, item, prefer=prefer, strict=False, near=home)
@@ -822,44 +817,60 @@ def _watch_spot(view: View, item: str, base, near=None) -> tuple[int, int] | Non
 
 def perimeter_spot(view: View, base: tuple[int, int], toward, item: str = "pbox", near=None,
                    prefer=None, strict: bool = True) -> tuple[int, int] | None:
-    """A turret slot on the edge of the base, in a fan facing the enemy.
+    """A turret slot in a line on the base's front edge, straight toward
+    ``toward`` (the enemy).
 
-    The slots sit at ``DEFENSE_FAN_DEGREES`` from the bearing to ``toward``
-    (the enemy) — straight ahead, then evenly to either side, never behind —
-    each just outside our frontmost building that way (:func:`grow_spot`).
-    The first slot with no defense within ``DEFENSE_MIN_GAP_CELLS`` wins, so
-    turrets form an even front line instead of piling up wherever the last
-    attack came from. ``prefer`` (a threat, or the advisor's pick) only
-    reorders the slots: the free slot nearest it first. With every slot taken,
-    ``strict`` returns None (build nothing); otherwise the nearest slot anyway.
+    The slots sit side by side across the line from ``base`` to ``toward``,
+    ``DEFENSE_LINE_OFFSETS`` cells to either side of it (straight on first),
+    each as far forward as a legal spot allows and never behind the base: the
+    turrets face the enemy along the diagonal instead of fanning out round
+    the base (9ff91807 and 82bdca3e put the second and later turrets 50-90
+    degrees off the enemy's line, one behind the base). The first slot with
+    no defense within ``DEFENSE_MIN_GAP_CELLS`` wins. ``prefer`` (a threat,
+    or the advisor's pick) only reorders the slots: the one on its side
+    first. With every slot taken, ``strict`` returns None (build nothing);
+    otherwise the nearest slot anyway.
     """
-    import math
-
     if toward is None:
         return None
-    base_angle = math.atan2(toward[1] - base[1], toward[0] - base[0])
-    slots = list(C.DEFENSE_FAN_DEGREES)
+    dx, dy = toward[0] - base[0], toward[1] - base[1]
+    length = (dx * dx + dy * dy) ** 0.5 or 1.0
+    ux, uy = dx / length, dy / length                  # toward the enemy
+    px, py = -uy, ux                                   # across the line
+    slots = list(C.DEFENSE_LINE_OFFSETS)
     if prefer is not None:
-        rel = math.degrees(math.atan2(prefer[1] - base[1], prefer[0] - base[0]) - base_angle)
-        rel = (rel + 180) % 360 - 180
-        slots.sort(key=lambda d: abs(d - rel))
+        widest = max(abs(k) for k in slots)
+        side = max(-widest, min(widest, (prefer[0] - base[0]) * px + (prefer[1] - base[1]) * py))
+        slots.sort(key=lambda k: abs(k - side))
+    spots = legal_spots(view, item, near, C.TURRETS)
+    nw, nh = _footprint(item)
+    origin = near or base
+
+    def ahead(s):
+        return (s[0] + (nw - 1) / 2 - origin[0]) * ux + (s[1] + (nh - 1) / 2 - origin[1]) * uy
+
+    def across(s):
+        return (s[0] + (nw - 1) / 2 - origin[0]) * px + (s[1] + (nh - 1) / 2 - origin[1]) * py
+
+    import math
+
+    front = [s for s in spots if ahead(s) > 0]          # never behind the base
     defenses = [b.cell for b in view.buildings if b.type in C.TURRETS and b.cell is not None and not b.wreck]
     gap2 = C.DEFENSE_MIN_GAP_CELLS ** 2
-    fallback = None
-    for deg in slots:
-        angle = base_angle + math.radians(deg)
-        # Grow from base buildings only: growing from the last turret chained
-        # turrets out toward the enemy one past another.
-        # Close to the slot's line beats far forward: a turret beside the
-        # road in covers it, one far out to the side covers nothing.
-        spot = grow_spot(view, (math.cos(angle), math.sin(angle)), item, near=near, skip_types=C.TURRETS,
-                         side_weight=C.DEFENSE_SIDE_WEIGHT, slack=C.DEFENSE_UNIT_SLACK)
-        if spot is None:
-            continue
-        fallback = fallback or spot
-        if all(dist2(spot, c) >= gap2 for c in defenses):
+    free = [s for s in front if all(dist2(s, c) >= gap2 for c in defenses)]
+    # Within DEFENSE_CONE_DEGREES of the line: the line toward the enemy, not
+    # round the base's sides. A new turret only there (``strict``: none is
+    # built when the cone is full); one already built is placed anyway.
+    cone = math.tan(math.radians(C.DEFENSE_CONE_DEGREES))
+    pool = [s for s in free if abs(across(s)) <= max(2.0, ahead(s) * cone)] or ([] if strict else free)
+    for k in slots:
+        spot = _pick(view, item, pool, lambda s, k=k: -(ahead(s) - C.DEFENSE_SIDE_WEIGHT * abs(across(s) - k)),
+                     C.DEFENSE_UNIT_SLACK) if pool else None
+        if spot is not None:
             return spot
-    return None if strict else fallback
+    if strict or not front:
+        return None
+    return _pick(view, item, front, lambda s: -(ahead(s) - C.DEFENSE_SIDE_WEIGHT * abs(across(s))), C.DEFENSE_UNIT_SLACK)
 
 
 def defense_orders(view: View, under_attack: bool, expansion_site: tuple[int, int] | None = None,
@@ -880,16 +891,12 @@ def defense_orders(view: View, under_attack: bool, expansion_site: tuple[int, in
             p.get("ready") and str(p.get("item") or "").lower() in C.TURRETS for p in view.production):
         return []
     enemy = enemy_spawn_guess(view)
-    # An expansion still without its turret — only if its fan has a free slot.
+    # An expansion still without its turret — only if its line has a free slot.
     if expansion_site is not None and perimeter_spot(view, expansion_site, enemy, defense, near=expansion_site):
         return [orders.build(defense)]
     # Once the main base's ore is gone, its turrets stop and the active base
-    # (``home``, an expansion) gets a full fan instead.
+    # (``home``, an expansion) gets a full line instead.
     base = home or view.base_center
-    if home is None:
-        from .scout import approach_cell
-
-        enemy = approach_cell(view)
     if base is None:
         return []
     r2 = C.DEFENSE_MAIN_RADIUS_CELLS ** 2

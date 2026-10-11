@@ -998,11 +998,13 @@ def test_advice_drives_the_raid_and_turret_side_while_the_rules_form_the_concave
     far = dataclasses.replace(adv, raid_target_cell=(20, 40))
     r.update(rv, Mode.BUILD, None, far)
     assert r.orders(rv)[0]["to"] == [20, 40]           # an expansion: the advisor's pick
-    # defense_at picks the side (here: east, within 60 deg of the enemy to the south-east);
+    # defense_at picks the side of the turret line (within 30 deg of the enemy to the south-east);
     # the rules pick a legal cell on it
     pv = _view(base_center=[10, 10], buildings=[{"id": 10, "type": "fact", "x": 10, "y": 10}], production=[{"item": "pbox", "queue": "Defense", "ready": True}])
-    (order,) = buildplan.placement_orders(pv, (20, 11))
-    assert order["item"] == "pbox" and order["at"][0] >= 13   # east of the yard, the advisor's side
+    (east,) = buildplan.placement_orders(pv, (20, 15))
+    (south,) = buildplan.placement_orders(pv, (15, 20))
+    side = lambda o: (o["at"][0] - 10) - (o["at"][1] - 10)                    # noqa: E731  (east of the diagonal > 0)
+    assert east["item"] == "pbox" and side(east) > side(south)               # the advisor's side of the line
 
 
 def test_defenses_go_beyond_the_outermost_building_and_spread_out():
@@ -2009,20 +2011,19 @@ _FAN_BASE = [{"id": 10, "type": "fact", "x": 10, "y": 10}, {"id": 11, "type": "p
              {"id": 14, "type": "weap", "x": 14, "y": 13}, {"id": 15, "type": "powr", "x": 6, "y": 11}]
 
 
-def test_turrets_fill_an_even_fan_facing_the_enemy():
+def test_turrets_form_a_line_straight_toward_the_enemy():
     blds, spots = list(_FAN_BASE), []
-    for i in range(5):                       # as many as the fan has free slots (that's all we'd build)
+    for i in range(5):                       # as many as the line has free spots (that's all we'd build)
         v = _view(base_center=[11, 11], buildings=blds)
         if buildplan.perimeter_spot(v, (11, 11), (40, 40), "ftur") is None:
             break
         spot = buildplan.placement_cell(v, "ftur")
         spots.append(spot)
         blds = blds + [{"id": 20 + i, "type": "ftur", "x": spot[0], "y": spot[1]}]
-    assert len(spots) >= 3
+    assert len(spots) >= 2
     angles = [_fan_angle(s, base=(11, 11)) for s in spots]
-    assert all(abs(a) <= 75 for a in angles), angles             # never to the side or behind
-    assert abs(angles[0]) <= 30                                   # the first one straight at the enemy
-    assert min(angles) < -15 and max(angles) > 15                 # spread to both sides
+    assert all(abs(a) <= C.DEFENSE_CONE_DEGREES + 5 for a in angles), angles   # on the diagonal, not round the sides
+    assert abs(angles[0]) <= 25                                   # the first one straight at the enemy
     for i, a in enumerate(spots):                                 # and spaced out, not piled up
         assert all((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 >= 9 for b in spots[i + 1:]), spots
 
@@ -5294,3 +5295,14 @@ def test_the_background_analysis_command_merges_into_the_latest_game(tmp_path, m
     assert postgame.main([str(log), "--opponent", "Yuriko", "--merge"]) == 0
     (record,) = opponents.load(["Yuriko"])
     assert record["game"] == 1 and record["analysis"]["how_to_beat"].startswith("Hold the first push")
+
+
+def test_a_test_match_opponent_can_be_named_by_hand(tmp_path, monkeypatch):
+    from agent.redalert import opponents
+    monkeypatch.setenv("REDALERT_PROFILE_DIR", str(tmp_path / "opponents"))
+    monkeypatch.setenv("REDALERT_OPPONENT", "yuriko_red")
+    agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0, log_dir=str(tmp_path / "logs"))
+    agent.choose_action(_state(_t=60.0, buildings=BASE), CTX)                    # no opponents in the context
+    assert agent._opponents == ("yuriko_red",)
+    agent.on_match_end(types.SimpleNamespace(raw={"result": {"your_return": 1}}, final_result=None), CTX)
+    assert opponents.load(["yuriko_red"])[0]["result"] == 1

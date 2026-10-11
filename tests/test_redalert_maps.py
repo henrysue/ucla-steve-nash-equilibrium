@@ -158,7 +158,7 @@ def test_scout_circuits_and_posts_are_reachable_on_real_maps(path):
 
 
 @pytest.mark.parametrize("path", FIXTURES, ids=[p.stem for p in FIXTURES])
-def test_the_first_turret_faces_the_road_in(path):
+def test_turrets_stand_on_the_line_to_the_enemy(path):
     import math
 
     fx = _load(path)
@@ -166,12 +166,16 @@ def test_the_first_turret_faces_the_road_in(path):
     state["buildings"] = [b for b in state["buildings"] if b[0] not in NO_AREA]   # no turret yet
     view = _view(fx, state, path.stem)
     base = tuple(fx["base_center"])
-    road = scout.approach_cell(view)
-    assert road in terrain.walk_distances(view, [base], 60)                       # on the way in
-    spot = buildplan.placement_cell(view, "ftur")
-    assert _legal(view, "ftur", spot) is None
+    enemy = tuple(fx["enemy_spawn"])
     bearing = lambda c: math.degrees(math.atan2(c[1] - base[1], c[0] - base[0]))  # noqa: E731
-    assert abs((bearing(spot) - bearing(road) + 180) % 360 - 180) <= 35, (spot, road)
+    for _ in range(5):                                                            # every turret we'd build
+        if buildplan.perimeter_spot(view, base, enemy, "ftur") is None:
+            break
+        spot = buildplan.placement_cell(view, "ftur")
+        assert _legal(view, "ftur", spot) is None
+        assert abs((bearing(spot) - bearing(enemy) + 180) % 360 - 180) <= 25, spot   # on the line to the enemy
+        state["buildings"] = state["buildings"] + [["ftur", spot[0], spot[1]]]
+        view = _view(fx, state, path.stem)
 
 
 @pytest.mark.parametrize("path", FIXTURES, ids=[p.stem for p in FIXTURES])

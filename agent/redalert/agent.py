@@ -584,6 +584,10 @@ class RedAlertAgent:
     def _start_profile(self, raw: dict, context) -> None:
         """Our past games against this opponent go to the advisor's memory."""
         self._opponents = tuple(n for n in (getattr(context, "opponents", None) or ()) if isinstance(n, str))
+        if not self._opponents and os.environ.get("REDALERT_OPPONENT", "").strip():
+            # A test match whose assignment names no opponent: name it by hand
+            # (REDALERT_OPPONENT=yuriko_red) to profile and analyse it.
+            self._opponents = (os.environ["REDALERT_OPPONENT"].strip(),)
         obs = raw.get("observation") if isinstance(raw.get("observation"), dict) else {}
         self._match_info = {"map": (raw.get("map") or {}).get("id") if isinstance(raw.get("map"), dict) else None,
                             "our_faction": obs.get("faction"), "their_faction": obs.get("enemy_faction")}

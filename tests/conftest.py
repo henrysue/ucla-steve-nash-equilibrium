@@ -28,5 +28,6 @@ def _no_match_logs_from_tests(monkeypatch):
     monkeypatch.setenv("RA_SPARRING", "")
     # And the post-game analyst never starts a background process from a test.
     monkeypatch.setenv("REDALERT_ANALYST_DETACH", "0")
+    monkeypatch.setenv("REDALERT_OPPONENT", "")
     # And the per-seat models-off switch (A/B tests in self-play).
     monkeypatch.setenv("REDALERT_MODELS_OFF_SEAT", "")
