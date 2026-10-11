@@ -68,6 +68,7 @@ class Commander:
         mode = brain.choose_mode(
             view, cheese_since=None if base_race else self.cheese_since, model_pref=model_pref, prev_mode=prev,
             scout_id=scout_id, squad_ids=squad_ids, losing_trades=losing,
+            winning_trades=self.winning_trades(view) if prev is Mode.ALL_IN else False,
             retreated_at=self.retreated_at, retreat_army=self.retreat_army, hunting=hunting,
             alarm=alarm, distraction=distraction,
             attack_seconds=view.game_seconds - self.mode_since if prev is Mode.ALL_IN else None,
@@ -88,6 +89,15 @@ class Commander:
     @property
     def confirming(self) -> bool:
         return self.confirm_at is not None
+
+    def winning_trades(self, view: View) -> bool:
+        """Since this attack began we have killed at least ``TRADE_WIN_MIN``
+        more than we lost (losing_trades keeps the history)."""
+        since = [row for row in self._trades if row[0] >= self.mode_since]
+        if not since:
+            return False
+        _, kills0, deaths0 = since[0]
+        return (view.kills_cost - kills0) - (view.deaths_cost - deaths0) >= C.TRADE_WIN_MIN
 
     def losing_trades(self, view: View) -> bool:
         """Since the attack began (at most ``TRADE_WINDOW_SECONDS`` back): lost

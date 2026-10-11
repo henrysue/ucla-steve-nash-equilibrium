@@ -22,6 +22,7 @@ def choose_mode(
     scout_id: int | None = None,
     squad_ids: frozenset = frozenset(),
     losing_trades: bool = False,
+    winning_trades: bool = False,
     retreated_at: float | None = None,
     retreat_army: float | None = None,
     hunting: bool = False,
@@ -73,8 +74,9 @@ def choose_mode(
             and view.army_value >= C.MODEL_HOLD_MAX_EDGE * enemy_estimate(view):
         return Mode.ALL_IN
 
-    # Safety rail 3: near the time limit and ahead -> protect the lead.
-    if _should_protect_lead(view):
+    # Safety rail 3: near the time limit and ahead -> protect the lead (but an
+    # attack winning its trades keeps going: c7a982ac pulled back from a won fight).
+    if _should_protect_lead(view) and not (prev_mode in AGGRESSIVE and winning_trades):
         return Mode.PROTECT_LEAD
 
     # Offensive decision: do we commit the deathball?
@@ -106,6 +108,10 @@ def choose_mode(
     # judge (match 5e840776: attacks retreated 6-30 s in, and were chased).
     floor = (C.RETREAT_EARLY_EDGE if attack_seconds is not None and attack_seconds < C.MIN_ENGAGEMENT_SECONDS
              else C.RETREAT_ARMY_EDGE)
+    # An attack winning its trades keeps going: the estimate can dip on what
+    # it sees, but we are trading up. Only being clearly outmatched stops it.
+    if winning_trades:
+        floor = min(floor, C.RETREAT_EARLY_EDGE)
     if prev_mode in AGGRESSIVE and (edge < floor or losing_trades):
         return Mode.RETREAT
     # Committed: an attack under way goes on until the retreat rule calls it
@@ -182,6 +188,8 @@ def _attack_threshold(view: View) -> float:
     tiebreak requires acting), higher early (don't throw away the deathball)."""
     if _catching_up(view):
         return C.CATCH_UP_ARMY_EDGE      # behind at the end: a coin flip beats a sure loss
+    if view.army_value >= C.BIG_ARMY_VALUE:
+        return C.BIG_ARMY_EDGE           # a maxed army idling wastes its edge; production refills it
     if view.game_seconds >= C.ESCALATE_AFTER_SECONDS:
         return C.ESCALATED_ARMY_EDGE
     return C.ATTACK_ARMY_EDGE

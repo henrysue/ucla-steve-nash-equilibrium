@@ -4113,3 +4113,31 @@ def test_no_unit_is_sent_back_from_a_push():
     v = _view(_t=600.0, buildings=BASE, units=front + middle, visible_enemy_buildings=[{"id": 90, "type": "fact", "x": 40, "y": 40}])
     o = executor._army_orders(v, Mode.ALL_IN)
     assert not any(x["to"] == [11, 11] for x in o)                             # they keep going, not back to massing
+
+
+# -- match c7a982ac (Shadowfiend II): idle armies, a base left undefended, a won fight abandoned ----
+
+
+def test_the_army_fights_a_push_at_any_of_our_bases():
+    army = [{"id": 100 + i, "type": "3tnk", "x": 11, "y": 11, "hp": 100} for i in range(20)]
+    yard = BASE + [{"id": 80, "type": "proc", "x": 30, "y": 8}]
+    push = [{"id": 900 + i, "type": "3tnk", "x": 32, "y": 12, "hp": 100} for i in range(8)]       # 20 cells from the army
+    o = executor._army_orders(_view(_t=700.0, buildings=yard, units=army, visible_enemies=push), Mode.BUILD)
+    assert len(o) == 1 and o[0]["to"] == [32, 12] and len(o[0]["units"]) == 20
+
+
+def test_a_maxed_army_pushes_at_a_small_edge():
+    big = _view(_t=736.0, buildings=BASE, military={"army_value": 16200, "visible_enemy_value": 15000})
+    assert brain._attack_threshold(big) == C.BIG_ARMY_EDGE
+    assert brain.choose_mode(dataclasses.replace(big, enemy_army_peak=15000.0), cheese_since=None) is Mode.ALL_IN
+
+
+def test_an_attack_winning_its_trades_keeps_going():
+    c = Commander()
+    c.mode, c.mode_since = Mode.ALL_IN, 1040.0
+    c.losing_trades(_view(_t=1040.0, military={"kills_cost": 23000, "deaths_cost": 21000}))
+    v = _view(_t=1080.0, _r=120.0, buildings=BASE,
+              military={"army_value": 22000, "visible_enemy_value": 36000, "kills_cost": 36600, "deaths_cost": 27700})
+    assert c.winning_trades(v)
+    assert brain.choose_mode(v, cheese_since=None, prev_mode=Mode.ALL_IN, winning_trades=True) is Mode.ALL_IN
+    assert brain.choose_mode(v, cheese_since=None, prev_mode=Mode.ALL_IN) in (Mode.RETREAT, Mode.PROTECT_LEAD)

@@ -103,6 +103,13 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
 - **The hunt** (c4caa45e: a barracks survived a 100-unit hunt): up to 8
   groups of 6+, every cell where we once knew an enemy building is a search
   point, and a point counts as checked within 5 cells (about sight).
+- **Fight for the base, push when maxed, finish won fights** (c7a982ac,
+  Shadowfiend II: 75 units watched a refinery die 17 cells away; two 20k+
+  armies idled 10 minutes at ~1.1x; a won fight was abandoned for
+  protect-the-lead): the army takes on any real push near our yards and
+  refineries, not only near itself; an army of 15000+ attacks at 1.05x; an
+  attack that has killed 1000+ more than it lost ignores the 0.8x retreat line
+  (only < 0.5x or losing trades stop it) and protect-the-lead.
 - **Steady orders** (906dbb32: the big push split and went back and forth): a
   unit sent within 5 cells of the same spot in the last 20 s isn't re-sent
   (unless it stands idle away from it: stuck); a queued leg keeps only the

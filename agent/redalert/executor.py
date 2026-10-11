@@ -477,6 +477,12 @@ def _stage_forward(
     # the fighters: the massing point itself falls back when enemies come.
     # A small raid is the home response's (two riflemen).
     cells = [u.cell for u in fighters if u.cell is not None] or [stage]
+    # A real push at any of our bases (yards, refineries) is the army's fight
+    # too, not just one near the army: match c7a982ac's 75 units watched a
+    # refinery die 17 cells away (they counted as "home defenders", so the
+    # defend rule never fired; the raid response stops at 1500).
+    cells += [b.cell for b in view.buildings if b.cell is not None and not b.wreck
+              and b.type in (C.CONSTRUCTION_YARD, C.REFINERY)]
     target = fight_near(view, cells)
     if fighters and target is not None:
         ids = [u.id for u in fighters][:orders.MAX_UNITS_PER_ORDER]
