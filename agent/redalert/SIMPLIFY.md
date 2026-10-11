@@ -25,6 +25,14 @@ dozen match logs.
   fixtures corrected (logs hold top-left cells since the centre-cell fix).
 - [x] Step 6: scouts sweep the hunter's search points; the expansion's
   relocation safety nets and the duplicate refinery query are gone.
+- [x] Oct 11 review: one fight judgment (`strength.odds`, turrets included,
+  turrets no longer enemy army); one defense handler (`executor.respond` /
+  `_army_home`: the army defends the main base only, readies at its turret
+  line for a seen push; idle units answer the rest) replacing home response,
+  retaliation, guard, fight_near, intercept and the defend rally; retreats
+  break off with a plain move; one turret list; production matched to the
+  mix (2 war factories, 3 barracks); dead config and code removed; PLAN.md
+  rewritten as one page.
 - [ ] Step 7: models-off A/B (needs games), then keep or remove.
 - [ ] Step 8: constants, the match log, the remaining per-view caches.
 - [ ] Step 9: test cleanup (list the obsolete tests, then delete them).
