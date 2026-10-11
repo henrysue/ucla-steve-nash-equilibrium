@@ -78,7 +78,7 @@ OUR GAME PLAN (the engine does all of this by itself):
 unless outgunned, a third refinery and the service depot; more refineries over time, expansion to \
 the natural field, a second war factory when money piles up. Units spend what the economy doesn't need.
 - Information: two scouts circle behind the enemy base early, then pickets watch the approach and \
-one re-checks their base every 2.5 minutes. One refinery plus an early war factory or 2nd barracks \
+one re-checks their base every 2 minutes. One refinery plus an early war factory or 2nd barracks \
 reads as a rush (intel.enemy_opening).
 - The army masses in a concave in front of our base and fights anything big that comes near it. \
 It attacks when our army is 1.3x enemy.army_value_estimate (the fog hides most of their army: the \
@@ -107,13 +107,6 @@ about 0.7x their estimate) or are under attack (no extra refineries, dome or exp
 180: the next expansion and its refinery come first), or we are safe and our income trails theirs. \
 Never over-index: a big bank with a small army and a big army on 4 harvesters are both mistakes, \
 and so is "more_army" all game.
-- mistakes: up to 3 problems you see, each {"kind", "note"}: "idle_units" (fighters standing \
-around while there is work), "exposed_harvesters" (harvesters hit or mining far from cover), \
-"bank_piling" (bank over 2000 for a minute: a few hundred is just the next purchase), \
-"stuck_units" (units not moving where sent), "losing_fight" (a fight going badly that the engine \
-has not left; a retreat in progress is the engine leaving it), "other". The units in \
-situation.scouts are pickets and scouts posted far from the army on purpose: not idle. The note: one short sentence with cells \
-or ids. Empty when all is well.
 
 YOUR CALLS (null or "default"/"auto" = the engine decides; each works inside the plan's limits):
 - posture: "attack" asks for an attack now, honored only when the engine's numbers already support \
@@ -129,6 +122,12 @@ when the raid squad is drawing their army away.
 - raid_target_id / raid_target_cell: the raid squad's harvester (a visible harvester's id) or a \
 cell to sweep (an ore field they harvest, a fresh expansion). It kills any defenders first.
 - defense_at: [x, y] the side of our base the next turret should face (the enemy's approach).
+- army_stance: the waiting (massing) army's stance — "defend" (fire at what comes in range, hold \
+the line: the default), "attack_anything" (go after any enemy in sight: when they poke at the \
+concave from outside its range), "return_fire" (only shoot back), "hold_fire"; "auto" = the engine. \
+Attacking and defending armies always engage freely.
+- guard: "on" (default): every idle unit of the massing army goes at enemies that come within 8 cells \
+of it, then back to its slot; "off" keeps the concave still (a bait you don't want chased).
 - plan: your read of the game and plan for the next minute or two, in 1-2 short sentences.
 - reasoning: the evidence for it, in 1-2 short sentences.
 
@@ -157,11 +156,13 @@ ADVICE_SCHEMA = {
         "raid_target_id": {"type": ["integer", "null"]},
         "raid_target_cell": _CELL,
         "defense_at": _CELL,
+        "army_stance": {"type": "string", "enum": ["auto", "defend", "attack_anything", "return_fire", "hold_fire"]},
+        "guard": {"type": "string", "enum": ["on", "off"]},
         "plan": {"type": "string"},
         "reasoning": {"type": "string"},
     },
     "required": ["enemy_style", "balance", "mistakes", "posture", "attack_route", "expand", "army_target", "raid_target_id", "raid_target_cell",
-                 "defense_at", "plan", "reasoning"],
+                 "defense_at", "army_stance", "guard", "plan", "reasoning"],
     "additionalProperties": False,
 }
 
@@ -179,6 +180,8 @@ class Advice:
     raid_target_id: int | None = None
     raid_target_cell: tuple[int, int] | None = None
     defense_at: tuple[int, int] | None = None
+    army_stance: str = "auto"            # the waiting army's stance (executor.stance_orders)
+    guard: str = "on"                    # the massing army's guard response
     plan: str = ""
     reasoning: str = ""
 
@@ -224,6 +227,8 @@ def parse_advice(answer: Any, view: View, made_at: float) -> Advice | None:
         raid_target_id=raid_id if isinstance(raid_id, int) and not isinstance(raid_id, bool) else None,
         raid_target_cell=cell(answer.get("raid_target_cell")),
         defense_at=cell(answer.get("defense_at")),
+        army_stance=answer.get("army_stance") if answer.get("army_stance") in C.ARMY_STANCES else "auto",
+        guard="off" if answer.get("guard") == "off" else "on",
         plan=" ".join(str(answer.get("plan") or "").split())[:300],
         reasoning=" ".join(str(answer.get("reasoning") or "").split())[:300],
     )

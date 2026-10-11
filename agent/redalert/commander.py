@@ -35,6 +35,7 @@ class Commander:
         self.changed = False
         self.confirm_at: float | None = None      # when the attack call being confirmed was made
         self.wants_look = False                    # a blind attack call: a scout looks at their army first
+        self._ledger: list[tuple[float, float, float]] = []   # (game seconds, kills, deaths), TRADE_LEAD_WINDOW_SECONDS
         self.cheese_since: float | None = None    # threat window (brain.update_cheese_since)
         self.retreated_at: float | None = None
         self.retreat_army: float | None = None    # army value at the last retreat
@@ -61,6 +62,7 @@ class Commander:
                forced: Mode | None = None) -> Mode:
         prev = self.mode
         losing = self.losing_trades(view)
+        up = self.traded_up(view)
         # A base race: our attack is winning, so it goes on while their push
         # hits our base (the home units still fight it). In the opening a
         # rush always calls the army home.
@@ -70,6 +72,7 @@ class Commander:
             view, cheese_since=None if base_race else self.cheese_since, model_pref=model_pref, prev_mode=prev,
             scout_id=scout_id, squad_ids=squad_ids, losing_trades=losing,
             winning_trades=self.winning_trades(view) if prev is Mode.ALL_IN else False,
+            traded_up=up,
             retreated_at=self.retreated_at, retreat_army=self.retreat_army, hunting=hunting,
             alarm=alarm, distraction=distraction,
             attack_seconds=view.game_seconds - self.mode_since if prev is Mode.ALL_IN else None,
@@ -78,7 +81,7 @@ class Commander:
             mode = (forced(mode) or mode) if callable(forced) else forced
         if escorting and mode is Mode.ALL_IN and prev is not Mode.ALL_IN and not brain.must_attack(view) and not hunting:
             mode = Mode.BUILD                      # defend the haul: no new attack (one under way goes on)
-        mode = self._confirm(view, prev, mode, skip=rushing or hunting or brain._catching_up(view))
+        mode = self._confirm(view, prev, mode, skip=rushing or hunting or up or brain._catching_up(view))
         if ({prev, mode} == {Mode.BUILD, Mode.ALL_IN}
                 and view.game_seconds - self.mode_since < C.MODE_MIN_DWELL_SECONDS):
             mode = prev                            # commit: no quick flip (a confirmation is kept)
@@ -90,6 +93,18 @@ class Commander:
     @property
     def confirming(self) -> bool:
         return self.confirm_at is not None
+
+    def traded_up(self, view: View) -> bool:
+        """In the last ``TRADE_LEAD_WINDOW_SECONDS`` we killed ``TRADE_LEAD_MIN``
+        more than we lost and ``TRADE_LEAD_RATIO`` x it: their army is down by
+        that much — go now (3bd6e450 won a fight 16600 to 11150 at 8:15 and
+        sat for three minutes)."""
+        t = view.game_seconds
+        self._ledger.append((t, view.kills_cost, view.deaths_cost))
+        self._ledger = [r for r in self._ledger if t - r[0] <= C.TRADE_LEAD_WINDOW_SECONDS]
+        _, k0, d0 = self._ledger[0]
+        killed, lost = view.kills_cost - k0, view.deaths_cost - d0
+        return killed - lost >= C.TRADE_LEAD_MIN and killed >= C.TRADE_LEAD_RATIO * max(lost, 1.0)
 
     def winning_trades(self, view: View) -> bool:
         """Since this attack began we have killed at least ``TRADE_WIN_MIN``

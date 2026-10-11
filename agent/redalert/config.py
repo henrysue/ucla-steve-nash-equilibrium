@@ -215,6 +215,9 @@ ENGAGE_MIN_EDGE = 1.25             # by strength (strength.edge) under this, a p
 MATCHUP_MIN_UNITS = 5              # both sides need this many known units before the mix counts (strength.matchup)
 MATCHUP_LIMITS = (0.6, 1.5)        # the mix moves the army edge at most this much
 ARMOR_HEAVY_SHARE = 0.6            # their hit points this armored: one rocket soldier per rifleman
+GUARD_RADIUS_CELLS = 8             # enemy fighters this close to the massing army: every idle unit goes at them
+                                   # in one order, and walks back to its slot after
+UNSEEN_LEAD_MIN = 2000             # nothing of their army seen counts as nothing left only this far ahead on trades
 CONCAVE_ORDERS_PER_VIEW = 6        # formation slot orders per view (the batch holds 20; the rest walk to the centre)
 STAGING_RADIUS_CELLS = 4           # idle units already this close to the stage are left alone
 STAGE_CLEAR_CELLS = 3              # no building this close to the massing point: the army stands there...
@@ -250,6 +253,10 @@ REINFORCE_HOLD_CELLS = 8           # only units still this close to the massing 
 ARMY_MIN_PASSAGE = 5               # a big army avoids passages narrower than this...
 DETOUR_MIN_UNITS = 12              # ...(this many units or more)...
 DETOUR_MAX_RATIO = 1.6             # ...when a route through wider ground is at most this much longer
+TRADE_LEAD_WINDOW_SECONDS = 120.0  # traded up within this long...
+TRADE_LEAD_MIN = 1500              # ...by this much (kills - losses)...
+TRADE_LEAD_RATIO = 1.5             # ...killing this x what we lost: attack now, decisively
+BLIND_SEEN_SHARE = 0.5             # no fresh look and less than this x our army seen lately: look before attacking
 TRADE_WINDOW_SECONDS = 30.0        # ...or when, since the attack began (at most this far back),
 TRADE_LOSS_MIN = 1000              # we lost at least this,
 TRADE_LOSS_ARMY_SHARE = 0.25       # and this share of the army (the bigger of at the start and now),
@@ -335,7 +342,15 @@ SCOUT_SNAP_CELLS = 6               # a post or waypoint walled in by terrain mov
 SCOUT_WALK_STEPS = 250             # (walking steps searched from our base)
 INTEL_MIN_BUILDINGS = 3            # their opening is read once we know this many of their buildings
 RUSH_READ_SECONDS = 100.0          # one refinery but a war factory / 2nd barracks by now: a rush...
-RUSH_ARMY_SEEN_VALUE = 1000        # ...or one refinery and an army this big seen before RUSH_HOLD_SECONDS
+RUSH_ARMY_SEEN_VALUE = 1000        # ...or an army this big seen before RUSH_HOLD_SECONDS (any refinery count)...
+RUSH_EARLY_ARMY_SECONDS = 150.0    # ...or RUSH_EARLY_ARMY_VALUE seen before this (3bd6e450: 600 seen at 2:04,
+RUSH_EARLY_ARMY_VALUE = 600        #  the wave hit at 2:50, the read came at 4:07)
+SCOUT_PEEK_SECONDS = 45.0          # the lane scouts alternate their post with a look at the enemy's exit this often
+SCOUT_PEEK_BACK_CELLS = 6          # the look stops this short of their massing point (it sees ~5 cells)...
+SCOUT_PEEK_SIDE_CELLS = 6          # ...and this far to its own side (never down the centre lane)
+INTERCEPT_MIN_VALUE = 1500         # an enemy army this big seen in our half: the army sets up across its path...
+INTERCEPT_MIN_EDGE = 1.0           # ...if it is at least as strong (strength.edge); else the turret line
+INTERCEPT_HOLD_SECONDS = 20.0      # the intercept point holds this long after the last sighting (no dithering)
 # -- committing to an attack --
 CONFIRM_SECONDS = 4.0              # an attack call is re-checked this long later, the army edging forward to see...
 CONFIRM_BLIND_MAX_SECONDS = 40.0   # an attack call on a blind estimate (BLIND_PRIOR_RATIO) waits up to this for a scout's look
@@ -419,11 +434,18 @@ FOCUS_RADIUS_CELLS = 4             # focus fire on the weakest enemy fighter thi
 PULL_BACK_HP = 35                  # vehicles below this (%) leave attacks
 STUCK_SECONDS = 10.0               # an ordered unit that hasn't moved this long gets a stop
 ENGAGED_RADIUS_CELLS = 7           # ...unless an enemy is this close
-FORMATION_SPACING_CELLS = 1.5      # concave slots
-FORMATION_CURVE = 0.15
-FORMATION_MAX_UNITS = 12
+# The concave: ranks on arcs round a kill point FORMATION_FOCUS_AHEAD cells in
+# front of the massing point, each rank within rifle range (5) of it, so every
+# rifleman fires at whatever walks through (it was 16 cells wide, its ends 10
+# cells forward: most of the line out of range of the middle).
+FORMATION_FOCUS_AHEAD = 2.0
+FORMATION_RANKS = (3.5, 4.5)       # arc radii, cells from the kill point
+FORMATION_ARC_DEGREES = 70.0       # each arc spans this either side of straight back
+FORMATION_SPACING_CELLS = 1.0      # cells between slots along an arc
+FORMATION_MAX_UNITS = 20
 STANCE_HOLD = "defend"             # waiting and guarding units
 STANCE_PUSH = "attack_anything"    # attacking and defending the base
+ARMY_STANCES = ("defend", "attack_anything", "return_fire", "hold_fire")   # the advisor may pick one for the waiting army
 RALLY_TOLERANCE_CELLS = 2
 
 # -- enemy memory ----------------------------------------------------------------------------------

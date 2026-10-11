@@ -34,19 +34,34 @@ class EnemyIntel:
         self._track_pushes(view)
         c = self.buildings(view)
         if sum(c.values()) < C.INTEL_MIN_BUILDINGS:
+            self._army_read(view)
             return
         procs = c.get(C.REFINERY, 0)
         rax = sum(c.get(b, 0) for b in C.BARRACKS)
-        if procs >= 2:
+        if procs >= 2 and not (self._rush and view.game_seconds < C.RUSH_HOLD_SECONDS):
             self._economy, self._rush = True, False
         elif (view.game_seconds >= C.RUSH_READ_SECONDS and procs <= 1 and not self._economy
               and (c.get(C.WAR_FACTORY, 0) or rax >= 2)):
             self._rush = True
-        elif (procs <= 1 and not self._economy and view.game_seconds < C.RUSH_HOLD_SECONDS
-              and view.enemy_army_value >= C.RUSH_ARMY_SEEN_VALUE):
-            # Their army tells it too: one refinery and ~10 infantry already
-            # (match 6b457914: our scouts missed the second barracks at 1:48
-            # but saw the army; the read came at 4:38, after the rush).
+        self._army_read(view)
+
+    def _army_read(self, view: View) -> None:
+        """Their army tells a rush whatever their refineries say: ~10
+        infantry seen before ``RUSH_HOLD_SECONDS``, or ~6 before
+        ``RUSH_EARLY_ARMY_SECONDS`` (6b457914: the read came at 4:38, after
+        the rush; 3bd6e450: two refineries hid a rifle wave — seen at 2:04,
+        it hit at 2:50, the read came at 4:07)."""
+        t = view.game_seconds
+        seen = view.enemy_army_value
+        if (t < C.RUSH_HOLD_SECONDS and seen >= C.RUSH_ARMY_SEEN_VALUE) or \
+                (t < C.RUSH_EARLY_ARMY_SECONDS and seen >= C.RUSH_EARLY_ARMY_VALUE):
+            self._rush = True
+
+    def scouts_lost(self, view: View) -> None:
+        """Our early scouts killed (the scout alarm) before ``RUSH_HOLD_SECONDS``:
+        something is out there — read it as a rush and hold it (the alarm
+        itself lasts a minute: 3bd6e450 dropped it at 3:05, 15 s before the wave)."""
+        if view.game_seconds < C.RUSH_HOLD_SECONDS:
             self._rush = True
 
     def suspect(self, view: View) -> bool:

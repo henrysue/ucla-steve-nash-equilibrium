@@ -23,6 +23,7 @@ def choose_mode(
     squad_ids: frozenset = frozenset(),
     losing_trades: bool = False,
     winning_trades: bool = False,
+    traded_up: bool = False,
     retreated_at: float | None = None,
     retreat_army: float | None = None,
     hunting: bool = False,
@@ -94,7 +95,10 @@ def choose_mode(
                or view.army_value >= C.REATTACK_ARMY_GROWTH * retreat_army)
     # A solid plan: build a real army first (PUSH_ARMY_VALUE), then push.
     built = view.army_value >= C.PUSH_ARMY_VALUE or behind_late
-    can_attack = strike >= threshold and _has_real_army(view) and built and not cooling_down and regrown
+    # Decisive: having just traded clearly up (TRADE_LEAD_*), go now — their
+    # army is down by what we killed; else the edge on what we know.
+    can_attack = ((strike >= threshold or traded_up) and _has_real_army(view) and built
+                  and not cooling_down and regrown)
     # Into turrets only with the right army: a big infantry mass (kills them
     # fast) or tanks/artillery. (Match 654f1b2e: three attacks with a mixed
     # army into three flame towers, three losing trades and retreats.) An
@@ -172,14 +176,10 @@ def enemy_estimate(view: View) -> float:
     army adjusted by the trades (their losses are our kills). Match 08560d9b
     attacked with 3900 "against 1400"; they had 5000-6000, and showed 4000
     fifteen seconds before."""
-    look = max(view.enemy_army_value, view.enemy_army_peak, 0.0)
-    if view.enemy_base_scouted and view.army_value >= C.WEAK_ENEMY_EDGE * look:
-        # A fresh look at their base shows them substantially weaker: trust
-        # it, not the "about as big as us" prior (then the normal attack rules
-        # decide: a real army, no recent retreat, turrets we can break).
-        return look
-    prior = C.ENEMY_PRIOR_SHARE * (view.army_value + view.deaths_cost - view.kills_cost)
-    return max(look, prior)
+    # What we know, no guess: the most we see or remember now, or saw lately
+    # less our kills since (enemy_army_peak). Decisions add trades
+    # (choose_mode's traded_up) and a scout's look before a blind attack.
+    return max(view.enemy_army_value, view.enemy_army_peak, 0.0)
 
 
 def behind_on_army(view: View) -> bool:
@@ -199,12 +199,10 @@ def blind_estimate(view: View) -> bool:
     income had stopped, theirs had not) and met 13500."""
     if view.enemy_base_scouted:
         return False
-    # What we actually SAW lately — not the peak, whose rebuild term adds our
-    # own growth since a sighting (efefdca8 attacked 13150 into "10440" with
-    # 700 seen: the peak read 5000+, so it never counted as blind).
+    # We have seen little of them lately (efefdca8 attacked 13150 with 700
+    # seen): a scout looks before we commit.
     look = max(view.enemy_army_value, view.enemy_seen_recent, 0.0)
-    prior = C.ENEMY_PRIOR_SHARE * (view.army_value + view.deaths_cost - view.kills_cost)
-    return prior > C.BLIND_PRIOR_RATIO * look
+    return look < C.BLIND_SEEN_SHARE * view.army_value
 
 
 def _army_edge(view: View) -> float:
@@ -371,6 +369,13 @@ def beaten(view: View) -> bool:
 
 
 def _overwhelming(view: View) -> bool:
+    if (enemy_estimate(view) <= 0 and not view.enemy_base_scouted
+            and view.kills_cost - view.deaths_cost < C.UNSEEN_LEAD_MIN):
+        return False                   # nothing seen is not nothing there — unless we out-traded them by a lot
+    return _overwhelming_known(view)
+
+
+def _overwhelming_known(view: View) -> bool:
     """Our army is at least MODEL_HOLD_MAX_EDGE x the estimated enemy army
     (enemy_estimate: what we saw lately and what the trades imply), while
     ahead on trades. An estimate of 0 is not "unknown": nothing seen lately

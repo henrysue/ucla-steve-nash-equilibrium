@@ -40,6 +40,8 @@ class ScoutCorps:
         self._lost: list[tuple[float, tuple[int, int], bool]] = []   # (time, cell, was circling)
         self.visit: tuple[int, int] | None = None    # a one-off look (our expansion site)
         self.look: tuple[int, int] | None = None     # where their army masses, before a blind attack
+        self._peek_at: dict[str, float] = {}          # role -> when its last look at their exit ended
+        self._peeking: set = set()                    # roles out on a look right now
         self.base_seen_at: float | None = None
         self._sent: dict[int, tuple[int, int]] = {}  # unit id -> waypoint last ordered
         self._start_at: dict[str, float] = {}        # role -> when its circuit may set out (the stagger)
@@ -165,9 +167,28 @@ class ScoutCorps:
                              and dist2(a.cell, u.cell) <= r2 for a in view.enemy_units)
             if threatened and view.base_center is not None:
                 # A picket backs off: it is there to see the push, not stop it.
+                self._end_peek(role, view)
                 back = _step_toward(u.cell, view.base_center, C.SCOUT_FLEE_CELLS)
                 out.append(orders.move([uid], list(back)))
-            elif u.idle and dist2(u.cell, post) > 9:
+                continue
+            # The lane scouts don't stand idle at their posts: every
+            # SCOUT_PEEK_SECONDS each takes a look at the enemy's exit from its
+            # own side (their army and its moves), then goes back (3bd6e450:
+            # two scouts stood at the same corners for minutes).
+            peek = self.peek_point(view, role) if role in ("left", "right") else None
+            if peek is not None and role not in self._peeking and \
+                    view.game_seconds - self._peek_at.get(role, self._peek_offset(role)) >= C.SCOUT_PEEK_SECONDS:
+                self._peeking.add(role)
+            if role in self._peeking and peek is not None:
+                if dist2(u.cell, peek) <= 9 or (u.idle and self._sent.get(u.id) == peek):
+                    self._end_peek(role, view)       # seen (or as near as it gets): back to the post
+                else:
+                    if self._sent.get(u.id) != peek or u.idle:
+                        self._sent[u.id] = peek
+                        out.append(orders.move([uid], list(peek)))
+                    continue
+            if u.idle and dist2(u.cell, post) > 9:
+                self._sent[u.id] = post
                 out.append(orders.move([uid], list(post)))
         return out
 
@@ -183,14 +204,47 @@ class ScoutCorps:
 
     # -- places ------------------------------------------------------------------
 
+    def _peek_offset(self, role: str) -> float:
+        """The left and right scouts look half a period apart."""
+        return -C.SCOUT_PEEK_SECONDS / 2 if role == "right" else 0.0
+
+    def _end_peek(self, role: str, view: View) -> None:
+        if role in self._peeking:
+            self._peeking.discard(role)
+            self._peek_at[role] = view.game_seconds
+
+    def peek_point(self, view: View, role: str) -> tuple[int, int] | None:
+        """Where a scout looks at the enemy's exit: ``SCOUT_PEEK_BACK_CELLS``
+        short of their massing point toward us, ``SCOUT_PEEK_SIDE_CELLS`` to
+        the scout's own side — off the centre lane their army walks."""
+        from .scout import _open_cell, enemy_staging
+
+        base, enemy = view.base_center, enemy_spawn_guess(view)
+        staging = enemy_staging(view)
+        if base is None or enemy is None or staging is None:
+            return None
+        dx, dy = base[0] - enemy[0], base[1] - enemy[1]
+        length = (dx * dx + dy * dy) ** 0.5 or 1.0
+        ux, uy = dx / length, dy / length
+        side = -1.0 if role == "left" else 1.0
+        px, py = uy * side, -ux * side
+        cell = (staging[0] + ux * C.SCOUT_PEEK_BACK_CELLS + px * C.SCOUT_PEEK_SIDE_CELLS,
+                staging[1] + uy * C.SCOUT_PEEK_BACK_CELLS + py * C.SCOUT_PEEK_SIDE_CELLS)
+        return _reachable(view, _open_cell(view, cell))
+
     def post(self, view: View, role: str) -> tuple[int, int] | None:
         """Picket posts across the approach: the two early scouts on the outer
-        posts, the rest between them."""
+        posts; the extra pickets watch the enemy's exit from the flanks, never
+        the centre lane (3bd6e450: a picket stood in the middle of the
+        approach, where the armies meet)."""
         from .scout import _open_cell
 
         base, enemy = view.base_center, enemy_spawn_guess(view)
         if base is None or enemy is None:
             return None
+        if role.startswith("p") and role != "p0":
+            # an exit watcher: alternate sides, on the flank of their massing point
+            return self.peek_point(view, "left" if int(role[1:] or 0) % 2 else "right")
         slots = {"left": -1.0, "right": 1.0}
         extra = max(0, C.MID_PICKETS - 2)
         for i in range(extra):

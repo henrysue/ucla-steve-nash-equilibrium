@@ -133,17 +133,20 @@ def _rally_orders(view: View) -> list[dict]:
     ]
 
 
-def stance_orders(view: View, mode: Mode, holders: set) -> list[dict]:
+def stance_orders(view: View, mode: Mode, holders: set, prefer: str | None = None) -> list[dict]:
     """Waiting and guarding units hold (``STANCE_HOLD``: fight in range, don't
     chase into traps); attacking and base-defending units engage freely
-    (``STANCE_PUSH``). ``holders`` (home guard, garrison) always hold. Only
-    units whose reported stance differs get an order."""
+    (``STANCE_PUSH``). ``holders`` (home guard, garrison) always hold.
+    ``prefer``: the advisor's stance for the waiting army (one of
+    ``ARMY_STANCES``; "auto" or None keeps the rule). Only units whose
+    reported stance differs get an order."""
     push = mode in (Mode.ALL_IN, Mode.DEFEND_BASE, Mode.DEFEND_RUSH)
+    waiting = prefer if prefer in C.ARMY_STANCES else C.STANCE_HOLD
     want: dict[str, list[int]] = {}
     for u in view.combat_units:
         if u.id is None or u.stance is None:
             continue
-        target = C.STANCE_HOLD if (u.id in holders or not push) else C.STANCE_PUSH
+        target = C.STANCE_HOLD if u.id in holders else (C.STANCE_PUSH if push else waiting)
         if u.stance != target:
             want.setdefault(target, []).append(u.id)
     return [orders.set_stance(ids[:orders.MAX_UNITS_PER_ORDER], stance) for stance, ids in want.items()]
@@ -549,13 +552,43 @@ def _stage_forward(
         if view.base_center is not None and (outnumbered or (firm < C.ENGAGE_MIN_EDGE and _home_turret(view, near))):
             return [orders.attack_move(ids, list(_fallback_point(view, near)))]
         return [orders.attack_move(ids, list(target))]
+    # Guard: anything that comes at the massing army — even a small group, or
+    # units shooting from just outside the defend stance's range — is met by
+    # every idle unit, in one order (the batch has room for it); units already
+    # walking keep going, and the guards walk back to their slots once it is
+    # dead (3bd6e450: the army stood still while it was shot at). The advisor
+    # may switch it off ("guard": "off").
+    r2 = C.GUARD_RADIUS_CELLS ** 2
+    mine = [u for u in fighters if u.cell is not None]
+    close = [a for a in view.enemy_units if a.cell is not None and not a.wreck and a.type not in C.HARVESTER
+             and (dist2(a.cell, stage) <= r2 or any(dist2(a.cell, u.cell) <= r2 for u in mine))]
+    guard_orders: list[dict] = []
+    guards = [u for u in mine if u.idle][:orders.MAX_UNITS_PER_ORDER]
+    if close and guards and getattr(advice, "guard", "on") != "off":
+        cx = sum(a.cell[0] for a in close) / len(close)
+        cy = sum(a.cell[1] for a in close) / len(close)
+        nearest = min(close, key=lambda a: dist2(a.cell, (cx, cy)))
+        guard_orders = [orders.attack_move([u.id for u in guards], list(nearest.cell))]
+        taken = {u.id for u in guards}
+        fighters = [u for u in fighters if u.id not in taken]
+    # A push our scouts see coming through our half: set up across its path,
+    # between it and the base it heads for, before it arrives — when we are
+    # at least as strong (else the turret line takes it, above).
+    if stage_override is None:
+        incoming = scout.incoming_push(view)
+        if incoming is not None:
+            point, facing, group = incoming
+            if strength.edge([u.type for u in fighters], [a.type for a in group]) >= C.INTERCEPT_MIN_EDGE:
+                stage = point
+                if len(fighters) >= 3:
+                    return guard_orders + _concave_orders(view, fighters, stage, facing)
     # Massing (and holding at home) is always a concave facing the enemy's
     # approach: every unit can fire into the middle where they arrive.
     if len(fighters) >= 3:
-        return _concave_orders(view, fighters, stage, enemy_spawn_guess(view))
+        return guard_orders + _concave_orders(view, fighters, stage, enemy_spawn_guess(view))
     r2 = C.STAGING_RADIUS_CELLS ** 2
     movers = [u.id for u in fighters if u.idle and dist2(u.cell, stage) > r2]
-    return [orders.attack_move(movers[:orders.MAX_UNITS_PER_ORDER], list(stage))] if movers else []
+    return guard_orders + ([orders.attack_move(movers[:orders.MAX_UNITS_PER_ORDER], list(stage))] if movers else [])
 
 
 def fight_near(view: View, cells) -> tuple[int, int] | None:
@@ -628,19 +661,31 @@ def concave_slots(view: View, center, facing, n: int) -> list[tuple[int, int]]:
     for b in view.buildings:
         if b.cell is not None and not b.wreck:
             taken.update(_cells(b.type, b.cell))
+    import math
+
+    # Ranks on arcs round the kill point, each within rifle range of it.
+    fx, fy = center[0] + ux * C.FORMATION_FOCUS_AHEAD, center[1] + uy * C.FORMATION_FOCUS_AHEAD
+    span = math.radians(C.FORMATION_ARC_DEGREES)
     slots: list[tuple[int, int]] = []
-    for i in range(n):
-        k = (i - (n - 1) / 2) * C.FORMATION_SPACING_CELLS
-        forward = C.FORMATION_CURVE * k * k
-        x = round(center[0] + px * k + ux * forward)
-        y = round(center[1] + py * k + uy * forward)
-        if view.bounds is not None:
-            bx, by, bw, bh = view.bounds
-            x, y = min(max(x, bx), bx + bw - 1), min(max(y, by), by + bh - 1)
-        x, y = _open_slot(view, (x, y), taken)
-        if (x, y) not in slots:
-            slots.append((x, y))
-    return slots
+    left = n
+    for radius in C.FORMATION_RANKS:
+        if left <= 0:
+            break
+        cap = max(1, int(2 * span * radius / C.FORMATION_SPACING_CELLS) + 1)
+        m = min(cap, left)
+        for i in range(m):
+            a = (i / (m - 1) - 0.5) * 2 * span if m > 1 else 0.0
+            # from the kill point back toward us, turned by a
+            dx_, dy_ = -ux * math.cos(a) + px * math.sin(a), -uy * math.cos(a) + py * math.sin(a)
+            x, y = round(fx + dx_ * radius), round(fy + dy_ * radius)
+            if view.bounds is not None:
+                bx, by, bw, bh = view.bounds
+                x, y = min(max(x, bx), bx + bw - 1), min(max(y, by), by + bh - 1)
+            x, y = _open_slot(view, (x, y), taken)
+            if (x, y) not in slots:
+                slots.append((x, y))
+        left -= m
+    return slots[:n]
 
 
 def _open_slot(view: View, cell, taken: set) -> tuple[int, int]:
@@ -656,7 +701,7 @@ def _open_slot(view: View, cell, taken: set) -> tuple[int, int]:
 def _concave_orders(view: View, fighters, center, facing) -> list[dict]:
     """Attack-move each unit to its concave slot (assigned in order along the line,
     so paths don't cross); units already on their slot get no order. Units
-    beyond ``FORMATION_MAX_UNITS`` gather at the centre behind the line."""
+    beyond the slots gather just behind the line."""
     units = [u for u in fighters if u.cell is not None]
     if not units:
         return []
@@ -673,14 +718,24 @@ def _concave_orders(view: View, fighters, center, facing) -> list[dict]:
     # (52a77fb1: one order per unit overflowed the 20-order batch, the
     # walk-to-the-centre order came last and was cut every view, and new
     # units stood at the barracks doors through a fight).
+    # Idle units first (a walking one already has its order), farthest first.
     moves = sorted(((u, slot) for u, slot in zip(in_line, slots) if dist2(u.cell, slot) > 2),
-                   key=lambda p: -dist2(p[0].cell, p[1]))
+                   key=lambda p: (not p[0].idle, -dist2(p[0].cell, p[1])))
     sent = moves[:C.CONCAVE_ORDERS_PER_VIEW]
-    covered = {u.id for u, _ in sent}
     r2 = C.STAGING_RADIUS_CELLS ** 2
-    rest = [u.id for u in units if u.id not in covered and dist2(u.cell, center) > r2
-            and (u.idle or u not in in_line)]
-    out = [orders.attack_move(rest[:orders.MAX_UNITS_PER_ORDER], list(center))] if rest else []
+    # Only units beyond the formation walk to the centre: an in-line unit
+    # waits for its slot order (sending it to the centre and back to its
+    # slot had the edges of the line wandering to and fro, 3bd6e450 12:00+).
+    line = {u.id for u, _ in zip(in_line, slots)}
+    rear = center
+    if facing is not None:
+        ddx, ddy = facing[0] - center[0], facing[1] - center[1]
+        dl = (ddx * ddx + ddy * ddy) ** 0.5 or 1.0
+        back = max(C.FORMATION_RANKS) - C.FORMATION_FOCUS_AHEAD + 1.5
+        rear = _open_slot(view, (round(center[0] - ddx / dl * back), round(center[1] - ddy / dl * back)),
+                          set(view.blocked_cells))
+    rest = [u.id for u in units if u.id not in line and u.idle and dist2(u.cell, rear) > r2]
+    out = [orders.attack_move(rest[:orders.MAX_UNITS_PER_ORDER], list(rear))] if rest else []
     return out + [orders.attack_move([u.id], list(slot)) for u, slot in sent]
 
 

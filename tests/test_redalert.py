@@ -975,9 +975,10 @@ def test_model_cannot_force_an_attack_during_retreat_cooldown():
 
 def test_concave_slots_curve_toward_the_enemy():
     slots = executor.concave_slots(_view(), (20, 20), (20, 40), 5)
-    assert slots[2] == (20, 20)                       # centre on the stage point
-    assert slots[0][1] > 20 and slots[4][1] > 20      # the ends bend toward the enemy (+y)
-    assert sorted([slots[0][0], slots[4][0]]) == [17, 23]  # spread evenly across the approach
+    middle = slots[2]
+    assert middle[0] == 20 and middle[1] < 22                      # straight behind the kill point (20, 22)
+    assert slots[0][1] > middle[1] and slots[4][1] > middle[1]     # the ends bend toward the enemy (+y)
+    assert slots[0][0] + slots[4][0] == 40 and abs(slots[0][0] - 20) >= 2   # evenly to both sides
 
 
 def test_advice_drives_the_raid_and_turret_side_while_the_rules_form_the_concave():
@@ -3346,7 +3347,7 @@ def test_a_confirmation_made_during_the_anti_flip_window_starts_the_attack_when_
     tanks = [{"id": 30 + i, "type": "3tnk", "x": 10, "y": 10, "hp": 100} for i in range(6)]
     agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
     agent._mode, agent._mode_since = Mode.BUILD, 400.0                      # just changed: window until 440
-    strong = {"army_value": 5000, "visible_enemy_value": 1000}
+    strong = {"army_value": 5000, "visible_enemy_value": 3000}            # seen enough: no look needed
     for t in (405.0, 410.0, 435.0):
         agent.choose_action(_state(_t=t, buildings=BASE, units=tanks, military=strong), CTX)
         assert agent._mode is Mode.BUILD
@@ -3406,7 +3407,7 @@ def test_the_commander_keeps_the_bookkeeping():
 def test_the_advisor_schema_has_only_fields_the_rules_use():
     props = set(ra_advisor.ADVICE_SCHEMA["properties"])
     assert props == {"enemy_style", "balance", "mistakes", "posture", "attack_route", "expand", "army_target",
-                     "raid_target_id", "raid_target_cell", "defense_at", "plan", "reasoning"}
+                     "raid_target_id", "raid_target_cell", "defense_at", "army_stance", "guard", "plan", "reasoning"}
     for word in ("double refinery", "rush", "concave", "army_value_estimate", "aggressive", "macro",
                  "over-index", "mistakes", "generally good"):
         assert word in ra_advisor.SYSTEM_PROMPT, word
@@ -3633,15 +3634,13 @@ def test_massed_units_in_front_do_not_push_the_turret_behind_the_base():
 # -- match 08560d9b: attacks into the fog, an MCV with 3 fighters, a concave shot from range --------
 
 
-def test_the_enemy_estimate_sees_through_the_fog():
-    even = _view(_t=200.0, buildings=BASE, military={"army_value": 3000, "visible_enemy_value": 1000})
-    assert brain.enemy_estimate(even) == 2400                                # no trades: about our size
-    assert brain.choose_mode(even, cheese_since=None) is Mode.BUILD          # 1.25x: hold, defend
-    ahead = _view(_t=200.0, buildings=BASE,
-                  military={"army_value": 3000, "visible_enemy_value": 1000, "kills_cost": 2500, "deaths_cost": 500})
-    assert brain.choose_mode(ahead, cheese_since=None) is Mode.ALL_IN        # out-traded them: go
-    seen = dataclasses.replace(ahead, enemy_army_peak=4000.0)
-    assert brain.choose_mode(seen, cheese_since=None) is Mode.BUILD          # but we just saw 4000 of them
+def test_the_enemy_estimate_is_what_we_know_not_a_guess():
+    v = _view(_t=200.0, buildings=BASE, military={"army_value": 3000, "visible_enemy_value": 1000})
+    assert brain.enemy_estimate(v) == 1000                                   # what we see, nothing made up
+    assert brain.blind_estimate(v)                                           # little seen: a scout looks first
+    seen = dataclasses.replace(v, enemy_army_peak=4000.0)
+    assert brain.enemy_estimate(seen) == 4000                                # what we saw lately, less our kills
+    assert brain.choose_mode(seen, cheese_since=None) is Mode.BUILD          # we just saw 4000 of them
 
 
 def test_what_we_saw_of_their_army_counts_until_we_kill_it():
@@ -3652,7 +3651,7 @@ def test_what_we_saw_of_their_army_counts_until_we_kill_it():
 
 
 def test_the_advisor_cannot_push_an_attack_the_numbers_do_not_support():
-    v = _view(_t=300.0, buildings=BASE, military={"army_value": 3000, "visible_enemy_value": 1000})
+    v = _view(_t=300.0, buildings=BASE, military={"army_value": 3000, "visible_enemy_value": 2800})
     assert brain.choose_mode(v, cheese_since=None, model_pref=Mode.ALL_IN) is Mode.BUILD
 
 
@@ -3675,8 +3674,11 @@ def test_the_massing_army_fights_what_attacks_it():
     v = _view(_t=500.0, buildings=BASE, units=army, visible_enemies=push)
     o = executor._army_orders(v, Mode.BUILD)
     assert len(o) == 1 and o[0]["cmd"] == "attack_move" and len(o[0]["units"]) == 10
-    scout = _view(_t=500.0, buildings=BASE, units=army, visible_enemies=push[:1])
-    assert not any(x.get("to") == [18, 18] for x in executor._army_orders(scout, Mode.BUILD))  # a raid: the concave holds
+    poke = _view(_t=500.0, buildings=BASE, units=[dict(u, idle=True) for u in army], visible_enemies=push[:1])
+    (guard, *rest) = executor._army_orders(poke, Mode.BUILD)
+    assert guard["to"] == [18, 18] and len(guard["units"]) == 10              # a poke: every idle unit answers it
+    busy = _view(_t=500.0, buildings=BASE, units=army, visible_enemies=push[:1])  # nobody idle: they keep going
+    assert not any(x.get("to") == [18, 18] for x in executor._army_orders(busy, Mode.BUILD))
 
 
 # -- the advisor reads the game: enemy style, balance, mistakes ----------------------------------
@@ -4000,7 +4002,7 @@ def test_the_estimate_counts_what_they_rebuilt_since_we_saw_them():
                                                  "army_value": 1600, "deaths_cost": 9900}))
     peak = agent._enemy_peak(_view(_t=601.0, military={"visible_enemy_value": 0, "kills_cost": 11900,
                                                         "army_value": 2300, "deaths_cost": 9900}))
-    assert peak == 1200 - 300 + 700                                           # seen, less half our kills, plus a rebuild like ours
+    assert peak == 1200 - 300                                                 # seen, less half our kills: no rebuild guess
 
 
 def test_no_finishing_straight_after_a_retreat():
@@ -4052,12 +4054,12 @@ def test_console_lines_and_the_reasoning_say_which_seat_they_come_from():
 # -- match f581756e: an attack on a half-scouted enemy "worth 1040" ---------------------------------
 
 
-def test_a_half_scouted_base_does_not_shrink_the_estimate():
+def test_no_guess_from_their_buildings_or_our_trades():
     ours = BASE + [{"id": 20 + i, "type": "proc"} for i in range(4)]
     two = [{"id": 90 + i, "type": "proc", "x": 40 + 3 * i, "y": 40, "hp": 100} for i in range(2)]
     v = _view(_t=434.0, buildings=ours, visible_enemy_buildings=two,
               military={"army_value": 3900, "kills_cost": 5400, "deaths_cost": 4100})
-    assert brain.enemy_estimate(v) == 0.8 * (3900 + 4100 - 5400)              # not halved for the refineries we missed
+    assert brain.enemy_estimate(v) == 0                                       # nothing of their army seen: no guess
 
 
 def test_outgunned_compares_combat_units_only():
@@ -4129,12 +4131,12 @@ def test_a_roaming_picket_checks_remote_fields_and_the_raid_goes_there_first():
 
 def test_a_fresh_look_at_a_weak_enemy_starts_an_attack():
     weak = _view(_t=300.0, buildings=BASE, military={"army_value": 4000, "visible_enemy_value": 900})
-    assert brain.choose_mode(weak, cheese_since=None) is Mode.BUILD                    # the prior: about our size
+    assert brain.blind_estimate(weak)                                                  # little seen: look first
     looked = dataclasses.replace(weak, enemy_base_scouted=True)
-    assert brain.enemy_estimate(looked) == 900
+    assert not brain.blind_estimate(looked) and brain.enemy_estimate(looked) == 900
     assert brain.choose_mode(looked, cheese_since=None) is Mode.ALL_IN                 # we looked: they are weak
-    strong = dataclasses.replace(looked, enemy_army_value=3000.0)
-    assert brain.choose_mode(strong, cheese_since=None) is Mode.BUILD                  # 4000 vs 3000 seen: not weak
+    strong = dataclasses.replace(looked, enemy_army_value=3500.0)
+    assert brain.choose_mode(strong, cheese_since=None) is Mode.BUILD                  # 4000 vs 3500 seen: not weak
 
 
 def test_the_first_tower_watches_a_choke_in_range():
@@ -4497,8 +4499,11 @@ def test_formation_orders_fit_the_batch_and_nobody_is_left_at_the_door():
     o = executor._army_orders(_view(_t=300.0, buildings=BASE, units=near + door), Mode.BUILD)
     assert len(o) <= 1 + C.CONCAVE_ORDERS_PER_VIEW
     walking = {i for x in o for i in x["units"]}
-    assert all(u["id"] in walking for u in door)                              # every far unit has an order
-    assert len(o[0]["units"]) > 1                                             # the group order comes first
+    moving = [dict(u, idle=u["id"] not in walking) for u in near + door]      # the next view: those walk
+    o2 = executor._army_orders(_view(_t=301.0, buildings=BASE, units=moving), Mode.BUILD)
+    walking |= {i for x in o2 for i in x["units"]}
+    assert len(o2) <= 1 + C.CONCAVE_ORDERS_PER_VIEW
+    assert all(u["id"] in walking for u in door)                              # within two views every far unit moves
 
 
 def test_the_mix_moves_the_army_edge():
@@ -4591,3 +4596,117 @@ def test_no_attack_into_a_turtle_before_the_siege():
     siege = tanks + [{"id": 60 + i, "type": "v2rl", "x": 10, "y": 10, "hp": 100} for i in range(3)]
     sv = dataclasses.replace(v, units=read(_raw(units=siege)).units)
     assert brain.choose_mode(sv, cheese_since=None) is Mode.ALL_IN
+
+
+# -- match 3bd6e450: scouts that look, an earlier rush read, an intercept, no wandering ---------------
+
+
+def test_lane_scouts_take_turns_looking_at_the_enemy_exit():
+    corps = ScoutCorps()
+    corps.roles = {"left": 30, "right": 31}
+    units = [{"id": 30, "type": "e1", "x": 14, "y": 30, "hp": 100, "idle": True},
+             {"id": 31, "type": "e1", "x": 30, "y": 14, "hp": 100, "idle": True}]
+    v = _view(_t=400.0, buildings=BASE, units=units)
+    o = corps.orders(v)
+    peeks = {tuple(x["to"]) for x in o}
+    assert tuple(corps.peek_point(v, "left")) in peeks or tuple(corps.peek_point(v, "right")) in peeks
+    left, right = corps.peek_point(v, "left"), corps.peek_point(v, "right")
+    centre = scout.enemy_staging(v)
+    assert left != right and min((left[0] - centre[0]) ** 2 + (left[1] - centre[1]) ** 2,
+                                 (right[0] - centre[0]) ** 2 + (right[1] - centre[1]) ** 2) >= 25   # off the lane
+    assert corps.post(v, "p1") in (left, right)                               # the extra picket watches the exit
+
+
+def test_a_rush_is_read_from_early_infantry_whatever_the_refineries():
+    from agent.redalert.intel import EnemyIntel
+    intel = EnemyIntel()
+    procs = [{"id": 80, "type": "proc", "x": 38, "y": 38, "hp": 100}, {"id": 81, "type": "proc", "x": 41, "y": 38, "hp": 100},
+             {"id": 82, "type": "tent", "x": 40, "y": 41, "hp": 100}]
+    rifles = [{"id": 900 + i, "type": "e1", "x": 30, "y": 30, "hp": 100} for i in range(7)]
+    intel.update(_view(_t=124.0, buildings=BASE, visible_enemy_buildings=procs, visible_enemies=rifles,
+                       military={"visible_enemy_value": 700}))
+    assert intel.opening() == "rush"                                          # 700 seen at 2:04
+    lost = EnemyIntel()
+    lost.scouts_lost(_view(_t=124.0))
+    assert lost.rushing(_view(_t=200.0))                                      # held past the alarm's minute
+
+
+def test_the_army_sets_up_across_a_push_our_scouts_see_coming():
+    scout._INTERCEPT.update(at=None, facing=None, group=[], seen=-1e9)
+    army = [{"id": 100 + i, "type": "e1", "x": 13, "y": 13, "hp": 100, "idle": True} for i in range(20)]
+    push = [{"id": 900 + i, "type": "e1", "x": 4 + i % 3, "y": 30 + i // 3, "hp": 100} for i in range(16)]   # coming down the west side
+    v = _view(_t=500.0, buildings=BASE, units=army, visible_enemies=push)
+    point, facing, group = scout.incoming_push(v)
+    assert point[1] > 13 and point[0] < 13                                    # toward them, not the usual front
+    o = executor._army_orders(v, Mode.BUILD)
+    tos = [tuple(x["to"]) for x in o]
+    assert tos and all(((x - point[0]) ** 2 + (y - point[1]) ** 2) <= 7 ** 2 for x, y in tos)
+    later = _view(_t=510.0, buildings=BASE, units=army)                       # out of sight 10 s: held
+    assert scout.incoming_push(later) is not None
+    assert scout.incoming_push(_view(_t=540.0, buildings=BASE, units=army)) is None
+
+
+def test_units_on_their_slot_are_never_sent_back_to_the_centre():
+    on_slot = []
+    v0 = _view(_t=300.0, buildings=BASE, units=[{"id": 100 + i, "type": "e1", "x": 13, "y": 13, "hp": 100, "idle": True}
+                                                for i in range(12)])
+    slots = executor.concave_slots(v0, (13, 13), (40, 40), 12)
+    on_slot = [{"id": 100 + i, "type": "e1", "x": s[0], "y": s[1], "hp": 100, "idle": True} for i, s in enumerate(slots)]
+    o = executor._army_orders(_view(_t=300.0, buildings=BASE, units=on_slot), Mode.BUILD)
+    assert not any(x["to"] == [13, 13] and len(x["units"]) > 0 for x in o if set(x["units"]) & {u["id"] for u in on_slot})
+
+
+# -- decisive play: trades over guesses; a concave that all fires at once ---------------------------------
+
+
+def test_every_concave_slot_is_in_rifle_range_of_the_kill_point():
+    v = _view(_t=300.0, buildings=BASE)
+    for n in (6, 12, 20):
+        slots = executor.concave_slots(v, (20, 20), (40, 40), n)
+        assert len(slots) >= n - 2
+        d = (40 - 20) / ((40 - 20) ** 2 * 2) ** 0.5
+        fx, fy = 20 + d * C.FORMATION_FOCUS_AHEAD, 20 + d * C.FORMATION_FOCUS_AHEAD
+        assert all(((x - fx) ** 2 + (y - fy) ** 2) ** 0.5 <= 5.0 for x, y in slots)   # riflemen reach 5
+        xs = [x - y for x, y in slots]
+        assert max(xs) - min(xs) <= 14                                       # tight, not 16 cells of line
+
+
+def test_trading_clearly_up_starts_an_attack_at_once():
+    c = Commander()
+    c.mode = Mode.BUILD
+    tanks = [{"id": 30 + i, "type": "3tnk", "x": 10, "y": 10, "hp": 100} for i in range(6)]
+    blds = BASE + [{"id": 12, "type": "weap", "x": 4, "y": 8}]
+    v0 = _view(_t=480.0, buildings=blds, units=tanks, military={"army_value": 5000, "visible_enemy_value": 6000,
+                                                                "kills_cost": 10000, "deaths_cost": 9000})
+    assert c.decide(v0) is Mode.BUILD                                         # even, outnumbered by what we see
+    v1 = _view(_t=540.0, buildings=blds, units=tanks, military={"army_value": 5000, "visible_enemy_value": 6000,
+                                                                "kills_cost": 13500, "deaths_cost": 10000})
+    assert c.traded_up(v1)
+    assert c.decide(v1) is Mode.ALL_IN                                        # +3500 vs +1000 in a minute: go now
+
+
+def test_the_massing_army_guards_itself_against_a_small_attack():
+    scout._INTERCEPT.update(at=None, facing=None, group=[], seen=-1e9)
+    army = [{"id": 100 + i, "type": "e1", "x": 13, "y": 13, "hp": 100, "idle": True} for i in range(12)]
+    pokers = [{"id": 900, "type": "e1", "x": 18, "y": 18, "hp": 100}, {"id": 901, "type": "e1", "x": 19, "y": 18, "hp": 100}]
+    o = executor._army_orders(_view(_t=500.0, buildings=BASE, units=army, visible_enemies=pokers), Mode.BUILD)
+    guard = o[0]
+    assert guard["cmd"] == "attack_move" and guard["to"] in ([18, 18], [19, 18])
+    assert len(guard["units"]) == 12                                          # every idle unit answers
+    from agent.redalert import advisor as ra_adv
+    off = ra_adv.parse_advice({"guard": "off"}, _view(), 500.0)
+    held = executor._army_orders(_view(_t=500.0, buildings=BASE, units=army, visible_enemies=pokers), Mode.BUILD,
+                                 advice=off)
+    assert not any(x.get("to") in ([18, 18], [19, 18]) for x in held)          # the advisor switched it off
+
+
+def test_the_advisor_may_set_the_waiting_army_stance():
+    from agent.redalert import advisor as ra_adv
+    units = [{"id": 30 + i, "type": "e1", "x": 13, "y": 13, "hp": 100, "stance": "defend"} for i in range(3)]
+    v = _view(_t=500.0, buildings=BASE, units=units)
+    adv = ra_adv.parse_advice({"army_stance": "attack_anything"}, v, 500.0)
+    assert adv.army_stance == "attack_anything"
+    assert executor.stance_orders(v, Mode.BUILD, set(), adv.army_stance) == [
+        {"cmd": "set_stance", "units": [30, 31, 32], "stance": "attack_anything"}]
+    assert executor.stance_orders(v, Mode.BUILD, set(), "auto") == []          # auto: the rule (defend)
+    assert ra_adv.parse_advice({"army_stance": "berserk"}, v, 500.0).army_stance == "auto"

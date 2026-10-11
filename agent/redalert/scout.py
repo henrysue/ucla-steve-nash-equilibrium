@@ -447,3 +447,47 @@ def watch_point(view: View, yard) -> tuple[int, int] | None:
         _WATCH.clear()
     _WATCH[key] = (view.blocked_cells, point)
     return point
+
+
+_INTERCEPT: dict = {"at": None, "facing": None, "group": [], "seen": -1e9}
+
+
+def incoming_push(view: View):
+    """(intercept point, facing, the enemy group) for an enemy army worth
+    ``INTERCEPT_MIN_VALUE`` seen (or remembered) in our half and not yet at
+    our army: the point on the way from the yard it heads for toward it,
+    half the way or the massing distance, whichever is shorter. Held
+    ``INTERCEPT_HOLD_SECONDS`` after the last sighting so the army doesn't
+    swing back and forth. None when nothing is coming."""
+    from .observe import enemy_spawn_guess
+
+    base, enemy = view.base_center, enemy_spawn_guess(view)
+    t = view.game_seconds
+    if base is None or enemy is None:
+        return None
+    yards = list(our_yards(view)) or [base]
+    seen = {a.id: a for a in list(view.known_enemy_units) + list(view.enemy_units)
+            if a.id is not None and a.cell is not None and not a.wreck and a.type not in C.HARVESTER
+            and a.type != C.MCV}
+    ours = [a for a in seen.values()
+            if min(dist2(a.cell, y) for y in yards) < dist2(a.cell, enemy)]
+    cost = lambda a: view.unit_costs.get(a.type) or C.KNOWN_COSTS.get(a.type, C.DEFAULT_UNIT_COST)  # noqa: E731
+    group = []
+    if ours:
+        lead = min(ours, key=lambda a: min(dist2(a.cell, y) for y in yards))   # the one nearest us
+        group = [a for a in ours if dist2(a.cell, lead.cell) <= 12 ** 2]
+    if group and sum(cost(a) for a in group) >= C.INTERCEPT_MIN_VALUE:
+        cx = sum(a.cell[0] for a in group) / len(group)
+        cy = sum(a.cell[1] for a in group) / len(group)
+        target = min(yards, key=lambda y: dist2(y, (cx, cy)))
+        d = dist2(target, (cx, cy)) ** 0.5
+        step = min(0.5 * d, max(C.STAGE_FORWARD_CELLS, C.STAGE_SHARE * dist2(base, enemy) ** 0.5))
+        if d > 0:
+            point = (round(target[0] + (cx - target[0]) / d * step), round(target[1] + (cy - target[1]) / d * step))
+            facing = (round(cx), round(cy))
+            _INTERCEPT.update(at=_clear_stage(view, _open_cell(view, point), facing), facing=facing,
+                              group=group, seen=t)
+    if _INTERCEPT["at"] is not None and t - _INTERCEPT["seen"] <= C.INTERCEPT_HOLD_SECONDS and t >= _INTERCEPT["seen"]:
+        return _INTERCEPT["at"], _INTERCEPT["facing"], _INTERCEPT["group"]
+    _INTERCEPT.update(at=None, facing=None, group=[], seen=-1e9)
+    return None

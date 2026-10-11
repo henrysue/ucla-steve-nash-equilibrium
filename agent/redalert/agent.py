@@ -137,6 +137,8 @@ class RedAlertAgent:
         self._intel.update(view)
         view = dataclasses.replace(view, enemy_turtling=self._intel.turtling(view))
         self._patrol.update(view, taken={*self._raid.unit_ids, *self._garrison.unit_ids})
+        if self._patrol.alarm(view):
+            self._intel.scouts_lost(view)
         threat = self._patrol.alarm(view) or self._intel.rushing(view)
         # The opening is the standard build order's: the advisor is consulted
         # once it stands, or sooner if a rush is read or the base is attacked.
@@ -248,7 +250,7 @@ class RedAlertAgent:
             warning=self._intel.suspect(view),
             fan=hunting,
         ) + self._unstick.orders(view) + executor.stance_orders(
-            view, self._mode, set(self._garrison.unit_ids))
+            view, self._mode, set(self._garrison.unit_ids), getattr(advice, "army_stance", None))
         now = self._clock()
         batch_orders = [
             o for o in self._steady(planned, view, now)
@@ -551,8 +553,9 @@ class RedAlertAgent:
         t = view.game_seconds
         self._enemy_seen.append((t, view.enemy_army_value, view.kills_cost, view.army_value, view.deaths_cost))
         self._enemy_seen = [r for r in self._enemy_seen if t - r[0] <= C.ENEMY_PEAK_SECONDS]
+        # What we saw, less what we killed since — no guess at what they
+        # built since (the decisions read trades and sightings, not a guess).
         return max(0.0, max(seen - C.KILL_ARMY_SHARE * (view.kills_cost - kills)
-                            + max(0.0, (view.army_value - army) + (view.deaths_cost - lost))
                             for _, seen, kills, army, lost in self._enemy_seen))
 
     def _audit_placements(self, view) -> None:

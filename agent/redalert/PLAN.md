@@ -176,6 +176,28 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
   at a time for two minutes). Expansion refineries avoid predicted ore; one that
   comes up elsewhere is asked for again at once,
   its spot skipped. Behind on army: no new refinery or MCV unless home runs dry.
+- **Decisive play, no guess** (3bd6e450): the enemy estimate is only what we
+  know — the most we see or remember, or saw lately less half our kills since;
+  no "about as big as us" prior, no rebuild guess. Trading clearly up (1500+
+  net and 1.5x in the last 2 minutes) starts an attack at once, no look first;
+  otherwise an attack on little seen waits for a scout's look. "Nothing seen"
+  counts as nothing left only 2000+ ahead on trades.
+- **A concave that fires at once**: ranks on arcs of 3.5 and 4.5 cells round a
+  kill point 2 cells in front of the massing point (each within rifle range 5);
+  units beyond the slots wait just behind the line. In-line units are never
+  sent back to the centre (the edges of the line wandered to and fro), idle
+  ones get their slot orders first.
+- **Guard**: enemy fighters within 8 cells of the massing army are met by every
+  idle unit in one order; they walk back to their slots after. The advisor may
+  switch it off ("guard") and pick the waiting army's stance ("army_stance").
+- **Intercept**: an enemy army worth 1500+ seen in our half sets the army up
+  across its path, between it and the base it heads for (held 20 s after the
+  last sighting), when at least as strong; else the turret line.
+- **Scouts that look**: the lane scouts alternate their post with a look at the
+  enemy's exit from their own side every 45 s; the extra pickets watch that exit
+  from the flanks (never the centre lane). A rush is read from 600 of army seen
+  before 2:30, or 1000 before 4:00, whatever their refineries; two early scouts
+  lost latch a rush read until 4:00.
 - **Reading a turtle** (intel.turtling): 4+ ground turrets known after 2:30
   and no push of theirs near our base for 5 minutes (a rusher's early
   pillboxes don't count while it keeps coming). Then: the dome at once, siege
