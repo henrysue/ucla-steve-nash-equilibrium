@@ -3912,3 +3912,32 @@ def test_no_finishing_straight_after_a_retreat():
     v = _view(_t=1164.0, _r=600.0, buildings=BASE, military={"army_value": 13600, "kills_cost": 54300, "deaths_cost": 35200})
     assert brain.choose_mode(v, cheese_since=None, prev_mode=Mode.BUILD, retreated_at=1130.0) is not Mode.ALL_IN
     assert brain.choose_mode(v, cheese_since=None, prev_mode=Mode.BUILD, retreated_at=1000.0) is Mode.ALL_IN
+
+
+# -- after the main base: fan out over the map, kill what is found ------------------------------
+
+
+def test_after_the_main_base_the_army_fans_out_and_squads_kill_what_is_found():
+    units = [{"id": 100 + i, "type": "1tnk", "x": 30, "y": 30, "hp": 100} for i in range(40)]
+    found = [{"id": 90, "type": "barr", "x": 40, "y": 44, "hp": 100}]
+    v = _view(_t=1100.0, buildings=BASE, units=units, visible_enemy_buildings=found,
+              military={"kills_cost": 60000, "deaths_cost": 30000})
+    cells = [(6 + 12 * i, 6 + 12 * j) for i in range(4) for j in range(4)]
+    o = executor._army_orders(v, Mode.ALL_IN, hunt=cells[0], hunt_points=cells, fan=True)
+    squad = [x for x in o if x["to"] == [40, 44]]
+    assert len(squad) == 1 and len(squad[0]["units"]) == C.FOUND_SQUAD_UNITS          # the barracks: ten go
+    fanned = [x for x in o if x["to"] != [40, 44]]
+    assert len(fanned) == 10 and all(len(x["units"]) == 3 for x in fanned)           # the other 30: ten cells
+
+
+def test_the_hunt_covers_the_map_with_a_grid_and_stays_on_once_the_base_falls():
+    h = scout.Hunter()
+    v = dataclasses.replace(_view(_t=900.0), bounds=(0, 0, 48, 48))
+    grid = h.grid(v)
+    assert len(grid) == 16 and all(0 <= c[0] < 48 and 0 <= c[1] < 48 for c in grid)
+    base = [{"id": 80 + i, "type": "powr", "x": 30 + 3 * i, "y": 30, "hp": 100} for i in range(7)]
+    lead = {"kills_cost": 20000, "deaths_cost": 10000}
+    assert not h.hunting(_view(_t=900.0, visible_enemy_buildings=base, military=lead))   # their base stands
+    assert h.hunting(_view(_t=950.0, visible_enemy_buildings=base[:2], military=lead))   # razed: hunt
+    assert h.hunting(_view(_t=980.0, visible_enemy_buildings=base[:5], military=lead))   # a few rebuilt: still
+    assert not h.hunting(_view(_t=990.0, visible_enemy_buildings=base, military=lead))   # a real base: attack it

@@ -304,6 +304,8 @@ class Hunter:
         self._checked: set[tuple[int, int]] = set()
         self._most_buildings = 0       # the most enemy buildings we have known at once
         self._ever: list[tuple[int, int]] = []   # every cell where we knew an enemy building
+        self._razed = False                      # their main base fell: hunt until the end (latched)
+        self._grid: tuple | None = None          # (key, cells): the map's search grid
 
     def hunting(self, view: View) -> bool:
         """Their base is (nearly) razed: we once knew at least twice
@@ -318,8 +320,12 @@ class Hunter:
         for a in seen:
             if a.cell is not None and all(dist2(a.cell, c) > 9 for c in self._ever):
                 self._ever.append(a.cell)
-        return (self._most_buildings >= 2 * C.FINISH_MAX_BUILDINGS and len(known) <= C.FINISH_MAX_BUILDINGS
-                and view.kills_cost > view.deaths_cost)
+        if len(known) > 2 * C.FINISH_MAX_BUILDINGS or view.kills_cost <= view.deaths_cost:
+            self._razed = False              # a real base found after all, or no longer ahead: a normal attack
+        elif (self._most_buildings >= 2 * C.FINISH_MAX_BUILDINGS and len(known) <= C.FINISH_MAX_BUILDINGS
+                and view.kills_cost > view.deaths_cost):
+            self._razed = True               # stays on while they rebuild a building or two
+        return self._razed
 
     def target(self, view: View) -> tuple[int, int] | None:
         points = self.targets(view, 1)
@@ -332,9 +338,6 @@ class Hunter:
         memory had dropped survived 80 s of a 100-unit hunt that searched
         the spawn, ore fields and corners)."""
         points = self._points(view)
-        for c in self._ever:
-            if all(dist2(c, p) > 36 for p in points):
-                points.append(c)
         if not points:
             return []
         r2 = C.HUNT_CHECKED_CELLS ** 2
@@ -355,8 +358,7 @@ class Hunter:
             rest.sort(key=lambda p: dist2(p, (cx, cy)))
         return (first + rest)[:max(1, k)]
 
-    @staticmethod
-    def _points(view: View) -> list[tuple[int, int]]:
+    def _points(self, view: View) -> list[tuple[int, int]]:
         from .expand import _ore_fields, enemy_expansion_sites
         from .observe import enemy_spawn_guess
 
@@ -373,8 +375,32 @@ class Hunter:
             x, y, w, h = view.bounds
             m = C.SCOUT_INSET_CELLS
             pts += [(x + m, y + m), (x + w - 1 - m, y + m), (x + m, y + h - 1 - m), (x + w - 1 - m, y + h - 1 - m)]
+        pts += self._ever                 # where we knew buildings, before the grid's nearby cells
+        pts += self.grid(view)
         out: list[tuple[int, int]] = []
         for p in pts:
             if all(dist2(p, q) > 36 for q in out):
                 out.append(p)
         return out
+
+    def grid(self, view: View) -> list[tuple[int, int]]:
+        """Search cells ``HUNT_GRID_CELLS`` apart over the whole map, each on
+        ground our units can reach (a scout sees ~5 cells: the hunt covers the
+        map, not just spawns, fields and corners)."""
+        if view.bounds is None:
+            return []
+        key = (view.bounds, id(view.blocked_cells))
+        if self._grid is not None and self._grid[0] == key:
+            return self._grid[1]
+        from .scouting import _reachable
+
+        x, y, w, h = view.bounds
+        step, m = C.HUNT_GRID_CELLS, C.HUNT_GRID_CELLS // 2
+        cells = []
+        for gx in range(x + m, x + w - 1, step):
+            for gy in range(y + m, y + h - 1, step):
+                c = _reachable(view, (gx, gy))
+                if c not in view.blocked_cells and all(dist2(c, q) > 16 for q in cells):
+                    cells.append(c)
+        self._grid = (key, cells)
+        return cells

@@ -94,6 +94,12 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
   rebuilt since (as much as we built, scaled by refineries), so a good defense
   doesn't make them look empty. Overwhelming: split across up to 4 bases, one
   per 10 units. An outgunned expansion is called off, not retried every view.
+- **After the main base** (hunter.hunting, latched: razed once we knew 6+
+  buildings and know 3 or fewer while ahead; off if a real base of 7+ turns up
+  or we fall behind): the whole army fans out over a 12-cell grid of the map
+  (64 cells on Sidestep/Trapped, all reachable) in groups of 3, nearest
+  unsearched cell first; each building cluster or MCV found gets the nearest
+  10 units; the rest keep searching.
 - **The hunt** (c4caa45e: a barracks survived a 100-unit hunt): up to 8
   groups of 6+, every cell where we once knew an enemy building is a search
   point, and a point counts as checked within 5 cells (about sight).

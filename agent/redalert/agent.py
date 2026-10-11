@@ -197,7 +197,9 @@ class RedAlertAgent:
         })
         squads = {*self._patrol.unit_ids, *self._raid.unit_ids, *self._garrison.unit_ids}
         micro_orders, micro_ids = micro.plan(view, self._mode, frozenset(squads), scout.choke_cell(view))
-        hunt = self._hunter.targets(view, C.HUNT_GROUPS) if self._mode is Mode.ALL_IN else []
+        # Their main base razed: as many search cells as fanned-out groups.
+        k = max(C.HUNT_GROUPS, len(view.combat_units) // C.FAN_GROUP_UNITS) if hunting else C.HUNT_GROUPS
+        hunt = self._hunter.targets(view, k) if self._mode is Mode.ALL_IN else []
         sell = buildplan.sell_for_income(view)
         if sell is not None and view.game_seconds - self._sold_at >= C.SELL_FOR_INCOME_SECONDS:
             self._sold_at = view.game_seconds
@@ -223,6 +225,7 @@ class RedAlertAgent:
             threat=threat,
             probe=self._probe_point(view),
             warning=self._intel.suspect(view),
+            fan=hunting,
         ) + self._unstick.orders(view) + executor.stance_orders(
             view, self._mode, set(self._garrison.unit_ids))
         now = self._clock()

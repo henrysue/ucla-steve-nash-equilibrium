@@ -28,6 +28,7 @@ def plan(
     threat: bool = False,
     probe: tuple[int, int] | None = None,
     warning: bool = False,
+    fan: bool = False,
 ) -> list[dict]:
     """All orders for this view, concatenated in priority order (pre-cap).
 
@@ -76,7 +77,7 @@ def plan(
     # edge forward while an attack call is being confirmed.
     stage = (expansion.stage_override if expansion is not None else None) or probe
     out += _army_orders(view, mode, scout_id, reserved=frozenset(raid_ids) | clearing_ids | responders, advice=advice,
-                        flank_via=flank_via, stage_override=stage, hunt=hunt, hunt_points=hunt_points)
+                        flank_via=flank_via, stage_override=stage, hunt=hunt, hunt_points=hunt_points, fan=fan)
     return _keep_clear(out, placed, clearing_ids)
 
 
@@ -305,7 +306,7 @@ def _fighters(view: View, scout_id: int | None, reserved: frozenset = frozenset(
 def _army_orders(
     view: View, mode: Mode, scout_id: int | None = None, reserved: frozenset = frozenset(), advice=None,
     flank_via: tuple[int, int] | None = None, stage_override: tuple[int, int] | None = None,
-    hunt: tuple[int, int] | None = None, hunt_points: list | None = None,
+    hunt: tuple[int, int] | None = None, hunt_points: list | None = None, fan: bool = False,
 ) -> list[dict]:
     """Move the army: rally home when defensive, attack-move when aggressive,
     stage at the forward choke while massing.
@@ -323,6 +324,9 @@ def _army_orders(
 
     if mode is Mode.RETREAT:
         return _retreat(view, scout_id, reserved)
+
+    if mode in AGGRESSIVE and fan:
+        return _fan_out(view, combat, hunt_points or ([hunt] if hunt else []))
 
     if mode in AGGRESSIVE:
         # With no enemy known the hunter aims the army, not the advisor (it
@@ -357,6 +361,36 @@ def _army_orders(
         return []
 
     return _stage_forward(view, scout_id, reserved, advice, stage_override)  # OPEN / BUILD: mass at the choke, not in the base
+
+
+def _fan_out(view: View, units: list[int], points: list) -> list[dict]:
+    """Their main base is razed: find and kill the rest. Each building
+    cluster we know of (or an MCV) gets the nearest ``FOUND_SQUAD_UNITS``;
+    everyone else fans out over the map's unsearched cells in groups of
+    ``FAN_GROUP_UNITS``, one group per cell, nearest first (match c4caa45e: a
+    100-unit army in 3 groups missed a barracks for 80 s; b90e492f razed four
+    expansions one or two at a time)."""
+    cells = {u.id: u.cell for u in view.combat_units if u.cell is not None}
+    left = [i for i in units if i in cells]
+    targets: list[tuple[int, int]] = []
+    found = [b.cell for b in list(view.enemy_buildings) + list(view.known_enemy_buildings)
+             if b.cell is not None and not b.wreck]
+    found += [a.cell for a in list(view.enemy_units) + list(view.known_enemy_units)
+              if a.type == C.MCV and a.cell is not None and not a.wreck]
+    for c in found:
+        if all(dist2(c, t) > C.ENEMY_CLUSTER_CELLS ** 2 for t in targets):
+            targets.append(c)
+    out: list[dict] = []
+    for t in targets:
+        if not left:
+            break
+        squad = sorted(left, key=lambda i: dist2(cells[i], t))[:C.FOUND_SQUAD_UNITS]
+        out.append(orders.attack_move(squad, list(t)))
+        left = [i for i in left if i not in squad]
+    if left and points:
+        k = min(len(points), max(1, len(left) // C.FAN_GROUP_UNITS))
+        out += _groups(view, left, points[:k])
+    return out
 
 
 def _rally_home(view: View, combat: list[int]) -> list[dict]:
