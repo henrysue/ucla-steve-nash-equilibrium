@@ -115,43 +115,61 @@ def chokes(view: View, start, goal) -> list[tuple[tuple[int, int], int]]:
     return [(c, passage_width(view, c)) for c in path[3:-3]]
 
 
-_WIDE: dict = {}
+def choke_zone(view: View) -> frozenset:
+    """The chokes on the road between the bases, padded: every cell within
+    ``CHOKE_AVOID_CELLS`` of a passage ``CHOKE_STAGE_MAX_WIDTH`` across or
+    narrower on the walking path from our base to theirs, at least
+    ``CHOKE_AVOID_BASE_CELLS`` from either base (a base's own exit isn't one).
+    Armies and scouts go round it when a way round isn't much longer (match
+    82bdca3e: the 6:12 attack went through Trapped's gap into their concave
+    and lost 4600 in 50 s; the scouts' left route ran through it too).
+    Cached per map and spawns."""
+    from . import config as C
+    from .observe import enemy_spawn_guess
+
+    base, enemy = view.base_center, enemy_spawn_guess(view)
+    if base is None or enemy is None or not view.blocked_cells:
+        return frozenset()
+    key = ("zone", id(view.blocked_cells), tuple(base), tuple(enemy))
+    hit = _ZONES.get(key)
+    if hit is not None and hit[0] is view.blocked_cells:
+        return hit[1]
+    far2 = C.CHOKE_AVOID_BASE_CELLS ** 2
+    narrow = [c for c in walk_path(view, base, enemy)
+              if dist2(c, base) > far2 and dist2(c, enemy) > far2
+              and passage_width(view, c) <= C.CHOKE_STAGE_MAX_WIDTH]
+    r = C.CHOKE_AVOID_CELLS
+    zone = frozenset((c[0] + i, c[1] + j) for c in narrow for i in range(-r, r + 1) for j in range(-r, r + 1))
+    if len(_ZONES) > 16:
+        _ZONES.clear()
+    _ZONES[key] = (view.blocked_cells, zone)
+    return zone
 
 
-def _wide(view: View, cell, need: int) -> bool:
-    key = (id(view.blocked_cells), need)
-    cache = _WIDE.get(key)
-    if cache is None or cache[0] is not view.blocked_cells:
-        if len(_WIDE) > 8:
-            _WIDE.clear()
-        cache = _WIDE[key] = (view.blocked_cells, {})
-    hit = cache[1].get(cell)
-    if hit is None:
-        hit = cache[1][cell] = passage_width(view, cell, limit=need) >= need
-    return hit
+_ZONES: dict = {}
 
 
-def detour(view: View, start, goal, need: int, max_ratio: float) -> tuple[int, int] | None:
-    """A waypoint on a route from ``start`` to ``goal`` through ground at least
-    ``need`` cells wide, when the shortest path squeezes through something
-    narrower and the wide route is at most ``max_ratio`` as long; else None.
-    A big army takes the open way round instead of a choke, single file."""
+def route_around(view: View, start, goal, avoid, max_ratio: float) -> list[tuple[int, int]] | None:
+    """The walking path from ``start`` to ``goal`` that keeps out of
+    ``avoid`` (cells within 3 of either end excepted), when the straight road
+    runs through it and the way round is at most ``max_ratio`` as long; None
+    when the straight road is clear (go straight) or there is no acceptable
+    way round."""
+    start, goal = tuple(start), tuple(goal)
     direct = walk_path(view, start, goal)
-    if len(direct) < 8 or all(_wide(view, c, need) for c in direct[3:-3]):
+    if not direct or not any(c in avoid for c in direct):
         return None
     start, goal = direct[0], direct[-1]
-    near2 = 9
-    ok = lambda c: (c not in view.blocked_cells and (_wide(view, c, need)  # noqa: E731
-                    or dist2(c, start) <= near2 or dist2(c, goal) <= near2))
     if view.bounds is not None:
         bx, by, bw, bh = view.bounds
         inside = lambda c: bx <= c[0] < bx + bw and by <= c[1] < by + bh  # noqa: E731
     else:
         inside = lambda c: True  # noqa: E731
-    prev = {start: None}
-    queue = deque([start])
+    near = lambda c: dist2(c, start) <= 9 or dist2(c, goal) <= 9  # noqa: E731
     limit = int(len(direct) * max_ratio) + 2
+    prev = {start: None}
     depth = {start: 0}
+    queue = deque([start])
     while queue:
         cur = queue.popleft()
         if cur == goal:
@@ -160,17 +178,27 @@ def detour(view: View, start, goal, need: int, max_ratio: float) -> tuple[int, i
             continue
         for dx, dy in _STEPS:
             nxt = (cur[0] + dx, cur[1] + dy)
-            if nxt in prev or not inside(nxt) or not ok(nxt):
+            if (nxt in prev or nxt in view.blocked_cells or not inside(nxt)
+                    or (nxt in avoid and not near(nxt))):
                 continue
             prev[nxt] = cur
             depth[nxt] = depth[cur] + 1
             queue.append(nxt)
     if goal not in prev:
         return None
-    route = []
+    path = []
     cur = goal
     while cur is not None:
-        route.append(cur)
+        path.append(cur)
         cur = prev[cur]
-    route.reverse()
-    return route[len(route) // 2]
+    return path[::-1]
+
+
+def legs(path, every: int) -> list[tuple[int, int]]:
+    """Waypoints along ``path`` every ``every`` steps, ending at its last cell
+    (each leg short enough that a unit's own pathing can't stray back onto
+    the road we avoided)."""
+    if not path:
+        return []
+    points = [tuple(path[i]) for i in range(every, len(path) - 1, every)]
+    return points + [tuple(path[-1])]

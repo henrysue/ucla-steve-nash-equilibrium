@@ -16,7 +16,7 @@ from .observe import View, dist2, enemy_spawn_guess
 def plan(
     view: View, mode: Mode, *, scout_id: int | None = None, scout_orders: list[dict] = (),
     raid_ids: list[int] = (), raid_orders: list[dict] = (), advice=None,
-    flank_via: tuple[int, int] | None = None,
+    flank_via=None,
     expansion=None,
     hunt: tuple[int, int] | None = None,
     hunt_points: list | None = None,
@@ -352,7 +352,7 @@ def _fighters(view: View, scout_id: int | None, reserved: frozenset = frozenset(
 
 def _army_orders(
     view: View, mode: Mode, scout_id: int | None = None, reserved: frozenset = frozenset(), advice=None,
-    flank_via: tuple[int, int] | None = None, stage_override: tuple[int, int] | None = None,
+    flank_via=None, stage_override: tuple[int, int] | None = None,
     hunt: tuple[int, int] | None = None, hunt_points: list | None = None, fan: bool = False,
 ) -> list[dict]:
     """Move the army: rally home when defensive, attack-move when aggressive,
@@ -381,7 +381,7 @@ def _army_orders(
         if blind and hunt is not None:
             units = combat[:orders.MAX_UNITS_PER_ORDER]
             k = min(len(hunt_points or [hunt]), C.HUNT_GROUPS, len(units) // C.HUNT_GROUP_MIN_UNITS)
-            if flank_via is None and k >= 2:
+            if not flank_via and k >= 2:
                 return _groups(view, units, (hunt_points or [hunt])[:k])
             advice = None
         target = _advised_target(view, advice) or _attack_target(view, hunt)
@@ -393,10 +393,11 @@ def _army_orders(
             units = combat[:orders.MAX_UNITS_PER_ORDER]
             if waiting and not units:
                 return waiting
-            if flank_via is not None:
-                # Flank (or a detour round a choke): round the side first, then on to the target.
-                return waiting + [orders.attack_move(units, list(flank_via)),
-                                  orders.attack_move(units, list(target), queued=True)]
+            if flank_via:
+                # The route's waypoints (round the chokes, a flank point), then on to the target.
+                route = [flank_via] if isinstance(flank_via[0], int) else list(flank_via)
+                return waiting + [orders.attack_move(units, list(route[0]))] + [
+                    orders.attack_move(units, list(p), queued=True) for p in route[1:] + [target]]
             # The advisor's own pick is a single point; otherwise split into
             # groups (two clusters, or a semi-concave across the target).
             points = [target] if _advised_target(view, advice) is not None else _attack_points(view, units, target)

@@ -95,6 +95,12 @@ a turtle about one per turret (3–6) before any attack.
 ### 3. Information
 
 - **0–3 min**: two scouts round the back of their base: their opening.
+- **Routes**: every scout trip is walked in attack-move legs of 8 steps round
+  the chokes, the front of their base (15 cells, 70° either side of their way
+  out) and 8 cells round every turret we know; circuits start at the side of
+  their base (never across the front); posts and looks stand outside those
+  places (82bdca3e: the left scout's road ran through the gap, the right one
+  cut across their front, and the flank picket died five times in the gap).
 - **From 5:00**: pickets on the flanks of their exit (never the centre lane),
   the lane scouts peek at their exit every 45 s, one runs round their base
   every 2.5 min, a roamer checks remote ore fields for expansions.
@@ -164,8 +170,12 @@ An attack goes on until the retreat rule ends it. No mass/attack flip within
   - **Expansions**: the outpost (2 infantry, the engine's guard order), one
     turret and the idle units nearby. The army never walks out to one.
 - **Attack**: three groups in a semi-concave across the target; stragglers
-  wait to go 6 together; no flank before 10:00 unless far ahead; a big army
-  goes round narrow passages.
+  wait to go 6 together; no flank before 10:00 unless far ahead. The route
+  goes round the chokes on the road between the bases (`terrain.choke_zone`:
+  passages 7 or narrower, padded 4 cells, not the bases' own exits) when the
+  way round is at most 1.6x as long, as queued attack-move waypoints 10 steps
+  apart so the units can't path back through (82bdca3e's first attack went
+  through Trapped's gap into their concave).
 - **Raids**: only at enemy expansions our scouts found; more squads the
   longer a healthy game goes (at most 35% of the fighters); they kill
   defenders first, break off when outmatched, and join the main army's fight

@@ -2388,10 +2388,10 @@ def test_no_flanking_before_ten_minutes_unless_decisively_ahead():
     their_base = [{"id": 80, "type": "proc", "x": 40, "y": 40, "hp": 100}]
     at = lambda t, **kw: _view(_t=t, _r=1200.0 - t, visible_enemies=center_threat,  # noqa: E731
                                visible_enemy_buildings=their_base, **kw)
-    assert agent._pick_route(at(400.0), None) is None                      # engaged early, hold the middle
-    assert agent._pick_route(at(620.0), None) is not None                  # guarded middle: flank later
+    assert agent._pick_route(at(400.0), None) == []                        # engaged early, hold the middle
+    assert agent._pick_route(at(620.0), None)                              # guarded middle: flank later
     ahead = at(400.0, military={"kills_cost": 9000, "deaths_cost": 2000})
-    assert agent._pick_route(ahead, None) is not None                      # decisively ahead: flank now
+    assert agent._pick_route(ahead, None)                                  # decisively ahead: flank now
 
 
 def test_an_early_push_is_spotted_and_we_hold_at_home():
@@ -3253,10 +3253,12 @@ def test_two_early_scouts_round_the_back_of_their_base_left_and_right():
     assert set(corps.roles) == {"left", "right"} and corps._circling == {"left", "right"}
     near = [{"id": 80, "type": "e1", "x": 6, "y": 6, "hp": 100}]
     o = corps.orders(dataclasses.replace(v, enemy_units=read(_raw(visible_enemies=near)).enemy_units))
-    assert [tuple(x["to"]) for x in o] == [corps._route["left"][0]]          # the right waits: staggered
+    assert [x["units"] for x in o] == [[30]]                                # the right waits: staggered
+    assert tuple(o[0]["to"]) == corps._legs[30][1][0] and o[0]["cmd"] == "attack_move"
     later = dataclasses.replace(_view(_t=71.0, units=rifles), enemy_units=read(_raw(visible_enemies=near)).enemy_units)
     o = corps.orders(later)
-    assert {tuple(x["to"]) for x in o} == {corps._route["left"][0], corps._route["right"][0]}   # no backing off
+    assert {x["units"][0] for x in o} == {30, 31}                            # both on their rounds: no backing off
+    assert all(x["cmd"] == "attack_move" for x in o)
 
 
 def test_after_the_circuit_a_scout_holds_a_picket_post_and_backs_off_from_fighters():
@@ -3492,7 +3494,7 @@ def test_while_hunting_each_free_scout_sweeps_its_own_search_point():
     o = corps.orders(_view(_t=900.0, units=scouts), search=[(12, 30), (35, 12), (40, 40)])
     sweeps = {x["units"][0]: tuple(x["to"]) for x in o if x["units"][0] in (30, 32)}
     assert sweeps == {30: (12, 30), 32: (35, 12)}                            # nearest, one each
-    assert any(x["units"] == [31] and tuple(x["to"]) == (40, 40) for x in o)   # the circling scout keeps its route
+    assert any(x["units"] == [31] for x in o) and corps._legs[31][0] == (40, 40)   # the circling scout keeps its route
 
 
 def test_one_seat_can_play_without_models_for_an_ab_test(monkeypatch):
@@ -4217,15 +4219,20 @@ def test_stragglers_wait_at_the_massing_point_and_go_as_a_group():
     assert not any(x["to"] == [11, 11] for x in o2)                           # seven: they go together
 
 
-def test_a_big_army_goes_round_a_choke():
+def test_routes_go_round_a_choke_in_legs():
     from agent.redalert import terrain
     wall = {(x, 24) for x in range(0, 48) if x not in (23, 24)}              # a 2-cell gap in the middle...
     wall -= {(x, 24) for x in range(2, 9)}                                    # ...and a 7-cell opening at the side
     v = dataclasses.replace(_view(), blocked_cells=frozenset(wall))
-    w = terrain.detour(v, (24, 10), (24, 40), 5, 2.5)
-    assert w is not None and w[0] < 12                                        # round by the wide opening
+    gap = {(x, y) for x in range(19, 29) for y in range(20, 29)}
+    path = terrain.route_around(v, (24, 10), (24, 40), gap, 3.0)
+    assert path and not any(c in gap for c in path) and min(c[0] for c in path) < 9   # by the side opening
+    waypoints = terrain.legs(path, 10)
+    assert waypoints[-1] == (24, 40) and all(0 < len(terrain.walk_path(v, a, b)) <= 12
+                                             for a, b in zip([(24, 10)] + waypoints, waypoints))
+    assert terrain.route_around(v, (24, 10), (24, 40), gap, 0.5) is None      # too far round: straight on
     open_v = dataclasses.replace(_view(), blocked_cells=frozenset())
-    assert terrain.detour(open_v, (24, 10), (24, 40), 5, 1.6) is None         # no choke: straight on
+    assert terrain.route_around(open_v, (24, 10), (24, 40), frozenset(), 1.6) is None   # nothing to avoid
 
 
 # -- match 906dbb32: the big push split and went back and forth --------------------------------------

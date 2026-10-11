@@ -48,6 +48,8 @@ class ScoutCorps:
         self._site_seen: dict[tuple[int, int], float] = {}   # remote ore field -> when a scout last saw it
         self._checks = 0                             # mid-game base checks run (they alternate rings)
         self.scouts_lost = 0                         # scouts killed this match
+        self._legs: dict = {}                        # unit id -> (destination, its remaining legs)
+        self._avoid: tuple = (None, frozenset())     # (view, where scouts don't walk) for this view
 
     # -- what the rest of the agent reads ----------------------------------------
 
@@ -124,7 +126,9 @@ class ScoutCorps:
 
     def orders(self, view: View, search: list | None = None) -> list[dict]:
         """``search``: the hunter's unchecked search points while we hunt the
-        enemy's last buildings — each scout not on a circuit takes one."""
+        enemy's last buildings — each scout not on a circuit takes one.
+        Every trip is walked in legs round the chokes and the front of their
+        base (:meth:`_go`)."""
         out: list[dict] = []
         units = {u.id: u for u in view.units if u.id is not None}
         visit_done = look_done = False
@@ -145,21 +149,19 @@ class ScoutCorps:
                     self.look = None                 # seen: a fresh look at them
                     self.base_seen_at = view.game_seconds
                 else:
-                    out.append(orders.move([uid], list(self.look)))
+                    out += self._go(view, u, self.look)[0]
                     continue
             if role == "p0" and view.game_seconds >= C.MID_PICKET_SECONDS:
                 site = self._next_remote_site(view, u)
                 if site is not None:                 # the roamer: remote fields they may have expanded to
-                    if u.idle or self._sent.get(u.id) != site:
-                        self._sent[u.id] = site
-                        out.append(orders.move([uid], list(site)))
+                    out += self._go(view, u, site)[0]
                     continue
             if self.visit is not None and not visit_done:
                 visit_done = True
                 if dist2(u.cell, self.visit) <= 36:
                     self.visit = None
                 else:
-                    out.append(orders.move([uid], list(self.visit)))
+                    out += self._go(view, u, self.visit)[0]
                     continue
             post = self.post(view, role)
             if post is None:
@@ -171,6 +173,8 @@ class ScoutCorps:
                 # A picket backs off: it is there to see the push, not stop it.
                 self._end_peek(role, view)
                 back = _step_toward(u.cell, view.base_center, C.SCOUT_FLEE_CELLS)
+                self._sent[u.id] = back
+                self._legs.pop(u.id, None)
                 out.append(orders.move([uid], list(back)))
                 continue
             # The lane scouts don't stand idle at their posts: every
@@ -182,16 +186,14 @@ class ScoutCorps:
                     view.game_seconds - self._peek_at.get(role, self._peek_offset(role)) >= C.SCOUT_PEEK_SECONDS:
                 self._peeking.add(role)
             if role in self._peeking and peek is not None:
-                if dist2(u.cell, peek) <= 9 or (u.idle and self._sent.get(u.id) == peek):
+                moves, arrived = self._go(view, u, peek)
+                if arrived:
                     self._end_peek(role, view)       # seen (or as near as it gets): back to the post
                 else:
-                    if self._sent.get(u.id) != peek or u.idle:
-                        self._sent[u.id] = peek
-                        out.append(orders.move([uid], list(peek)))
+                    out += moves
                     continue
-            if u.idle and dist2(u.cell, post) > 9:
-                self._sent[u.id] = post
-                out.append(orders.move([uid], list(post)))
+            if dist2(u.cell, post) > 9:
+                out += self._go(view, u, post)[0]
         return out
 
     def production(self, view: View) -> list[dict]:
@@ -203,6 +205,72 @@ class ScoutCorps:
         if kind is None or view.queued_count(kind) >= 1:
             return []
         return [orders.train(kind, count=1)]
+
+    # -- moving: the long way round, in legs ----------------------------------------
+
+    def avoid(self, view: View) -> frozenset:
+        """Where scouts don't walk: the chokes on the road between the bases
+        (terrain.choke_zone), the front of their base (within
+        ``SCOUT_FRONT_CELLS`` of their spawn, ``SCOUT_FRONT_DEGREES`` either
+        side of their way out toward us) and ``SCOUT_TURRET_CELLS`` round
+        every enemy turret we know (82bdca3e: the left scout's road ran
+        through Trapped's gap, the right one cut across the front of their
+        base, past where their defenses stand)."""
+        from .terrain import choke_zone, walk_path
+
+        if self._avoid[0] is view:
+            return self._avoid[1]
+        zone = set(choke_zone(view))
+        enemy, base = enemy_spawn_guess(view), view.base_center
+        if enemy is not None and base is not None:
+            path = walk_path(view, tuple(enemy), tuple(base))
+            exit_ = path[min(len(path) - 1, C.APPROACH_RING_CELLS)] if path else tuple(base)
+            ex, ey = exit_[0] - enemy[0], exit_[1] - enemy[1]
+            el = (ex * ex + ey * ey) ** 0.5 or 1.0
+            cos_max = math.cos(math.radians(C.SCOUT_FRONT_DEGREES))
+            r = C.SCOUT_FRONT_CELLS
+            for i in range(-r, r + 1):
+                for j in range(-r, r + 1):
+                    d = (i * i + j * j) ** 0.5
+                    if 0 < d <= r and (i * ex + j * ey) / (d * el) >= cos_max:
+                        zone.add((enemy[0] + i, enemy[1] + j))
+        t = C.SCOUT_TURRET_CELLS
+        for a in list(view.enemy_buildings) + list(view.known_enemy_buildings):
+            if a.type in C.TURRETS and a.cell is not None and not a.wreck:
+                zone.update((a.cell[0] + i, a.cell[1] + j) for i in range(-t, t + 1) for j in range(-t, t + 1)
+                            if i * i + j * j <= t * t)
+        out = frozenset(zone)
+        self._avoid = (view, out)
+        return out
+
+    def _go(self, view: View, u, dest) -> tuple[list[dict], bool]:
+        """(orders, arrived) to take scout ``u`` to ``dest`` round the places
+        it mustn't walk (:meth:`avoid`), in legs of ``SCOUT_LEG_CELLS`` so its
+        own pathing can't cut back through them, each an attack-move: the
+        next leg when it reaches one (or stands idle short of it).
+        ``arrived``: on the last leg and there, or idle as near as it gets."""
+        from .terrain import legs, route_around
+
+        dest = tuple(dest)
+        plan = self._legs.get(u.id)
+        if plan is None or plan[0] != dest or (u.idle and plan[1] and dist2(u.cell, plan[1][0]) > (2 * C.SCOUT_LEG_CELLS) ** 2):
+            path = route_around(view, u.cell, dest, self.avoid(view), C.SCOUT_MAX_DETOUR)
+            plan = (dest, legs(path, C.SCOUT_LEG_CELLS) if path else [dest])
+            self._legs[u.id] = plan
+        points = plan[1]
+        while len(points) > 1 and (dist2(u.cell, points[0]) <= 9
+                                   or (u.idle and self._sent.get(u.id) == points[0])):
+            points.pop(0)
+        nxt = points[0]
+        last = len(points) == 1
+        if last and (dist2(u.cell, dest) <= 9 or (u.idle and self._sent.get(u.id) == dest)):
+            return [], True
+        if u.idle or self._sent.get(u.id) != nxt:
+            self._sent[u.id] = nxt
+            # attack-move: a scout meeting something on the way shoots back
+            # instead of being shot in the back (only backing off is a move)
+            return [orders.attack_move([u.id], list(nxt))], False
+        return [], False
 
     # -- places ------------------------------------------------------------------
 
@@ -232,7 +300,7 @@ class ScoutCorps:
         px, py = uy * side, -ux * side
         cell = (staging[0] + ux * C.SCOUT_PEEK_BACK_CELLS + px * C.SCOUT_PEEK_SIDE_CELLS,
                 staging[1] + uy * C.SCOUT_PEEK_BACK_CELLS + py * C.SCOUT_PEEK_SIDE_CELLS)
-        return _reachable(view, _open_cell(view, cell))
+        return self._outside(view, _reachable(view, _open_cell(view, cell)))
 
     def post(self, view: View, role: str) -> tuple[int, int] | None:
         """Picket posts across the approach: the two early scouts on the outer
@@ -257,11 +325,29 @@ class ScoutCorps:
         px, py = -dy / length, dx / length
         spread = C.PICKET_SPREAD * length
         ax, ay = base[0] + dx * C.PICKET_ALONG, base[1] + dy * C.PICKET_ALONG
-        return _reachable(view, _open_cell(view, (ax + px * spread * k, ay + py * spread * k)))
+        return self._outside(view, _reachable(view, _open_cell(view, (ax + px * spread * k, ay + py * spread * k))))
+
+    def _outside(self, view: View, cell) -> tuple[int, int]:
+        """``cell``, or the nearest open cell out of the places scouts don't
+        stand (:meth:`avoid`), leaning toward our base: a post or a look at
+        their exit from inside the choke or the front of their base is in
+        their concave's fire (82bdca3e: the flank picket stood in Trapped's
+        gap and died five times in a minute)."""
+        zone = self.avoid(view)
+        if cell not in zone:
+            return cell
+        base = view.base_center or cell
+        r = C.SCOUT_FRONT_CELLS
+        near = [(cell[0] + i, cell[1] + j) for i in range(-r, r + 1) for j in range(-r, r + 1)]
+        ok = [c for c in near if c not in zone and c not in view.blocked_cells
+              and (view.bounds is None or (view.bounds[0] <= c[0] < view.bounds[0] + view.bounds[2]
+                                           and view.bounds[1] <= c[1] < view.bounds[1] + view.bounds[3]))]
+        return min(ok, key=lambda c: dist2(c, cell) + 0.25 * dist2(c, base)) if ok else cell
 
     def circuit(self, view: View, side: int, radius: float = C.CIRCUIT_OUTER_CELLS) -> list[tuple[int, int]]:
         """Waypoints out along one flank, round that side of the enemy base at
-        ``radius`` from their spawn, past the back onto the other side."""
+        ``radius`` from their spawn — from its side (``CIRCUIT_DEGREES`` start
+        at 90: never across the front) past the back onto the other side."""
         from .scout import _along, _open_cell
 
         base, enemy = view.base_center, enemy_spawn_guess(view)
@@ -303,9 +389,7 @@ class ScoutCorps:
                 break
             p = min(points, key=lambda p: dist2(p, u.cell))
             points.remove(p)
-            if u.idle or self._sent.get(u.id) != p:
-                self._sent[u.id] = p
-                out.append(orders.move([u.id], list(p)))
+            out += self._go(view, u, p)[0]
         return out
 
     def _start_circuit(self, view: View, role: str, inner: bool | None = None) -> None:
@@ -327,17 +411,15 @@ class ScoutCorps:
         route = self._route.get(role) or []
         while route and (dist2(u.cell, route[0]) <= C.CIRCUIT_ARRIVED_CELLS ** 2):
             route.pop(0)
-        if not route:
-            self._circling.discard(role)             # round the back: info gathered, back to its post
-            self.base_seen_at = view.game_seconds
-            post = self.post(view, role)
-            return [orders.move([u.id], list(post))] if post else []
-        if u.idle and self._sent.get(u.id) == route[0]:
-            route.pop(0)                             # stopped short (unreachable): next waypoint
-            if not route:
-                return []
-        self._sent[u.id] = route[0]
-        return [orders.move([u.id], list(route[0]))]
+        while route:
+            moves, arrived = self._go(view, u, route[0])
+            if not arrived:
+                return moves
+            route.pop(0)                             # there (or as near as it gets): the next waypoint
+        self._circling.discard(role)                 # round the back: info gathered, back to its post
+        self.base_seen_at = view.game_seconds
+        post = self.post(view, role)
+        return self._go(view, u, post)[0] if post else []
 
     @staticmethod
     def _claim(view: View, taken: set) -> int | None:

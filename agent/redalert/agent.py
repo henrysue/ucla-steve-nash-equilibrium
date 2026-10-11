@@ -101,8 +101,8 @@ class RedAlertAgent:
         self._match_info: dict = {}                    # map, their faction (the opponent profile)
         self._trades = (0.0, 0.0)                      # kills, deaths at the last view
         self._game_seconds: float | None = None
-        # Flank route for the current attack (executor.choose_flank).
-        self._flank_via: tuple[int, int] | None = None
+        # The current attack's waypoints: round the chokes, through a flank point (_pick_route).
+        self._flank_via: list = []
         # The model advisor (None: rules only). Built after the match log so
         # each piece of advice is logged as it arrives.
         self._advisor = advisor_factory(self._log, on_advice=self._on_advice) if advisor_factory else None
@@ -192,9 +192,7 @@ class RedAlertAgent:
             self._mode_changes = (self._mode_changes + [
                 {"t": round(view.game_seconds), "to": str(self._mode)}])[-C.ADVISOR_MEMORY_READS - 2:]
             self._track_attack(view, advice)
-            # While the raid squad holds their army, straight down the centre.
-            self._flank_via = (None if self._mode is not Mode.ALL_IN or self._raid.distracting(view)
-                               else self._pick_route(view, advice))
+            self._flank_via = self._pick_route(view, advice) if self._mode is Mode.ALL_IN else []
         self._update_flank(view)
         if spar is None or spar.expands:   # sparring: the rusher never expands
             # Expand again once the worked fields are forecast to run dry (not
@@ -455,44 +453,53 @@ class RedAlertAgent:
         """The expansion that takes over building once home is mined out (or None)."""
         return self._expansion.active_base(view, self._harvest.home_depleted(view), self._harvest.depleted())
 
-    def _pick_route(self, view, advice) -> tuple[int, int] | None:
-        """The flank waypoint for a new attack (None: straight at the target).
-        The advisor's route when it gave one, else the side with the fewest
-        known enemies, rotating on ties."""
-        target = getattr(advice, "army_target", None) or executor._attack_target(view)
-        route = getattr(advice, "attack_route", "auto")
-        if view.game_seconds < C.FLANK_AFTER_SECONDS and not (brain._dominant(view) or brain.beaten(view)):
-            return self._detour(view, target)   # early: no flank, but a big army doesn't funnel through a choke
-        if route in ("left", "right"):
-            return executor.flank_waypoint(view, target, -1 if route == "left" else 1)
-        if route == "center":
-            return None
-        return executor.choose_flank(view, target, self._attacks)[1]
-
-    def _detour(self, view, target) -> tuple[int, int] | None:
-        """A route round a choke for a big army (``DETOUR_MIN_UNITS``+), else None."""
+    def _pick_route(self, view, advice) -> list:
+        """The waypoints of a new attack ([]: straight at the target): round
+        the chokes on the road between the bases (terrain.choke_zone) when
+        the way round is at most ``DETOUR_MAX_RATIO`` as long — never into a
+        concave at a choke (82bdca3e lost 4600 in 50 s that way) — and
+        through a flank point first when flanking (from 10:00, or decisively
+        ahead; not while our raid holds their army): the advisor's side, else
+        the side with the fewest known enemies, rotating on ties."""
         from . import terrain
 
+        target = getattr(advice, "army_target", None) or executor._attack_target(view)
         army = [u.cell for u in view.combat_units if u.cell is not None and u.id not in self._patrol.unit_ids]
-        if target is None or len(army) < C.DETOUR_MIN_UNITS:
-            return None
-        centre = (round(sum(c[0] for c in army) / len(army)), round(sum(c[1] for c in army) / len(army)))
-        return terrain.detour(view, centre, tuple(target), C.ARMY_MIN_PASSAGE, C.DETOUR_MAX_RATIO)
+        if target is None or not (army or view.base_center):
+            return []
+        via = None
+        if (not self._raid.distracting(view) and (view.game_seconds >= C.FLANK_AFTER_SECONDS
+                                                  or brain._dominant(view) or brain.beaten(view))):
+            route = getattr(advice, "attack_route", "auto")
+            if route in ("left", "right"):
+                via = executor.flank_waypoint(view, target, -1 if route == "left" else 1)
+            elif route != "center":
+                via = executor.choose_flank(view, target, self._attacks)[1]
+        here = ((round(sum(c[0] for c in army) / len(army)), round(sum(c[1] for c in army) / len(army)))
+                if army else tuple(view.base_center))
+        avoid = terrain.choke_zone(view)
+        points: list = []
+        for goal in ([tuple(via)] if via else []) + [tuple(target)]:
+            path = terrain.route_around(view, here, goal, avoid, C.DETOUR_MAX_RATIO)
+            points += terrain.legs(path, C.ARMY_LEG_CELLS) if path else [goal]
+            here = goal
+        return points[:-1]                         # the target is the attack's own last leg
 
     def _update_flank(self, view) -> None:
-        """End the flank leg once the army reaches the waypoint, or after
-        ``FLANK_MAX_SECONDS``: from then on it attacks the target directly."""
-        if self._flank_via is None:
+        """Drop each waypoint of the attack's route as the army reaches it;
+        all of them after ``FLANK_MAX_SECONDS`` (straight at the target)."""
+        if not self._flank_via:
             return
         if view.game_seconds - self._mode_since > C.FLANK_MAX_SECONDS:
-            self._flank_via = None
+            self._flank_via = []
             return
         army = [u.cell for u in view.combat_units if u.cell is not None and u.id not in self._patrol.unit_ids]
         if army:
             cx = sum(c[0] for c in army) / len(army)
             cy = sum(c[1] for c in army) / len(army)
-            if (cx - self._flank_via[0]) ** 2 + (cy - self._flank_via[1]) ** 2 <= C.FLANK_ARRIVED_CELLS ** 2:
-                self._flank_via = None
+            nxt = self._flank_via[0]
+            if (cx - nxt[0]) ** 2 + (cy - nxt[1]) ** 2 <= C.FLANK_ARRIVED_CELLS ** 2:
+                self._flank_via = self._flank_via[1:]
 
     def _on_advice(self, advice, latency_s: float) -> None:
         """Each answer goes to the match log; the console gets a line only

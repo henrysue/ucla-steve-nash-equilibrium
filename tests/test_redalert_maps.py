@@ -203,3 +203,31 @@ def test_the_concave_holds_the_mouth_of_the_choke_on_real_maps(path):
     assert d(point, base) < d(choke, base)                                        # on our side of it
     slots = executor.concave_slots(view, point, facing, 20)
     assert len(slots) >= 15 and not any(s in view.blocked_cells for s in slots)
+
+
+@pytest.mark.parametrize("path", FIXTURES, ids=[p.stem for p in FIXTURES])
+def test_scouts_and_the_army_go_round_the_choke_and_the_front_of_their_base(path):
+    from agent.redalert.observe import enemy_spawn_guess
+
+    fx = _load(path)
+    view = _view(fx, fx["states"][0], path.stem)
+    base, enemy = tuple(fx["base_center"]), tuple(enemy_spawn_guess(view))
+    corps = ScoutCorps()
+    avoid, zone = corps.avoid(view), terrain.choke_zone(view)
+    assert zone and enemy not in zone and base not in zone
+    for role in ("left", "right", "p0", "p1"):                                   # posts and looks stand outside it
+        assert corps.post(view, role) not in avoid, role
+    for role in ("left", "right"):
+        assert corps.peek_point(view, role) not in avoid, role
+    for side, radius in ((1, C.CIRCUIT_OUTER_CELLS), (-1, C.CIRCUIT_INNER_CELLS)):   # each circuit, walked in legs
+        here, walked = base, []
+        for wp in corps.circuit(view, side, radius):
+            route = terrain.route_around(view, here, wp, avoid, C.SCOUT_MAX_DETOUR)
+            for leg in (terrain.legs(route, C.SCOUT_LEG_CELLS) if route else [wp]):
+                walked += terrain.walk_path(view, here, leg)
+                here = leg
+        assert sum(1 for c in walked if c in zone) <= 3, (side, [c for c in walked if c in zone])
+    stage = scout.choke_cell(view)
+    route = terrain.route_around(view, stage, enemy, zone, C.DETOUR_MAX_RATIO)
+    if "trapped" in path.stem:                                                  # Trapped: round the gap, 1.42x
+        assert route and not any(c in zone for c in route[3:-3])
