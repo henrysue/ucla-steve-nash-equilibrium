@@ -72,12 +72,21 @@ class Expansion:
 
     @property
     def escorting(self) -> bool:
-        """The MCV is on the road: the army escorts it instead of attacking."""
-        return self.state == "moving"
+        """The MCV is on the road to a forward site (nearer the enemy than our
+        base): the army escorts it instead of attacking. A site behind our
+        base is safe: no escort (match f333a770 walked 50-60 units behind
+        both bases for a minute to guard an MCV nobody threatened)."""
+        return self.state == "moving" and getattr(self, "_site_forward", True)
 
     @property
     def stage_override(self) -> tuple[int, int] | None:
-        return self.site if self.state == "moving" else None
+        return self.site if self.escorting else None
+
+    def track_site(self, view: View) -> None:
+        """Whether the site lies forward (nearer the enemy than our base)."""
+        enemy = enemy_spawn_guess(view)
+        self._site_forward = (self.site is not None and enemy is not None and view.base_center is not None
+                              and dist2(self.site, enemy) < dist2(view.base_center, enemy))
 
     @property
     def sites(self) -> list[tuple[int, int]]:
@@ -152,6 +161,7 @@ class Expansion:
 
     def update(self, view: View, mode: Mode, advice=None, ore_running_out: bool = False) -> None:
         t = view.game_seconds
+        self.track_site(view)
         self._ore_running_out = ore_running_out
         self._track_depletion(view)
         self._track_money(view)

@@ -3999,3 +3999,32 @@ def test_the_match_log_records_where_the_army_stands():
     assert pos["army_centre"] == [10, 12] and pos["massing"] == [11, 11]
     assert len(pos["units"]) == 4 and pos["units"][0][3] == "army"
     assert pos["harvesters"] and pos["enemies"] == [["dog", 30, 30]]
+
+
+# -- match f333a770: an escort behind our base, no remote scouting, an idle army ---------------------
+
+
+def test_an_expansion_behind_our_base_needs_no_escort():
+    e = Expansion()
+    e.state, e.site = "moving", (1, 2)                                        # behind [4,4] (the enemy is at [40,40])
+    e.track_site(_exp_view(t=700.0))
+    assert not e.escorting and e.stage_override is None
+    f = Expansion()
+    f.state, f.site = "moving", (24, 20)                                      # forward
+    f.track_site(_exp_view(t=700.0))
+    assert f.escorting and f.stage_override == (24, 20)
+
+
+def test_a_roaming_picket_checks_remote_fields_and_the_raid_goes_there_first():
+    from agent.redalert.scouting import remote_sites
+    ore = [(4 + i, 40 + j) for i in range(4) for j in range(3)] + [(40 + i, 4 + j) for i in range(4) for j in range(3)]
+    v = dataclasses.replace(_view(_t=400.0, buildings=BASE), ore_cells=tuple(ore))
+    sites = remote_sites(v)
+    assert len(sites) == 2                                                    # the two side fields
+    corps = ScoutCorps()
+    corps.roles = {"p0": 30}
+    roamer = dataclasses.replace(v, units=read(_raw(units=[{"id": 30, "type": "e1", "x": 20, "y": 20, "hp": 100}])).units)
+    o = corps.orders(roamer)
+    assert o and tuple(o[0]["to"]) in sites                                   # off to a remote field, not its post
+    from agent.redalert import raid as ra_raid
+    assert ra_raid._target(v, []) in sites                                     # the raid: remote fields first

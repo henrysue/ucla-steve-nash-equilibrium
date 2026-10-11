@@ -103,6 +103,13 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
 - **The hunt** (c4caa45e: a barracks survived a 100-unit hunt): up to 8
   groups of 6+, every cell where we once knew an enemy building is a search
   point, and a point counts as checked within 5 cells (about sight).
+- **Harass and scout further** (f333a770, from the replay: both armies walked
+  behind their bases for a minute to escort an MCV to a safe site; neither seat
+  found any of the other's 2-3 expansions; raids hit the defended main field):
+  no escort for an expansion behind our base; picket p0 roams the remote ore
+  fields (18+ cells from both main bases), each rechecked every 2 minutes;
+  the raid squad goes for remote fields before their main field, grows with
+  the army (4-8, one per 6 fighters) and reforms after 30 s.
 - **The army stays up front**: the massing point (and the rally points) no
   longer pull back into the base when an enemy is remembered nearby (a passing
   scout moved them for 90 s); the army fights what comes near and falls back

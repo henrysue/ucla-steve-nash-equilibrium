@@ -45,6 +45,7 @@ class Raid:
         self._advice = None
         self._drawing_at: float | None = None   # last time enemy fighters were on the squad
         self._via: tuple[int, int] | None = None  # flank waypoint (macro enemy), until reached
+        self._visited: dict[tuple[int, int], float] = {}   # remote field -> when the squad was last there
         self._via_done = False
 
     def update(self, view: View, mode: Mode, scout_id: int | None, advice=None, taken: set = frozenset()) -> None:
@@ -104,7 +105,11 @@ class Raid:
             return [orders.attack(ids, weakest.id)]
         if main_fight is not None:
             return [orders.attack_move(ids, list(main_fight))]   # the second prong
-        target = _target(view, members, self._advice)
+        centre = _centroid(members)
+        for s, _ in list(self._visited.items()) + [(c, 0) for c in _remote(view)]:
+            if centre is not None and dist2(centre, s) <= 36:
+                self._visited[s] = view.game_seconds
+        target = _target(view, members, self._advice, self._visited)
         if target is None:
             return []
         if isinstance(target, int):
@@ -152,6 +157,8 @@ class Raid:
         if len(fighters) < C.MIN_DEFENDERS + C.RAID_SQUAD_SIZE:
             return  # can't spare them
         size = C.RAID_SQUAD_SIZE_MACRO if getattr(self._advice, "enemy_style", None) == "macro" else C.RAID_SQUAD_SIZE
+        # The squad grows with the army: a big army idling at home annoys them more.
+        size = max(size, min(C.RAID_SQUAD_MAX, len(fighters) // C.RAID_ARMY_SHARE))
         if len(fighters) < C.MIN_DEFENDERS + size:
             size = C.RAID_SQUAD_SIZE      # can't spare the bigger party
         squad: list[int] = []
@@ -170,7 +177,12 @@ class Raid:
         self._released_at = view.game_seconds
 
 
-def _target(view: View, members: list[Actor], advice=None) -> int | tuple[int, int] | None:
+def _remote(view: View) -> list[tuple[int, int]]:
+    from .scouting import remote_sites
+    return remote_sites(view)
+
+
+def _target(view: View, members: list[Actor], advice=None, visited: dict | None = None) -> int | tuple[int, int] | None:
     """The advisor's pick when it is usable (a visible enemy harvester's id,
     or a cell), else, nearest the squad (or our base, before it exists): a
     visible harvester's id, a known lightly defended enemy expansion, a
@@ -204,7 +216,14 @@ def _target(view: View, members: list[Actor], advice=None) -> int | tuple[int, i
                        and a.cell is not None and expansion_defenses(view, a.cell) <= C.RAID_EXPANSION_MAX_DEFENSES)
     if refinery is not None:
         return refinery.cell
-    # Nothing seen yet: their ore field from the map, where harvesters work.
+    # Nothing seen yet: a remote field they may have expanded to (not their
+    # defended main field: f333a770's squads went there and died), nearest
+    # first and not one we checked lately; else their main field.
+    t = view.game_seconds
+    due = [s for s in _remote(view)
+           if t - (visited or {}).get(s, -1e9) >= C.REMOTE_SITE_RECHECK_SECONDS]
+    if due:
+        return min(due, key=lambda s: dist2(s, origin))
     return enemy_ore_field(view)
 
 

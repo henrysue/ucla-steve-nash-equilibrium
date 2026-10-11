@@ -42,6 +42,7 @@ class ScoutCorps:
         self.base_seen_at: float | None = None
         self._sent: dict[int, tuple[int, int]] = {}  # unit id -> waypoint last ordered
         self._start_at: dict[str, float] = {}        # role -> when its circuit may set out (the stagger)
+        self._site_seen: dict[tuple[int, int], float] = {}   # remote ore field -> when a scout last saw it
         self._checks = 0                             # mid-game base checks run (they alternate rings)
 
     # -- what the rest of the agent reads ----------------------------------------
@@ -133,6 +134,13 @@ class ScoutCorps:
                 continue
             if search:
                 continue                             # sweeping (above)
+            if role == "p0" and view.game_seconds >= C.MID_PICKET_SECONDS:
+                site = self._next_remote_site(view, u)
+                if site is not None:                 # the roamer: remote fields they may have expanded to
+                    if u.idle or self._sent.get(u.id) != site:
+                        self._sent[u.id] = site
+                        out.append(orders.move([uid], list(site)))
+                    continue
             if self.visit is not None and not visit_done:
                 visit_done = True
                 if dist2(u.cell, self.visit) <= 36:
@@ -207,6 +215,16 @@ class ScoutCorps:
             cy = uy * math.cos(a) + py * math.sin(a)
             points.append(_open_cell(view, (enemy[0] + cx * radius, enemy[1] + cy * radius)))
         return [_reachable(view, q) for q in points]
+
+    def _next_remote_site(self, view: View, u) -> tuple[int, int] | None:
+        """The nearest remote ore field not seen for ``REMOTE_SITE_RECHECK_SECONDS``
+        (match f333a770: neither seat found any of the other's 2-3 expansions)."""
+        t = view.game_seconds
+        for s in remote_sites(view):
+            if dist2(u.cell, s) <= 36:
+                self._site_seen[s] = t
+        due = [s for s in remote_sites(view) if t - self._site_seen.get(s, -1e9) >= C.REMOTE_SITE_RECHECK_SECONDS]
+        return min(due, key=lambda s: dist2(s, u.cell)) if due else None
 
     # -- internals ---------------------------------------------------------------
 
@@ -287,3 +305,18 @@ def _step_toward(cell, target, cells: float) -> tuple[int, int]:
     length = (dx * dx + dy * dy) ** 0.5 or 1.0
     s = min(cells, length)
     return round(cell[0] + dx / length * s), round(cell[1] + dy / length * s)
+
+
+def remote_sites(view: View) -> list[tuple[int, int]]:
+    """Ore fields far from both main bases (``ENEMY_EXPANSION_MIN_CELLS``) and
+    from our own yards: where an enemy expansion can hide."""
+    from .expand import _ore_fields
+
+    base, enemy = view.base_center, enemy_spawn_guess(view)
+    if base is None or enemy is None:
+        return []
+    far2 = C.ENEMY_EXPANSION_MIN_CELLS ** 2
+    yards = [b.cell for b in view.buildings if b.type == C.CONSTRUCTION_YARD and b.cell is not None and not b.wreck]
+    return [ore for _, centre, ore in _ore_fields(view)
+            if dist2(centre, enemy) >= far2 and dist2(centre, base) >= far2
+            and all(dist2(centre, y) > 100 for y in yards)]
