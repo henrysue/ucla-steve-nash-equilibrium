@@ -80,7 +80,7 @@ def next_build_orders(view: View, expansion_ore: tuple[int, int] | None = None,
     # barracks (infantry-heavy army), and a second war factory only with a
     # big bank. Barracks follow BARRACKS_SCHEDULE; a big bank skips it.
     money = view.cash + view.ore
-    if view.has_building(C.WAR_FACTORY):
+    if view.has_building(C.WAR_FACTORY) and not recovering(view):
         very = money >= C.FUNDS_VERY_RICH
         rax = _available(view, C.BARRACKS)
         if rax and money >= C.BARRACKS_ADD_FUNDS and not any(view.queued_count(b) for b in C.BARRACKS):
@@ -97,6 +97,7 @@ def next_build_orders(view: View, expansion_ore: tuple[int, int] | None = None,
     # Interrupt 2d: radar dome for the end game (unlocks siege units).
     from .brain import outgunned
     if (view.game_seconds >= C.DOME_AFTER_SECONDS and money >= C.DOME_ADD_FUNDS and not outgunned(view) and not units_first
+            and not recovering(view)
             and view.has_building(C.SERVICE_DEPOT) and not _count_built_and_queued(view, (C.RADAR_DOME,))):
         dome = _available(view, C.RADAR_DOME)
         if dome:
@@ -138,18 +139,30 @@ def next_build_orders(view: View, expansion_ore: tuple[int, int] | None = None,
         return step
     # A kennel once the war factory is up (Soviet: dogs, the best scouts).
     kennel = _available(view, C.KENNEL)
-    if kennel and view.has_building(C.WAR_FACTORY) and not _count_built_and_queued(view, (C.KENNEL,)):
+    if kennel and view.has_building(C.WAR_FACTORY) and not recovering(view) and not _count_built_and_queued(view, (C.KENNEL,)):
         return [orders.build(kennel)]
     return []
 
 
 def _build_order(view: View) -> tuple:
-    """The opening, then its follow-up unless outgunned (units first)."""
+    """The opening, then its follow-up unless outgunned (units first); while
+    recovering trucks, only its refinery (it brings one)."""
     from .brain import outgunned
 
     if opening_done(view) and outgunned(view):
         return C.BUILD_ORDER
+    if opening_done(view) and recovering(view):
+        return C.BUILD_ORDER + (C.REFINERY,)
     return C.BUILD_ORDER + C.FOLLOW_UP
+
+
+def recovering(view: View) -> bool:
+    """Fewer harvesters than refineries once the war factory is up: income
+    first — no depot, kennel, dome or extra production until the trucks are
+    back (match 6b457914 paid for a refinery, a kennel, the depot and a turret
+    on one harvester, and its replacement waited 90 s)."""
+    refineries = sum(1 for b in view.buildings if b.type == C.REFINERY and not b.wreck)
+    return view.has_building(C.WAR_FACTORY) and len(view.units_of(C.HARVESTER)) < refineries
 
 
 def opening_done(view: View) -> bool:

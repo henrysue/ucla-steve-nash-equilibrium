@@ -222,6 +222,7 @@ class RedAlertAgent:
             rusher=rushing,   # testrush
             threat=threat,
             probe=self._probe_point(view),
+            warning=self._intel.suspect(view),
         ) + self._unstick.orders(view) + executor.stance_orders(
             view, self._mode, set(self._garrison.unit_ids))
         now = self._clock()

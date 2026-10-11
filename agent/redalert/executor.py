@@ -27,6 +27,7 @@ def plan(
     rusher: bool = False,   # testrush (TEST ONLY): no opening infantry cap
     threat: bool = False,
     probe: tuple[int, int] | None = None,
+    warning: bool = False,
 ) -> list[dict]:
     """All orders for this view, concatenated in priority order (pre-cap).
 
@@ -56,7 +57,8 @@ def plan(
     out += buildplan.next_build_orders(view, exp_ore, depleted, rusher=rusher,   # advance the build order / power
                                        units_first=getattr(advice, "balance", None) == "more_army")
     out += expansion.orders(view) if expansion is not None else []
-    under_attack = mode in (Mode.DEFEND_RUSH, Mode.DEFEND_BASE) or scout.early_push_warning(view) or threat
+    # warning (intel.suspect: one refinery seen early) only adds the warning turret.
+    under_attack = mode in (Mode.DEFEND_RUSH, Mode.DEFEND_BASE) or scout.early_push_warning(view) or threat or warning
     # The advisor reads an aggressive enemy: turrets up on the approach (we win on macro).
     under_attack = under_attack or getattr(advice, "enemy_style", None) == "aggressive"
     if not rusher or under_attack:   # testrush: the rusher builds turrets only when attacked
@@ -410,9 +412,18 @@ def _stage_forward(
     # and artillery shot the concave from outside its range). Measured from
     # the fighters: the massing point itself falls back when enemies come.
     # A small raid is the home response's (two riflemen).
-    target = fight_near(view, [u.cell for u in fighters if u.cell is not None] or [stage])
+    cells = [u.cell for u in fighters if u.cell is not None] or [stage]
+    target = fight_near(view, cells)
     if fighters and target is not None:
-        return [orders.attack_move([u.id for u in fighters][:orders.MAX_UNITS_PER_ORDER], list(target))]
+        ids = [u.id for u in fighters][:orders.MAX_UNITS_PER_ORDER]
+        ours = sum(view.unit_costs.get(u.type, C.KNOWN_COSTS.get(u.type, C.DEFAULT_UNIT_COST)) for u in fighters)
+        if ours < C.ENGAGE_MIN_RATIO * _value(view, _enemies_near(view, cells)) and view.base_center is not None:
+            # Outnumbered: back to our turret nearest them (else the base
+            # centre), where the turrets, buildings and new units fight with
+            # us (match 6b457914 charged 22 rushers with 9 units in front of
+            # the base and lost 1300 to 300).
+            return [orders.attack_move(ids, list(_fallback_point(view, _enemies_near(view, cells))))]
+        return [orders.attack_move(ids, list(target))]
     # Massing (and holding at home) is always a concave facing the enemy's
     # approach: every unit can fire into the middle where they arrive.
     if len(fighters) >= 3:
@@ -429,14 +440,36 @@ def fight_near(view: View, cells) -> tuple[int, int] | None:
     cells = [c for c in cells if c is not None]
     if not cells:
         return None
-    r2 = C.STAGE_ENGAGE_CELLS ** 2
-    near = [a for a in view.enemy_units if a.cell is not None and not a.wreck and a.type not in C.HARVESTER
-            and any(dist2(a.cell, c) <= r2 for c in cells)]
-    value = sum(view.unit_costs.get(a.type, C.KNOWN_COSTS.get(a.type, C.DEFAULT_UNIT_COST)) for a in near)
-    if value <= C.SMALL_RAID_VALUE:
+    near = _enemies_near(view, cells)
+    if _value(view, near) <= C.SMALL_RAID_VALUE:
         return None
     centre = (sum(c[0] for c in cells) / len(cells), sum(c[1] for c in cells) / len(cells))
     return min(near, key=lambda a: dist2(a.cell, centre)).cell
+
+
+def _enemies_near(view: View, cells) -> list:
+    """Enemy fighters within ``STAGE_ENGAGE_CELLS`` of any of ``cells``."""
+    r2 = C.STAGE_ENGAGE_CELLS ** 2
+    return [a for a in view.enemy_units if a.cell is not None and not a.wreck and a.type not in C.HARVESTER
+            and any(dist2(a.cell, c) <= r2 for c in cells if c is not None)]
+
+
+def _fallback_point(view: View, enemies) -> tuple[int, int]:
+    """Where an outnumbered army stands: beside our turret nearest the
+    attackers (within the main base), else the base centre."""
+    base = view.base_center
+    r2 = C.DEFENSE_MAIN_RADIUS_CELLS ** 2
+    towers = [b.cell for b in view.buildings if b.type in C.DEFENSES and b.cell is not None and not b.wreck
+              and base is not None and dist2(b.cell, base) <= r2]
+    cells = [a.cell for a in enemies if a.cell is not None]
+    if not towers or not cells:
+        return base
+    mid = (sum(c[0] for c in cells) / len(cells), sum(c[1] for c in cells) / len(cells))
+    return min(towers, key=lambda c: dist2(c, mid))
+
+
+def _value(view: View, actors) -> float:
+    return sum(view.unit_costs.get(a.type, C.KNOWN_COSTS.get(a.type, C.DEFAULT_UNIT_COST)) for a in actors)
 
 
 def concave_slots(view: View, center, facing, n: int) -> list[tuple[int, int]]:

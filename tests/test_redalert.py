@@ -618,7 +618,7 @@ def test_service_depot_closes_the_double_refinery_order():
     built = [{"id": 10, "type": "fact"}, {"id": 11, "type": "powr"}, {"id": 12, "type": "tent"},
              {"id": 13, "type": "proc"}, {"id": 14, "type": "weap"}, {"id": 15, "type": "proc"},
              {"id": 16, "type": "powr"}, {"id": 17, "type": "proc"}]
-    v = _view(buildings=built, available_production=["powr", "tent", "proc", "weap", "fix"],
+    v = _view(buildings=built, units=_harvs(3), available_production=["powr", "tent", "proc", "weap", "fix"],
               economy={"power_provided": 300, "power_drained": 100})
     assert buildplan.next_build_orders(v) == [{"cmd": "build", "item": "fix"}]
 
@@ -1232,7 +1232,7 @@ def test_double_refinery_order():
     have = [{"id": 10, "type": "fact"}]
     expected = ["powr", "tent", "proc", "proc", "powr", "weap", "proc", "fix"]
     for i, item in enumerate(expected):
-        order = buildplan.next_build_orders(_view(buildings=have, available_production=avail, economy=eco))
+        order = buildplan.next_build_orders(_view(buildings=have, units=_harvs(3), available_production=avail, economy=eco))
         assert order == [{"cmd": "build", "item": item}], (i, order)
         have = have + [{"id": 20 + i, "type": item}]
 
@@ -1317,9 +1317,9 @@ def test_money_piling_up_builds_a_second_war_factory():
     eco = {"cash": 0, "ore": 6000, "resource_capacity": 8000, "power_provided": 400, "power_drained": 100}
     five_rax = _ECON_BASE + [{"id": 15, "type": "powr"}, {"id": 16, "type": "fix"}] + \
         [{"id": 20 + i, "type": "tent"} for i in range(4)]
-    assert buildplan.next_build_orders(_view(buildings=five_rax, economy=eco)) == [{"cmd": "build", "item": "weap"}]
+    assert buildplan.next_build_orders(_view(buildings=five_rax, units=_harvs(1), economy=eco)) == [{"cmd": "build", "item": "weap"}]
     rich = dict(eco, ore=4000)
-    assert {"cmd": "build", "item": "weap"} not in buildplan.next_build_orders(_view(buildings=five_rax, economy=rich))
+    assert {"cmd": "build", "item": "weap"} not in buildplan.next_build_orders(_view(buildings=five_rax, units=_harvs(1), economy=rich))
 
 
 def test_even_rich_queues_at_most_two_deep():
@@ -1598,9 +1598,9 @@ def test_behind_at_the_end_the_army_attacks_despite_hold_and_regrowth():
 def test_a_big_bank_builds_barracks_first_then_a_second_war_factory():
     eco = {"cash": 0, "ore": 20000, "resource_capacity": 30000, "power_provided": 500, "power_drained": 100}
     base = _ECON_BASE + [{"id": 15, "type": "powr"}, {"id": 16, "type": "fix"}]
-    assert buildplan.next_build_orders(_view(buildings=base, economy=eco)) == [{"cmd": "build", "item": "tent"}]
+    assert buildplan.next_build_orders(_view(buildings=base, units=_harvs(1), economy=eco)) == [{"cmd": "build", "item": "tent"}]
     five = base + [{"id": 20 + i, "type": "tent"} for i in range(4)]
-    assert buildplan.next_build_orders(_view(buildings=five, economy=eco)) == [{"cmd": "build", "item": "weap"}]
+    assert buildplan.next_build_orders(_view(buildings=five, units=_harvs(1), economy=eco)) == [{"cmd": "build", "item": "weap"}]
 
 
 def _lead_view(remaining, lead):
@@ -2068,7 +2068,7 @@ _ENEMY_TOWERS = [{"id": 90 + i, "type": "ftur", "x": 36 + i * 2, "y": 36, "hp": 
 
 def test_a_radar_dome_around_seven_minutes_when_money_allows():
     eco = {"cash": 1500, "power_provided": 600, "power_drained": 300}
-    v = _view(_t=430.0, buildings=_LATE_BASE, available_production=["dome", "powr", "proc", "tent", "weap"], economy=eco)
+    v = _view(_t=430.0, buildings=_LATE_BASE, units=_harvs(8), available_production=["dome", "powr", "proc", "tent", "weap"], economy=eco)
     assert {"cmd": "build", "item": "dome"} in buildplan.next_build_orders(v)
     early = _view(_t=300.0, buildings=_LATE_BASE, available_production=["dome"], economy=eco)
     assert {"cmd": "build", "item": "dome"} not in buildplan.next_build_orders(early)
@@ -2224,7 +2224,7 @@ def test_new_refineries_go_to_live_ore_not_the_mined_out_home():
 
 def test_no_refinery_is_scheduled_when_every_field_is_mined_out():
     eco = {"cash": 3000, "power_provided": 600, "power_drained": 300}
-    v = dataclasses.replace(_view(_t=700.0, buildings=_LATE_BASE[:9], economy=eco,
+    v = dataclasses.replace(_view(_t=700.0, buildings=_LATE_BASE[:9], units=_harvs(8), economy=eco,
                                   available_production=["proc", "powr", "tent", "dome"]), ore_cells=((8, 8),))
     assert {"cmd": "build", "item": "proc"} not in buildplan.next_build_orders(v, depleted=frozenset({(8, 8)}))
 
@@ -3157,7 +3157,7 @@ def test_a_kennel_follows_the_war_factory_when_dogs_exist():
     done = [{"id": 10, "type": "fact"}, {"id": 11, "type": "powr"}, {"id": 12, "type": "barr"}, {"id": 13, "type": "proc"},
             {"id": 14, "type": "proc"}, {"id": 15, "type": "powr"}, {"id": 16, "type": "weap"}, {"id": 17, "type": "proc"},
             {"id": 18, "type": "fix"}]
-    v = _view(buildings=done, economy={"cash": 300}, available_production=["powr", "barr", "proc", "weap", "kenn", "dog", "e1"])
+    v = _view(buildings=done, units=_harvs(3), economy={"cash": 300}, available_production=["powr", "barr", "proc", "weap", "kenn", "dog", "e1"])
     assert buildplan.next_build_orders(v) == [{"cmd": "build", "item": "kenn"}]
 
 
@@ -3762,3 +3762,59 @@ def test_with_nothing_left_to_fight_us_we_finish_instead_of_protecting_the_lead(
     level = _view(_t=1164.0, _r=36.0, buildings=BASE, visible_enemy_buildings=left,
                   military={"army_value": 6000, "visible_enemy_value": 5000, "kills_cost": 30000, "deaths_cost": 28000})
     assert brain.choose_mode(level, cheese_since=None, prev_mode=Mode.BUILD) is Mode.PROTECT_LEAD   # a real army left
+
+
+# -- match 6b457914: a rush we half-scouted, charged when outnumbered, a slow truck ------------------
+
+
+def test_one_refinery_and_an_early_army_read_as_a_rush():
+    seen = [{"id": 80, "type": "fact", "x": 30, "y": 30}, {"id": 81, "type": "powr", "x": 34, "y": 30},
+            {"id": 82, "type": "tent", "x": 30, "y": 34}, {"id": 83, "type": "proc", "x": 34, "y": 34},
+            {"id": 84, "type": "powr", "x": 37, "y": 30}]
+    army = [{"id": 900 + i, "type": "e1", "x": 32, "y": 37, "hp": 100} for i in range(11)]
+    calm = EnemyIntel()
+    calm.update(_view(_t=108.0, visible_enemy_buildings=seen))
+    assert calm.opening() is None                                       # one barracks seen: no read
+    intel = EnemyIntel()
+    intel.update(_view(_t=108.0, visible_enemy_buildings=seen, visible_enemies=army, military={"visible_enemy_value": 1100}))
+    assert intel.opening() == "rush"                                    # but 11 riflemen already
+
+
+def test_outnumbered_the_army_falls_back_to_its_turret():
+    army = [{"id": 100 + i, "type": "e1", "x": 11, "y": 11, "hp": 100} for i in range(6)]
+    rush = [{"id": 900 + i, "type": "e1", "x": 16, "y": 16, "hp": 100} for i in range(20)]
+    blds = BASE + [{"id": 30, "type": "ftur", "x": 7, "y": 8}]
+    o = executor._army_orders(_view(_t=150.0, buildings=blds, units=army, visible_enemies=rush), Mode.BUILD)
+    assert o == [{"cmd": "attack_move", "units": [100 + i for i in range(6)], "to": [7, 8]}]
+    even = [{"id": 900 + i, "type": "e1", "x": 16, "y": 16, "hp": 100} for i in range(16)]
+    o2 = executor._army_orders(_view(_t=150.0, buildings=blds, units=army * 1 + [
+        {"id": 110 + i, "type": "e1", "x": 11, "y": 11, "hp": 100} for i in range(10)], visible_enemies=even), Mode.BUILD)
+    assert o2[0]["to"] == [16, 16]                                       # the odds are fine: fight them
+
+
+def test_trucks_come_back_before_the_depot_and_the_kennel():
+    built = [{"id": 10, "type": "fact"}, {"id": 11, "type": "powr"}, {"id": 12, "type": "barr"}, {"id": 13, "type": "proc"},
+             {"id": 14, "type": "proc"}, {"id": 15, "type": "powr"}, {"id": 16, "type": "weap"}, {"id": 17, "type": "proc"}]
+    avail = ["powr", "barr", "proc", "weap", "fix", "kenn", "dog", "e1"]
+    eco = {"power_provided": 300, "power_drained": 100}
+    assert buildplan.next_build_orders(_view(buildings=built, units=_harvs(3), available_production=avail,
+                                             economy=eco)) == [{"cmd": "build", "item": "fix"}]
+    assert buildplan.next_build_orders(_view(buildings=built, units=_harvs(1), available_production=avail,
+                                             economy=eco)) == []                  # one truck for three refineries: income first
+
+
+def test_one_refinery_seen_early_is_a_suspicion_worth_one_turret():
+    seen = [{"id": 80, "type": "fact", "x": 30, "y": 30}, {"id": 81, "type": "powr", "x": 34, "y": 30},
+            {"id": 82, "type": "tent", "x": 30, "y": 34}, {"id": 83, "type": "proc", "x": 34, "y": 34},
+            {"id": 84, "type": "powr", "x": 37, "y": 30}]
+    intel = EnemyIntel()
+    assert intel.suspect(_view(_t=108.0, visible_enemy_buildings=seen))
+    assert not intel.suspect(_view(_t=90.0, visible_enemy_buildings=seen))          # too early to tell
+    two = seen + [{"id": 85, "type": "proc", "x": 38, "y": 34}]
+    eco = EnemyIntel()
+    eco.update(_view(_t=108.0, visible_enemy_buildings=two))
+    assert not eco.suspect(_view(_t=108.0, visible_enemy_buildings=two))           # two refineries: economy
+    blds = [{"id": 10, "type": "fact", "x": 10, "y": 10}, {"id": 11, "type": "tent", "x": 14, "y": 10}]
+    v = _view(_t=108.0, base_center=[11, 11], buildings=blds, available_production=["pbox", "e1"], economy={"cash": 2000})
+    assert {"cmd": "build", "item": "pbox"} not in executor.plan(v, Mode.BUILD)
+    assert {"cmd": "build", "item": "pbox"} in executor.plan(v, Mode.BUILD, warning=True)

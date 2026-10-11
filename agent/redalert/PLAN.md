@@ -88,6 +88,12 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
   the last sighting; modes dwell 40 s; the advisor's posture and read change
   only when two answers agree. With no trigger: build a 3000+ army, hold the
   massing point and pickets, then push and stay committed until the retreat rule.
+- **Rush defense** (6b457914): one refinery seen after 1:40 is a suspicion
+  worth the warning turret on the road in (no hold); one refinery plus an army
+  of 1000+ seen before 4:00 is a rush read. An outnumbered army (under 0.8x
+  what is near it) falls back to our turret nearest the attackers instead of
+  charging. With fewer trucks than refineries, no depot, kennel, dome or
+  extra production until they are back.
 - **Ore forecast** (harvest.HarvestManager): a field holds ~300 x its starting
   ore cells and each harvester working it takes ~10 a second. When the worked
   fields have under 150 s left, the next expansion may start at once (its

@@ -40,6 +40,23 @@ class EnemyIntel:
         elif (view.game_seconds >= C.RUSH_READ_SECONDS and procs <= 1 and not self._economy
               and (c.get(C.WAR_FACTORY, 0) or rax >= 2)):
             self._rush = True
+        elif (procs <= 1 and not self._economy and view.game_seconds < C.RUSH_HOLD_SECONDS
+              and view.enemy_army_value >= C.RUSH_ARMY_SEEN_VALUE):
+            # Their army tells it too: one refinery and ~10 infantry already
+            # (match 6b457914: our scouts missed the second barracks at 1:48
+            # but saw the army; the read came at 4:38, after the rush).
+            self._rush = True
+
+    def suspect(self, view: View) -> bool:
+        """Their base seen after ``RUSH_READ_SECONDS`` with one refinery (pros
+        have two by 1:38), no read either way, before ``RUSH_HOLD_SECONDS``:
+        maybe a rush. Mild on purpose (a second refinery can hide in the fog):
+        one warning turret on the road in, no hold. Match 6b457914 saw five
+        buildings and one refinery at 1:48; the rush hit at 2:26."""
+        if self._rush or self._economy or not (C.RUSH_READ_SECONDS <= view.game_seconds < C.RUSH_HOLD_SECONDS):
+            return False
+        c = self.buildings(view)
+        return sum(c.values()) >= C.INTEL_MIN_BUILDINGS and c.get(C.REFINERY, 0) <= 1
 
     def opening(self) -> str | None:
         return "rush" if self._rush else "economy" if self._economy else None
