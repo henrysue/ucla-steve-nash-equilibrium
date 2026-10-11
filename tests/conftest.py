@@ -26,5 +26,7 @@ def _no_match_logs_from_tests(monkeypatch):
     # off, so tests never write marker files or turn a seat into an archetype.
     monkeypatch.setenv("RA_TEST_RUSH", "0")
     monkeypatch.setenv("RA_SPARRING", "")
+    # And the post-game analyst never starts a background process from a test.
+    monkeypatch.setenv("REDALERT_ANALYST_DETACH", "0")
     # And the per-seat models-off switch (A/B tests in self-play).
     monkeypatch.setenv("REDALERT_MODELS_OFF_SEAT", "")

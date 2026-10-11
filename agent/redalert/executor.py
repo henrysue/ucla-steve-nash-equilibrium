@@ -538,14 +538,24 @@ def army_contact(view: View, fighters, defending: bool = False) -> list:
 
 def respond(view: View, mode: Mode, scout_id: int | None, reserved: frozenset, hits=(), advice=None,
             ) -> tuple[list[dict], set]:
-    """The idle units answer what comes near them: each enemy group draws
-    every idle fighter within ``RESPOND_RADIUS_CELLS`` of it (a small group
-    at the main base also the idle units at home), and each spot we were hit
-    at in the last ``RETALIATE_SECONDS`` with no attacker in sight
-    (agent.DamageScan: artillery out of sight, a raider gone) draws the idle
-    units near it. One attack-move per target. While the army is home, its
-    own fight (army_contact) is left to it. ``advice.guard`` "off" keeps the
-    concave's units out of it. Returns (orders, unit ids used)."""
+    """The idle units answer what comes near them, one attack-move per
+    target:
+
+    - a poke at the concave (an enemy group within ``RESPOND_RADIUS_CELLS`` of
+      it) draws every idle unit near the group — the concave guards itself;
+    - anything else — a scout or raiders in the base or at the trucks
+      (a small group at the main base may also draw idle units at home), a
+      spot we were hit at with no attacker in sight (agent.DamageScan) — draws
+      only the nearest idle units that beat it clearly
+      (``RESPOND_ODDS``, strength.odds; at least ``RESPONSE_MIN_UNITS``; a
+      hit with nobody in sight gets ``RESPONSE_MIN_UNITS``). (9ff91807: a lone
+      rifleman at the back of the base pulled the whole concave after it,
+      twice, and hits on an expansion drew the army north while their
+      40-unit push came from the south-west.)
+
+    While the army is home, its own fight (army_contact) is left to it.
+    ``advice.guard`` "off" keeps the concave's units out of it. Returns
+    (orders, unit ids used)."""
     from .guard import _at_home
 
     if mode is Mode.RETREAT:
@@ -554,33 +564,43 @@ def respond(view: View, mode: Mode, scout_id: int | None, reserved: frozenset, h
             and u.id != scout_id and u.id not in reserved]
     if not idle:
         return [], set()
-    if getattr(advice, "guard", "on") == "off":
-        held = scout.concave_point(view)   # the concave's units stay put
-        if held is not None:
-            idle = [u for u in idle if dist2(u.cell, held[0]) > C.STAGING_RADIUS_CELLS ** 2 * 4]
+    held = scout.concave_point(view)
+    if getattr(advice, "guard", "on") == "off" and held is not None:   # the concave's units stay put
+        idle = [u for u in idle if dist2(u.cell, held[0]) > C.STAGING_RADIUS_CELLS ** 2 * 4]
     army_fight: set = set()
     if mode not in AGGRESSIVE:
         army_fight = {a.id for a in army_contact(view, _fighters(view, scout_id, reserved), mode in DEFENSIVE)}
     r2 = C.RESPOND_RADIUS_CELLS ** 2
     main = _main_cells(view)
-    targets: list[tuple[tuple[int, int], bool]] = []          # (cell, small group at the main base)
+    targets: list[tuple[tuple[int, int], bool, list]] = []    # (cell, small group at the main base, the group)
     groups = [g for g in enemy_groups(view) if not any(a.id in army_fight for a in g)]
     for g in sorted(groups, key=lambda g: -_value(view, g)):
         centre = _centre(g)
         cell = min(g, key=lambda a: dist2(a.cell, centre)).cell
         small_home = (_value(view, g) <= C.SMALL_RAID_VALUE
                       and any(dist2(a.cell, c) <= C.HOME_RAID_RADIUS_CELLS ** 2 for a in g for c in main))
-        targets.append((cell, small_home))
+        targets.append((cell, small_home, g))
     seen = [a.cell for g in enemy_groups(view) for a in g]
     for spot in hits:
-        if all(dist2(spot, c) > C.GROUP_CELLS ** 2 for c in seen) and all(dist2(spot, t) > 36 for t, _ in targets):
-            targets.append((tuple(spot), False))
+        if all(dist2(spot, c) > C.GROUP_CELLS ** 2 for c in seen) and all(dist2(spot, t[0]) > 36 for t in targets):
+            targets.append((tuple(spot), False, []))
     out, used = [], set()
-    for cell, small_home in targets:
+    for cell, small_home, group in targets:
         near = [u for u in idle if u.id not in used
                 and (dist2(u.cell, cell) <= r2 or (small_home and _at_home(view, u.cell)))]
         if not near:
             continue
+        poke = bool(group) and held is not None and any(dist2(a.cell, held[0]) <= r2 for a in group)
+        if not poke:                                       # just enough, nearest first
+            near.sort(key=lambda u: dist2(u.cell, cell))
+            theirs = [a.type for a in group]
+            picked: list = []
+            for u in near:
+                picked.append(u)
+                if len(picked) >= C.RESPONSE_MIN_UNITS and (
+                        not theirs or strength.odds(view, [p.type for p in picked], theirs) >= C.RESPOND_ODDS):
+                    break
+            near = picked
         ids = [u.id for u in near][:orders.MAX_UNITS_PER_ORDER]
         out.append(orders.attack_move(ids, list(cell)))
         used.update(ids)

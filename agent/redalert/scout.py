@@ -179,7 +179,7 @@ def _massing_point(view: View) -> tuple[int, int] | None:
 _CHOKE: dict = {}
 
 
-def choke_stage(view: View):
+def choke_stage(view: View, base=None, enemy=None):
     """(massing point, facing) for a concave that abuses the choke on the
     enemy's walking path to our base: the narrowest passage
     (``CHOKE_STAGE_MAX_WIDTH`` across or less) between ``STAGE_FORWARD_CELLS``
@@ -194,7 +194,8 @@ def choke_stage(view: View):
     from .observe import enemy_spawn_guess
     from .terrain import passage_width, walk_path
 
-    base, enemy = view.base_center, enemy_spawn_guess(view)
+    if base is None and enemy is None:                 # ours by default; theirs with the bases swapped
+        base, enemy = view.base_center, enemy_spawn_guess(view)
     if base is None or enemy is None or not view.blocked_cells:
         return None
     key = (id(view.blocked_cells), tuple(base), tuple(enemy))
@@ -281,13 +282,20 @@ def _clear_stage(view: View, stage, toward, terrain: bool = True) -> tuple[int, 
 
 
 def enemy_staging(view: View) -> tuple[int, int] | None:
-    """Where their army most likely masses: our own massing rule from their
-    base toward ours. A scout looks there before a blind attack."""
+    """Where their army most likely masses: our own rule from their side —
+    the mouth of the choke on their road to us when there is one
+    (:func:`choke_stage` with the bases swapped), else the massing distance
+    from their base. A scout looks there before a blind attack (9ff91807
+    looked at the open-ground spot, saw nothing, and attacked into 7300 at
+    their choke)."""
     from .observe import enemy_spawn_guess
 
     enemy, base = enemy_spawn_guess(view), view.base_center
     if enemy is None or base is None:
         return None
+    held = choke_stage(view, tuple(enemy), tuple(base))
+    if held is not None:
+        return held[0]
     forward = max(C.STAGE_FORWARD_CELLS, C.STAGE_SHARE * dist2(enemy, base) ** 0.5)
     return _forward(view, enemy, base, forward, enemy)
 

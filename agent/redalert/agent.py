@@ -348,9 +348,15 @@ class RedAlertAgent:
         self._matchlog.end(final_state, context)
         if self._opponents:
             try:
-                record = self._profile_record(final_state)
-                record["analysis"] = self._analyze_opponent()
-                opponents.save(self._opponents, record)
+                # The game first (it always gets saved), then Claude's analysis
+                # in a process of its own: the supervisor stops this worker
+                # seconds after the match (9ff91807's analysis died with it).
+                saved = opponents.save(self._opponents, self._profile_record(final_state))
+                path = self._matchlog.path
+                if saved and path is not None and not postgame.launch(path, self._opponents[0], self._log):
+                    analysis = self._analyze_opponent()
+                    if analysis:
+                        opponents.merge_last(self._opponents, {"analysis": analysis})
             except Exception as exc:  # noqa: BLE001 - the profile must never break the end of a match
                 self._log(f"[redalert] opponent profile not saved: {type(exc).__name__}: {exc}")
         if self._advisor is not None:

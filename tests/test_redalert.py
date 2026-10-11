@@ -4858,8 +4858,8 @@ def test_idle_units_near_an_attacked_spot_hit_back():
     far = [{"id": 300, "type": "e1", "x": 40, "y": 5, "hp": 100, "idle": True}]
     v = _view(_t=300.0, buildings=BASE, units=idle + busy + far)
     o, used = executor.respond(v, Mode.BUILD, None, frozenset(), hits=[(20, 20)])   # hit, nobody in sight
-    assert o == [{"cmd": "attack_move", "units": [100, 101, 102, 103, 104], "to": [20, 20]}]
-    assert used == {100, 101, 102, 103, 104}
+    assert o == [{"cmd": "attack_move", "units": [100, 101], "to": [20, 20]}]   # a pair goes to look
+    assert used == {100, 101}
     foe = [{"id": 900, "type": "e1", "x": 21, "y": 19, "hp": 100}]
     o, _ = executor.respond(_view(_t=300.0, buildings=BASE, units=idle + busy + far, visible_enemies=foe),
                             Mode.BUILD, None, frozenset(), hits=[(20, 20)])
@@ -5249,3 +5249,46 @@ def test_the_analysis_keeps_whole_sentences_and_drops_filler():
     assert postgame._tidy(padded, 2, 400) == "Hold until tank-heavy, then all-in. Raid their second refinery."
     assert postgame._tidy("One. Two. Three is a long one.", 5, 12) == "One. Two."
     assert postgame._tidy("a" * 50 + " " + "b" * 50, 1, 60).endswith("\u2026")
+
+
+def test_a_lone_scout_in_the_base_draws_a_pair_not_the_concave():
+    blds = [{"id": 10, "type": "fact", "x": 4, "y": 4}, {"id": 11, "type": "tent", "x": 8, "y": 4}]
+    trucks = [{"id": 20, "type": "harv", "x": 6, "y": 20, "hp": 100}]
+    army = [{"id": 100 + i, "type": "e1", "x": 12 + i % 3, "y": 12 + i // 3, "hp": 100, "idle": True} for i in range(10)]
+    scout_ = [{"id": 900, "type": "e1", "x": 3, "y": 26, "hp": 100}]           # by the trucks, far from the concave
+    v = _view(_t=300.0, buildings=blds, units=trucks + army, visible_enemies=scout_)
+    (o,), used = executor.respond(v, Mode.BUILD, None, frozenset())
+    assert o["to"] == [3, 26] and len(o["units"]) == 2                          # 2 riflemen beat 1 (9ff91807)
+    tanks = [{"id": 900 + i, "type": "2tnk", "x": 3, "y": 26, "hp": 100} for i in range(1)]
+    (o,), _ = executor.respond(dataclasses.replace(v, enemy_units=read(_raw(visible_enemies=tanks)).enemy_units),
+                               Mode.BUILD, None, frozenset())
+    assert len(o["units"]) > 2                                                  # a tank takes more of them
+
+
+def test_the_game_is_saved_before_the_analysis_runs_in_its_own_process(tmp_path, monkeypatch):
+    from agent.redalert import opponents, postgame
+    monkeypatch.setenv("REDALERT_PROFILE_DIR", str(tmp_path / "opponents"))
+    started = []
+    monkeypatch.setattr(postgame, "launch", lambda path, name, log=None: started.append((path, name)) or True)
+    ctx = DecisionContext(session_id="s", tournament_id="t", game_type="red_alert", agent_id="me", seat_position=0,
+                          opponents=("Yuriko",))
+    agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0, log_dir=str(tmp_path / "logs"))
+    agent.choose_action(_state(_t=60.0, buildings=BASE), ctx)
+    agent.on_match_end(types.SimpleNamespace(raw={"result": {"your_return": 0}}, final_result=None), ctx)
+    (record,) = opponents.load(["Yuriko"])
+    assert record["result"] == 0 and "analysis" not in record                   # saved at once
+    assert started and started[0][1] == "Yuriko" and str(started[0][0]).endswith(".jsonl")
+    assert opponents.merge_last(["Yuriko"], {"analysis": {"summary": "s"}})      # the background run merges in
+    assert opponents.load(["Yuriko"])[-1]["analysis"] == {"summary": "s"} and len(opponents.load(["Yuriko"])) == 1
+
+
+def test_the_background_analysis_command_merges_into_the_latest_game(tmp_path, monkeypatch):
+    from agent.redalert import opponents, postgame
+    monkeypatch.setenv("REDALERT_PROFILE_DIR", str(tmp_path / "opponents"))
+    monkeypatch.setattr(postgame, "provider_from_env", lambda log=None: types.SimpleNamespace(
+        complete_structured=lambda *a, **k: _ANALYSIS))
+    opponents.save(["Yuriko"], {"game": 1, "result": 0})
+    log = _write_log(tmp_path / "m.jsonl", _LOG_ROWS)
+    assert postgame.main([str(log), "--opponent", "Yuriko", "--merge"]) == 0
+    (record,) = opponents.load(["Yuriko"])
+    assert record["game"] == 1 and record["analysis"]["how_to_beat"].startswith("Hold the first push")

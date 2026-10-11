@@ -55,6 +55,31 @@ def load(names, directory: Path | None = None) -> list[dict]:
     return [r for r in records if isinstance(r, dict)][-SHOWN:] if isinstance(records, list) else []
 
 
+def merge_last(names, patch: dict, directory: Path | None = None) -> bool:
+    """Merge ``patch`` into the first named opponent's latest record (the
+    post-game analysis joins the game it is about); a new record when there
+    is none. False when there is nowhere to write or it failed."""
+    directory = directory if directory is not None else profile_dir()
+    path = _path(names, directory)
+    if path is None:
+        return False
+    try:
+        records = json.loads(path.read_text(encoding="utf-8"))
+        records = [r for r in records if isinstance(r, dict)] if isinstance(records, list) else []
+    except (OSError, ValueError):
+        records = []
+    if not records:
+        return save(names, patch, directory)
+    records[-1] = {**records[-1], **patch}
+    try:
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(records[-KEEP:], indent=1, default=str), encoding="utf-8")
+        tmp.replace(path)
+        return True
+    except OSError:
+        return False
+
+
 def save(names, record: dict, directory: Path | None = None) -> bool:
     """Append ``record`` to the first named opponent's file (the last
     ``KEEP`` kept); False when there is nowhere to write or it failed."""

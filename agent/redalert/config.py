@@ -204,7 +204,10 @@ MATCHUP_MIN_UNITS = 5              # this many enemy fighters known before their
 ARMOR_HEAVY_SHARE = 0.6            # their hit points this armored: one rocket soldier per rifleman
 OUTBOX_MAX_AGE_SECONDS = 1.5       # orders that didn't fit a batch go first in the next one, while this fresh
 RETALIATE_SECONDS = 6.0            # a spot of ours attacked (event) or lost this recently, no attacker in sight...
-RESPOND_RADIUS_CELLS = 12          # ...and any enemy group draw every idle fighter this close (executor.respond)
+RESPOND_RADIUS_CELLS = 12          # ...and any enemy group draw idle fighters this close (executor.respond):
+                                   # all of them at a poke on the concave, else just enough to win...
+RESPOND_ODDS = 2.0                 # ...these odds (strength.odds)...
+RESPONSE_MIN_UNITS = 2             # ...with at least this many (a hit with nobody in sight: this many)
 GROUP_CELLS = 6                    # enemy fighters this close to each other are one group
 UNSEEN_LEAD_MIN = 2000             # nothing of their army seen counts as nothing left only this far ahead on trades
 CONCAVE_ORDERS_PER_VIEW = 6        # formation slot orders per view (the batch holds 20; the rest walk to the centre)

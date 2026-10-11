@@ -151,8 +151,8 @@ def _tidy(value, sentences: int, limit: int) -> str:
     """Whole sentences only — at most ``sentences`` of them within ``limit``
     characters — without filler (the model once padded its suggestion with
     "Keep it. — End. Thank you. . . .")."""
-    text = " ".join(str(value or "").split())
-    parts = [p.strip(" -—") for p in re.split(r"(?<=[.!?])\s+", text)]
+    text = " ".join(str(value or "").split()).strip(" {}")
+    parts = [p.strip(" -—") for p in re.split(r"(?<=[.!?])(?<!e\.g\.)(?<!i\.e\.)\s+", text)]
     parts = [p for p in parts if p.strip(". ()") and not (len(p) < 40 and _FILLER.match(p.strip("( ")))]
     out = ""
     for p in parts[:sentences]:
@@ -225,6 +225,42 @@ def provider_from_env(log=print):
         return None
 
 
+def launch(path, name: str, log=print) -> bool:
+    """Run the analysis of the match log at ``path`` in a process of its own
+    that outlives this one (the supervisor stops a finished match's worker
+    within seconds — 9ff91807's analysis died with it), merging into the
+    opponent's latest record. Its output goes to ``postgame.log`` beside the
+    profiles. False when it couldn't start (or ``REDALERT_ANALYST_DETACH=0``):
+    the caller analyses in place."""
+    import subprocess
+    import sys
+
+    from . import opponents
+
+    if os.environ.get("REDALERT_ANALYST_DETACH", "1").strip().lower() in ("0", "off", "false", "no"):
+        return False
+    directory = opponents.profile_dir()
+    if directory is None:
+        return False
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        out = open(directory / "postgame.log", "a", encoding="utf-8")    # noqa: SIM115 - handed to the child
+        flags = {}
+        if os.name == "nt":
+            flags["creationflags"] = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            flags["start_new_session"] = True
+        subprocess.Popen([sys.executable, "-m", "agent.redalert.postgame", str(path), "--opponent", name, "--merge"],
+                         cwd=str(Path(__file__).resolve().parents[2]), stdout=out, stderr=out,
+                         stdin=subprocess.DEVNULL, **flags)
+        out.close()
+        log(f"[redalert] post-game analysis of {name} started in the background (log: {directory / 'postgame.log'})")
+        return True
+    except OSError as exc:
+        log(f"[redalert] post-game analysis couldn't start in the background ({exc}); analysing now")
+        return False
+
+
 def timeout_from_env() -> float:
     try:
         return max(10.0, float(os.environ.get("REDALERT_ANALYST_TIMEOUT") or TIMEOUT_SECONDS))
@@ -242,6 +278,7 @@ def main(argv=None) -> int:
     p.add_argument("log", type=Path, help="the match log (.jsonl)")
     p.add_argument("--opponent", required=True, help="the opponent's display name")
     p.add_argument("--save", action="store_true", help="add the analysis to the opponent's profile")
+    p.add_argument("--merge", action="store_true", help="merge it into the opponent's latest record (the agent's way)")
     args = p.parse_args(argv)
     provider = provider_from_env()
     if provider is None:
@@ -253,7 +290,10 @@ def main(argv=None) -> int:
         print("no analysis (empty log or no answer)")
         return 1
     print(json.dumps(analysis, indent=1))
-    if args.save:
+    if args.merge:
+        ok = opponents.merge_last([args.opponent], {"analysis": analysis})
+        print(f"merged into {args.opponent}'s latest record" if ok else "not saved (no profile directory)")
+    elif args.save:
         ok = opponents.save([args.opponent], {"source": str(args.log.name), "analysis": analysis})
         print("saved to the opponent's profile" if ok else "not saved (no profile directory)")
     return 0
