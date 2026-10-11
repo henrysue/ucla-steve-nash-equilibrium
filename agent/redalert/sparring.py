@@ -179,7 +179,7 @@ class Rusher(Archetype):
         out = []
         rifle = C.resolve((C.RIFLE,), view.available)
         rocket = C.resolve((C.ROCKET,), view.available)
-        tank = C.resolve(C.LIGHT_TANKS + C.HEAVY_TANKS, view.available)
+        tank = C.resolve(C.TANK_PREFERENCE, view.available)
         if rifle and view.has_building(C.BARRACKS) and view.queued_count(rifle) < RUSH_INFANTRY_DEPTH:
             out.append(orders.train(rifle, count=1))
         if rocket and view.has_building(C.BARRACKS) and view.queued_count(rocket) < 1 \

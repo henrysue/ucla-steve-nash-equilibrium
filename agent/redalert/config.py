@@ -24,6 +24,12 @@ RIFLE = "e1"
 ROCKET = "e3"
 LIGHT_TANKS = ("1tnk", "2tnk")     # Allied light / medium
 HEAVY_TANKS = ("3tnk", "4tnk")     # Soviet heavy / mammoth
+# The strongest main battle tank offered, never the light tank when a better
+# one is unlocked (52a77fb1, England: light tanks all game against medium
+# tanks). Pro replays: heavy/medium tanks in every game, light tanks never.
+TANK_PREFERENCE = ("3tnk", "2tnk", "4tnk", "1tnk")
+MAIN_BATTLE_TANKS = ("3tnk", "2tnk", "4tnk")
+TANK_VALUE_SHARE = 0.45            # pros keep 45-55% of combat value in tanks: below this, tanks come first
 HARVESTER = ("harv",)
 SIEGE_UNITS = ("v2rl", "arty")     # Soviet V2 / Allied artillery: outrange defenses
 SCOUT_VEHICLES = ("jeep", "ftrk")

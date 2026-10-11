@@ -195,7 +195,7 @@ def _production_orders(view: View, mode: Mode, *, sparring=None, threat: bool = 
 
     rifle = C.resolve((C.RIFLE,), view.available)
     rocket = C.resolve((C.ROCKET,), view.available)
-    tank = C.resolve(C.LIGHT_TANKS + C.HEAVY_TANKS, view.available)
+    tank = C.resolve(C.TANK_PREFERENCE, view.available)
 
     if mode is Mode.DEFEND_RUSH:
         # Cheapest attack units, as fast as possible, to kill the cheese.
@@ -256,15 +256,22 @@ def _production_orders(view: View, mode: Mode, *, sparring=None, threat: bool = 
     # Against a turtle (several known defenses, e.g. flame towers that shred
     # infantry): fewer riflemen per batch, a deeper tank queue, siege units.
     turtle = len(enemy_defenses(view)) >= C.TURTLE_DEFENSES
-    if has_barracks and rifle and spare >= unit_cost(rifle):
+    # The pros' mix: about half the army's value in main battle tanks. While
+    # tanks lag (and a main battle tank is offered), the tank queue runs full
+    # and infantry wait unless there is money for both (52a77fb1: riflemen
+    # and light tanks against a medium-tank army).
+    lag = tanks_lag(view, tank) and has_factory and not short_harvesters
+    hold_infantry = (lag and not threat and mode not in DEFENSIVE
+                     and spare < unit_cost(tank) + unit_cost(rifle or "e1"))
+    if has_barracks and rifle and spare >= unit_cost(rifle) and not hold_infantry:
         ratio = C.RIFLE_TO_ROCKET if funds(view) >= C.ROCKET_RATIO_CREDIT_SWITCH else C.RIFLE_TO_ROCKET_EARLY
         if view.queued_count(rifle) < depth:
             out.append(orders.train(rifle, count=1))
         if not broke and rocket and _should_add_rocket(view, ratio) and view.queued_count(rocket) < 1 \
                 and spare >= unit_cost(rifle) + unit_cost(rocket):
             out.append(orders.train(rocket, count=1))
-    if has_factory and tank and not short_harvesters and not broke and spare >= unit_cost(tank):
-        if view.queued_count(tank) < min(C.MAX_QUEUE_DEPTH, (2 if rich else 1) + (1 if turtle else 0)):
+    if has_factory and tank and not short_harvesters and (lag or (not broke and spare >= unit_cost(tank))):
+        if view.queued_count(tank) < min(C.MAX_QUEUE_DEPTH, (2 if rich or lag else 1) + (1 if turtle else 0)):
             out.append(orders.train(tank, count=1))
     # Siege units (V2 / artillery) once defenses are known: they outrange them.
     siege = C.resolve(C.SIEGE_UNITS, view.available)
@@ -295,6 +302,19 @@ def ahead_in_queue(view: View, queue: str, item: str) -> str | None:
     if waiting and waiting[0] != item and item in waiting:
         return waiting[0]
     return None
+
+
+def tanks_lag(view: View, tank: str | None) -> bool:
+    """A main battle tank is offered and tanks hold less than
+    ``TANK_VALUE_SHARE`` of our combat value (queued tanks count)."""
+    if tank not in C.MAIN_BATTLE_TANKS:
+        return False
+    cost = lambda item: view.unit_costs.get(item, C.DEFAULT_UNIT_COST)  # noqa: E731
+    tanks = sum(cost(u.type) for u in view.combat_units if u.type in C.VEHICLE_TYPES)
+    tanks += sum(cost(t) for t in C.TANK_PREFERENCE for _ in range(view.queued_count(t)))
+    total = sum(cost(u.type) for u in view.combat_units) + tanks - sum(
+        cost(u.type) for u in view.combat_units if u.type in C.VEHICLE_TYPES)
+    return total <= 0 or tanks < C.TANK_VALUE_SHARE * total
 
 
 def _should_add_rocket(view: View, ratio: int) -> bool:

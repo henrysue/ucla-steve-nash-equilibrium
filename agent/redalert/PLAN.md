@@ -176,6 +176,13 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
   at a time for two minutes). Expansion refineries avoid predicted ore; one that
   comes up elsewhere is asked for again at once,
   its spot skipped. Behind on army: no new refinery or MCV unless home runs dry.
+- **The pros' unit mix** (9 pro replays: rifle:rocket ~3.7:1, 45-55% of combat
+  value in main battle tanks in every phase — heavy for Soviets, medium for
+  Allies, light tanks never): we train the strongest tank offered (3tnk, 2tnk,
+  4tnk, then 1tnk only before the depot; 52a77fb1 built light tanks all game as
+  England), and while tanks hold under 45% of our combat value the tank queue
+  runs full and infantry wait unless there is money for both (not while
+  defending or warned).
 - **Ore growth model** (oregrowth.py): a Monte Carlo of the engine's seeding
   rules (each mine adds ore every 3 s along a random walk past full cells) on
   Shadowfiend II, Sidestep and Trapped: fields with a mine grow 1 cell past the

@@ -4419,3 +4419,40 @@ def test_ore_grows_only_around_fields_with_a_mine_and_only_with_time():
     one, two = oregrowth.predicted_ore(v(300.0)), oregrowth.predicted_ore(v(600.0))
     assert (13, 11) in one and (14, 11) not in one and (14, 11) in two        # 1 cell by 5:00, 2 by 10:00
     assert not any(abs(x - 31) <= 3 and abs(y - 31) <= 3 for x, y in two)     # no mine: it never grows
+
+
+# -- the pros' unit mix: main battle tanks, about half the army's value ---------------------------------
+
+
+def _tank_view(units, available, cash=1500, t=500.0):
+    blds = BASE + [{"id": 12, "type": "weap", "x": 4, "y": 8}, {"id": 13, "type": "proc", "x": 9, "y": 9},
+                   {"id": 14, "type": "fix", "x": 1, "y": 12}]
+    harv = [{"id": 40 + i, "type": "harv", "x": 14, "y": 14, "hp": 100} for i in range(4)]
+    v = _view(_t=t, buildings=blds, units=harv + units, economy={"cash": cash},
+              available_production=list(available))
+    return dataclasses.replace(v, unit_costs={"e1": 100, "e3": 300, "1tnk": 700, "2tnk": 850, "3tnk": 1150,
+                                              "4tnk": 2000, "harv": 1100})
+
+
+def test_the_strongest_tank_offered_never_the_light_tank():
+    rifles = [{"id": 30 + i, "type": "e1", "x": 10, "y": 10, "hp": 100} for i in range(10)]
+    allied = executor._production_orders(_tank_view(rifles, ["e1", "e3", "1tnk", "2tnk", "harv"]), Mode.BUILD)
+    assert any(o.get("item") == "2tnk" for o in allied) and not any(o.get("item") == "1tnk" for o in allied)
+    soviet = executor._production_orders(_tank_view(rifles, ["e1", "e3", "3tnk", "4tnk", "harv"]), Mode.BUILD)
+    assert any(o.get("item") == "3tnk" for o in soviet)
+    early = executor._production_orders(_tank_view(rifles, ["e1", "e3", "1tnk", "harv"]), Mode.BUILD)
+    assert any(o.get("item") == "1tnk" for o in early)                       # before the depot: better than none
+
+
+def test_tanks_come_first_while_they_lag_the_mix():
+    rifles = [{"id": 30 + i, "type": "e1", "x": 10, "y": 10, "hp": 100} for i in range(20)]
+    v = _tank_view(rifles, ["e1", "e3", "2tnk", "harv"], cash=900)
+    assert executor.tanks_lag(v, "2tnk")
+    o = executor._production_orders(v, Mode.BUILD)
+    assert any(x.get("item") == "2tnk" for x in o)                            # the tank...
+    assert not any(x.get("item") in ("e1", "e3") for x in o)                  # ...and the money waits for it
+    tanks = [{"id": 60 + i, "type": "2tnk", "x": 10, "y": 10, "hp": 100} for i in range(3)]
+    mixed = _tank_view(rifles + tanks, ["e1", "e3", "2tnk", "harv"], cash=900)
+    assert not executor.tanks_lag(mixed, "2tnk")                              # 2550 of 4550: mixed
+    assert any(x.get("item") == "e1" for x in executor._production_orders(mixed, Mode.BUILD))
+    assert any(x.get("item") == "e1" for x in executor._production_orders(v, Mode.DEFEND_BASE))   # defending: everything
