@@ -5089,3 +5089,116 @@ def test_the_system_prompt_is_cached():
     p._client = types.SimpleNamespace(with_options=lambda **_: types.SimpleNamespace(messages=Messages()))
     p._create(["you are a pro"], [{"role": "user", "content": "x"}], {"type": "object"}, 5.0, "low", True)
     assert sent["system"] == [{"type": "text", "text": "you are a pro", "cache_control": {"type": "ephemeral"}}]
+
+
+# -- between games: Claude's analysis of an opponent ------------------------------------------------
+
+import json  # noqa: E402
+
+
+def _write_log(path, rows):
+    path.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    return path
+
+
+_LOG_ROWS = [
+    {"kind": "start", "map": "trapped", "faction": "russia", "enemy_faction": "france", "max_minutes": 20,
+     "map_picture": {"rows": ["." * 50] * 50}},
+    {"kind": "sample", "t": 0, "mode": "open", "cash": 5000, "ore": 0, "harvesters": 0, "army": 0, "enemy_seen": 0,
+     "kills_cost": 0, "deaths_cost": 0, "raid_squad": 0, "expansions_done": [],
+     "positions": {"units": [["e1", 5, 5, "army"]], "enemies": []}},
+    {"kind": "scouted", "t": 80, "items": [{"t": 80, "kind": "building", "type": "barr", "cell": [40, 40]}]},
+    {"kind": "advice", "made_at": 90, "enemy_style": "aggressive", "posture": "hold", "confidence": 0.7,
+     "plan": "expect a push at 2:40", "evidence": ["2 barracks at 1:20"]},
+    {"kind": "advice", "made_at": 96, "enemy_style": "aggressive", "posture": "hold", "confidence": 0.7,
+     "plan": "expect a push at 2:40", "evidence": ["2 barracks at 1:20"]},
+    {"kind": "raid_result", "t": 400, "seconds": 40, "size": 4, "survivors": 0, "target": [10, 40], "killed": 0, "lost": 1200},
+    {"kind": "attack_result", "t": 500, "called_by": "rules", "seconds": 30, "army": 6000, "killed": 3000, "lost": 1200,
+     "ended": "build"},
+    {"kind": "end", "result": {"your_return": 1}, "military": {"kills_cost": 9000, "deaths_cost": 4000}},
+]
+
+_ANALYSIS = {"summary": "A two-barracks rusher that pushes at 2:40 and guards its expansion well.",
+             "playstyle": "rush", "opening": "one refinery, two barracks by 1:20, push 2:40",
+             "worked_for_them": ["killed our raid squad at their expansion for free"],
+             "failed_for_them": ["their 2:40 push into our pillbox"], "worked_for_us": ["holding at the turret line"],
+             "failed_for_us": ["raiding a defended expansion"],
+             "how_to_beat": "Hold the first push at the turret line, skip raids, counter-attack after it breaks.",
+             "extra": "dropped"}
+
+
+def test_the_match_log_is_digested_for_the_analyst(tmp_path):
+    from agent.redalert import postgame
+    d = postgame.digest(_write_log(tmp_path / "m.jsonl", _LOG_ROWS))
+    assert d["match"] == {"map": "trapped", "our_faction": "russia", "their_faction": "france", "minutes": 20}
+    assert d["timeline"] == [[0, "open", 5000, 0, 0, 0, 0, 0, 0, 0]]
+    assert d["first_seen"] == {"barr": [80, "building", [40, 40]]}
+    assert len(d["advisor_reads"]) == 1 and d["advisor_reads"][0]["evidence"] == ["2 barracks at 1:20"]   # changes only
+    assert d["raids"][0]["lost"] == 1200 and d["attacks"][0]["killed"] == 3000
+    assert d["result"]["result"] == {"your_return": 1}
+    assert "map_picture" not in json.dumps(d)                                   # no bulk
+
+
+def test_claude_analyses_the_opponent_and_the_advisor_gets_it_next_time(tmp_path):
+    from agent.redalert import postgame
+
+    class Opus:
+        def __init__(self):
+            self.messages = None
+
+        def complete_structured(self, messages, name, schema, *, timeout, effort):
+            self.messages = messages
+            return _ANALYSIS
+
+    opus = Opus()
+    earlier = [{"game": 1, "analysis": {"summary": "rushes", "how_to_beat": "turrets"}}]
+    a = postgame.analyze(_write_log(tmp_path / "m.jsonl", _LOG_ROWS), opus, earlier)
+    assert a["how_to_beat"].startswith("Hold the first push") and "extra" not in a
+    sent = json.loads(opus.messages[1]["content"])
+    assert sent["earlier_analyses"] == [earlier[0]["analysis"]] and sent["digest"]["raids"]
+    text = postgame.addendum(earlier + [{"analysis": a}])
+    assert text.startswith("AGAINST THIS OPPONENT") and "2 past game(s)" in text and "Hold the first push" in text
+    assert postgame.addendum([{"game": 1}]) == ""
+
+
+def test_the_end_of_a_match_analyses_the_opponent_for_the_next_game(tmp_path, monkeypatch):
+    from agent.redalert import postgame
+    monkeypatch.setenv("REDALERT_PROFILE_DIR", str(tmp_path / "opponents"))
+    monkeypatch.setattr(postgame, "provider_from_env", lambda log=None: types.SimpleNamespace(
+        complete_structured=lambda *a, **k: _ANALYSIS))
+    ctx = DecisionContext(session_id="s", tournament_id="t", game_type="red_alert", agent_id="me", seat_position=0,
+                          opponents=("Yuriko",))
+    make = lambda: RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0, log_dir=str(tmp_path / "logs"),   # noqa: E731
+                                 advisor_factory=lambda log, on_advice: ra_advisor.Advisor(
+                                     _FakeProvider(_ANSWER), log=log, clock=lambda: 0.0, interval=0.0))
+    agent = make()
+    agent.choose_action(_state(_t=60.0, buildings=BASE), ctx)
+    agent.on_match_end(types.SimpleNamespace(raw={"result": {"your_return": 0}}, final_result=None), ctx)
+    nxt = make()
+    nxt.choose_action(_state(_t=1.0, buildings=BASE), ctx)
+    assert "How to beat them: Hold the first push" in nxt._advisor.addendum
+    assert all("analysis" not in r for r in nxt._advisor.opponent_history)      # once, in the addendum
+    seen = {}
+
+    class Spy(_FakeProvider):
+        def complete_structured(self, messages, name, schema, *, timeout, effort):
+            seen["system"] = messages[0]["content"]
+            return super().complete_structured(messages, name, schema, timeout=timeout, effort=effort)
+
+    nxt._advisor._provider = Spy(_ANSWER)
+    nxt._advisor._last_call = float("-inf")
+    nxt.choose_action(_state(_t=2.0, buildings=BASE), ctx)
+    nxt._advisor._future.result()
+    assert seen["system"].startswith(ra_advisor.SYSTEM_PROMPT) and "AGAINST THIS OPPONENT" in seen["system"]
+
+
+def test_finished_raids_are_logged_with_their_trades():
+    from agent.redalert.raid import RaidCorps
+    corps = RaidCorps()
+    r = corps.squads[0]
+    army = [{"id": 30 + i, "type": "e3", "x": 30, "y": 30, "hp": 100} for i in range(4)]
+    r.unit_ids, r._formed_size, r._start, r._formed_at, r._aim = [30, 31], 4, (1000.0, 500.0), 380.0, (10, 40)
+    r._release(_view(_t=420.0, units=army, military={"kills_cost": 1000, "deaths_cost": 1700}))
+    assert corps.drain() == [{"t": 380, "seconds": 40, "size": 4, "survivors": 2, "target": [10, 40],
+                              "killed": 0, "lost": 1200}]
+    assert corps.drain() == []

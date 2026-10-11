@@ -65,6 +65,8 @@ class Raid:
         self.results: list[float] = []            # net trade (kills - losses) of each finished raid
         self._aim: tuple[int, int] | None = None  # the cell it was last sent at
         self.failed: list[tuple[tuple[int, int], float]] = []   # (target, when) of raids that lost
+        self.finished: list[dict] = []            # each raid's outcome, until RaidCorps.drain takes it
+        self._formed_at = 0.0
 
     def update(self, view: View, mode: Mode, scout_id: int | None, advice=None, taken: set = frozenset()) -> None:
         """Drop dead members; release or form the squad."""
@@ -201,11 +203,17 @@ class Raid:
             return
         self._formed_size = len(self.unit_ids)
         self._start = (view.kills_cost, view.deaths_cost)
+        self._formed_at = view.game_seconds
 
     def _release(self, view: View) -> None:
         if self._start is not None:
-            net = (view.kills_cost - self._start[0]) - (view.deaths_cost - self._start[1])
+            killed, lost = view.kills_cost - self._start[0], view.deaths_cost - self._start[1]
+            net = killed - lost
             self.results.append(net)
+            self.finished.append({"t": round(self._formed_at), "seconds": round(view.game_seconds - self._formed_at),
+                                  "size": self._formed_size, "survivors": len(self.unit_ids),
+                                  "target": list(self._aim) if self._aim else None,
+                                  "killed": round(killed), "lost": round(lost)})
             if net < 0 and self._aim is not None:
                 self.failed.append((self._aim, view.game_seconds))   # it lost there: leave it alone a while
             self._start = None
@@ -300,6 +308,13 @@ class RaidCorps:
 
     def target(self, view: View):
         return self.squads[0].target(view)
+
+    def drain(self) -> list[dict]:
+        """The outcomes of the raids that ended since the last call."""
+        out = [r for s in self.squads for r in s.finished]
+        for s in self.squads:
+            s.finished = []
+        return out
 
     def targets(self, view: View) -> list:
         return [s.target(view) for s in self.squads if s.unit_ids]

@@ -30,7 +30,16 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
   `<REDALERT_LOG_DIR>/opponents`). Each answer gives a confidence and its
   evidence: an "aggressive" read raises turrets only at 0.6+, and at 0.8+ with
   evidence a change takes effect without waiting for a second answer. The
-  system prompt is cached. Haiku squad leads (`squadlead.py`) are off unless
+  system prompt is cached.
+- **Between games** (`postgame.py`): after a tournament match, Claude Opus
+  reads a digest of the match log (timeline, mode changes, first sightings,
+  the advisor's reads, raid and attack results, buildings lost, the result)
+  and writes the opponent's playstyle, opening, what worked and failed for
+  each side, a summary and one high-level way to beat them, into their
+  profile. The next game against them the advisor gets it as an addendum to
+  this plan (its system prompt). By hand: `python -m agent.redalert.postgame
+  <log.jsonl> --opponent NAME [--save]`. `REDALERT_ANALYST=off` switches it
+  off, `REDALERT_ANALYST_MODEL` / `REDALERT_ANALYST_TIMEOUT` (90 s) tune it. Haiku squad leads (`squadlead.py`) are off unless
   `REDALERT_SQUAD_LEADS=on`.
 - **Logs**: `matchlog.py` writes a JSONL and a summary per match to
   `matchlogs/` (samples every 15 s, mode changes, refusals, advice, attacked
@@ -53,6 +62,7 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
 | `harvest.py` | Harvesters steered to fields that still have ore; the ore forecast |
 | `micro.py` / `movement.py` | Focus fire, siege on turrets; unsticking units |
 | `orders.py` | Order builders, shape checks, splitting into batches |
+| `opponents.py` / `postgame.py` | Opponent profiles across games; Claude's analysis of each opponent between games |
 | `sparring.py` | TEST ONLY: self-play archetypes (never in a tournament) |
 
 ## The plan

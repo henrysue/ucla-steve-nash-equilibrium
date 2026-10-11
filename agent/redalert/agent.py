@@ -25,7 +25,7 @@ from altruagent.console import print_line
 
 from . import brain, buildplan, executor, micro, orders, scout, squadlead
 from . import sparring  # TEST ONLY (self-play sparring archetypes; never in a tournament)
-from . import intel, opponents, scouting
+from . import intel, opponents, postgame, scouting
 from .commander import Commander
 from .expand import Expansion
 from .expand import enemy_expansions as _enemy_expansions
@@ -154,6 +154,8 @@ class RedAlertAgent:
         threat = self._patrol.alarm(view) or self._intel.rushing(view)
         # What the scouts saw for the first time: the log and the console.
         self._log_sightings(view)
+        for raid in self._raid.drain():                 # raids that ended last view: the post-game analysis
+            self._matchlog.note("raid_result", raid)
         # sparring (TEST ONLY): against ourselves in a test match, one seat
         # plays a fixed archetype (rusher / turtler / macro), without the advisor.
         spar = self._sparring.resolve(context, raw.get("your_seat"))
@@ -343,7 +345,9 @@ class RedAlertAgent:
         self._matchlog.end(final_state, context)
         if self._opponents:
             try:
-                opponents.save(self._opponents, self._profile_record(final_state))
+                record = self._profile_record(final_state)
+                record["analysis"] = self._analyze_opponent()
+                opponents.save(self._opponents, record)
             except Exception as exc:  # noqa: BLE001 - the profile must never break the end of a match
                 self._log(f"[redalert] opponent profile not saved: {type(exc).__name__}: {exc}")
         if self._advisor is not None:
@@ -566,10 +570,29 @@ class RedAlertAgent:
         self._match_info = {"map": (raw.get("map") or {}).get("id") if isinstance(raw.get("map"), dict) else None,
                             "our_faction": obs.get("faction"), "their_faction": obs.get("enemy_faction")}
         if self._advisor is not None and self._opponents:
-            self._advisor.opponent_history = opponents.load(self._opponents)
-            if self._advisor.opponent_history:
-                self._log(f"[redalert] {len(self._advisor.opponent_history)} past games against this opponent "
-                          "go to the advisor")
+            history = opponents.load(self._opponents)
+            self._advisor.opponent_history = [{k: v for k, v in r.items() if k != "analysis"} for r in history]
+            self._advisor.addendum = postgame.addendum(history)
+            if history:
+                self._log(f"[redalert] {len(history)} past games against this opponent go to the advisor"
+                          + (" (with our analysis of them)" if self._advisor.addendum else ""))
+
+    def _analyze_opponent(self) -> dict | None:
+        """Claude reads this match's log (postgame.py): their playstyle,
+        opening, what worked for each side, how to beat them. None when
+        logging or the analyst is off, or it fails."""
+        path = self._matchlog.path
+        provider = postgame.provider_from_env(self._log) if path is not None else None
+        if provider is None:
+            return None
+        try:
+            analysis = postgame.analyze(path, provider, opponents.load(self._opponents), postgame.timeout_from_env())
+        except Exception as exc:  # noqa: BLE001 - the analysis is optional
+            self._log(f"[redalert] post-game analysis failed: {type(exc).__name__}: {exc}")
+            return None
+        if analysis:
+            self._log(f"[redalert] post-game analysis: {analysis['summary']} | to beat them: {analysis['how_to_beat']}")
+        return analysis
 
     def _profile_record(self, final_state) -> dict:
         """One game against this opponent: what they did and how it went."""
@@ -599,10 +622,11 @@ class RedAlertAgent:
                                  "called_by": "advisor" if getattr(advice, "posture", None) == "attack" else "rules"}
         elif self._attack_open is not None:
             a, self._attack_open = self._attack_open, None
-            self._attack_results = (self._attack_results + [{
-                "t": a["t"], "called_by": a["called_by"], "seconds": round(t - a["t"]), "army": a["army"],
-                "killed": round(view.kills_cost - a["kills"]), "lost": round(view.deaths_cost - a["deaths"]),
-                "ended": str(self._mode)}])[-3:]
+            result = {"t": a["t"], "called_by": a["called_by"], "seconds": round(t - a["t"]), "army": a["army"],
+                      "killed": round(view.kills_cost - a["kills"]), "lost": round(view.deaths_cost - a["deaths"]),
+                      "ended": str(self._mode)}
+            self._attack_results = (self._attack_results + [result])[-3:]
+            self._matchlog.note("attack_result", result)
 
     def _log_sightings(self, view) -> None:
         """This view's first sightings into the match log, and one console

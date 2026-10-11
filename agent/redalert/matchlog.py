@@ -95,6 +95,17 @@ class MatchLog:
             self._samples.append(row)
             self._write("sample", row)
 
+    @property
+    def path(self):
+        """This match's JSONL file (None when logging is off)."""
+        return self._path
+
+    def note(self, kind: str, data: dict) -> None:
+        """A one-off row (raid and attack results: the post-game analysis reads them)."""
+        if self._disabled or self._path is None:
+            return
+        self._write(kind, data)
+
     def scouted(self, t: float, items: list[dict]) -> None:
         """Enemy buildings and units seen for the first time this view."""
         if self._disabled or self._path is None or not items:

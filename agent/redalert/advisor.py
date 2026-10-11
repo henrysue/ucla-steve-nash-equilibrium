@@ -12,8 +12,8 @@ Its read of the game:
   to their economy), ``standard`` (our plan) or ``unknown``;
 - ``balance``: ``more_army`` / ``more_economy`` / ``balanced`` — where the
   money goes, inside the rules' own gates (never over-index on either);
-- ``mistakes``: up to 3 problems it sees (idle units, exposed harvesters, a
-  piling bank, stuck units, a losing fight), for our log and console.
+- ``mistakes``: up to 3 problems it sees (idle units, a
+  piling bank, stuck units), for our log and console, and to inform the next agent decision.
 
 Its calls, each inside the game plan and its limits:
 
@@ -367,6 +367,7 @@ class Advisor:
         self._changed_at: tuple[int, float] | None = None   # (answer number, game s) of the last change
         self._last_ask: dict | None = None       # {"t", "counters"} when it was last asked
         self.opponent_history: list[dict] = []   # opponents.load: our past games against them
+        self.addendum = ""                       # postgame.addendum: how to beat this opponent, after the plan
 
     def poll(self, view: View, situation: dict) -> Advice | None:
         """Collect a finished answer, start a call if one is due, and return
@@ -389,8 +390,9 @@ class Advisor:
 
     def _start(self, view: View, situation: dict, now: float) -> None:
         prompt = {**build_prompt(view, situation), "memory": {**self.memory(), "since_last_ask": self._since(view, situation)}}
+        system = SYSTEM_PROMPT + ("\n\n" + self.addendum if self.addendum else "")
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": system},
             {"role": "user", "content": json.dumps(prompt, separators=(",", ":"), default=str)},
         ]
         self._last_call = now
