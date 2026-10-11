@@ -2,8 +2,12 @@
 
 Early (before ``EARLY_SCOUT_END_SECONDS``) two scouts take the left and the
 right path round the enemy's main base — out along a flank, then round its
-side to the back (``CIRCUIT_RADIUS_CELLS`` from their spawn) — to see every
-building (their opening: intel.py). They don't stop to fight on the way: a
+side, past the back and onto the other side — to see every building (their
+opening: intel.py). The left runs an outer ring (``CIRCUIT_OUTER_CELLS``
+from their spawn), the right an inner one through the base
+(``CIRCUIT_INNER_CELLS``), ``CIRCUIT_STAGGER_SECONDS`` behind: a scout sees
+about 5 cells, and one ring of 11 missed a second barracks at 1:48 (match
+6b457914). They don't stop to fight on the way: a
 scout dying back there after seeing the base was worth it. Once round, each
 pulls back to a picket post and is kept for later checks.
 
@@ -37,6 +41,8 @@ class ScoutCorps:
         self.visit: tuple[int, int] | None = None    # a one-off look (our expansion site)
         self.base_seen_at: float | None = None
         self._sent: dict[int, tuple[int, int]] = {}  # unit id -> waypoint last ordered
+        self._start_at: dict[str, float] = {}        # role -> when its circuit may set out (the stagger)
+        self._checks = 0                             # mid-game base checks run (they alternate rings)
 
     # -- what the rest of the agent reads ----------------------------------------
 
@@ -106,7 +112,8 @@ class ScoutCorps:
                 and not self._circling):
             role = next((r for r in ("left", "right") if r in self.roles), None)
             if role is not None:
-                self._start_circuit(view, role)
+                self._start_circuit(view, role, inner=self._checks % 2 == 1)   # outer, inner, outer, ...
+                self._checks += 1
                 self._last_check = view.game_seconds
 
     def orders(self, view: View, search: list | None = None) -> list[dict]:
@@ -179,9 +186,9 @@ class ScoutCorps:
         ax, ay = base[0] + dx * C.PICKET_ALONG, base[1] + dy * C.PICKET_ALONG
         return _reachable(view, _open_cell(view, (ax + px * spread * k, ay + py * spread * k)))
 
-    def circuit(self, view: View, side: int) -> list[tuple[int, int]]:
-        """Waypoints out along one flank, round that side of the enemy base to
-        its back."""
+    def circuit(self, view: View, side: int, radius: float = C.CIRCUIT_OUTER_CELLS) -> list[tuple[int, int]]:
+        """Waypoints out along one flank, round that side of the enemy base at
+        ``radius`` from their spawn, past the back onto the other side."""
         from .scout import _along, _open_cell
 
         base, enemy = view.base_center, enemy_spawn_guess(view)
@@ -198,7 +205,7 @@ class ScoutCorps:
             a = math.radians(deg)
             cx = ux * math.cos(a) + px * math.sin(a)
             cy = uy * math.cos(a) + py * math.sin(a)
-            points.append(_open_cell(view, (enemy[0] + cx * C.CIRCUIT_RADIUS_CELLS, enemy[1] + cy * C.CIRCUIT_RADIUS_CELLS)))
+            points.append(_open_cell(view, (enemy[0] + cx * radius, enemy[1] + cy * radius)))
         return [_reachable(view, q) for q in points]
 
     # -- internals ---------------------------------------------------------------
@@ -218,14 +225,22 @@ class ScoutCorps:
                 out.append(orders.move([u.id], list(p)))
         return out
 
-    def _start_circuit(self, view: View, role: str) -> None:
+    def _start_circuit(self, view: View, role: str, inner: bool | None = None) -> None:
         side = 1 if role in ("left", "p0") else -1
-        route = self.circuit(view, side)
+        if inner is None:
+            inner = role == "right"
+        route = self.circuit(view, side, C.CIRCUIT_INNER_CELLS if inner else C.CIRCUIT_OUTER_CELLS)
         if route:
             self._route[role] = route
             self._circling.add(role)
+            start = view.game_seconds
+            if role == "right" and "left" in self._start_at:   # staggered behind the left
+                start = max(start, self._start_at["left"] + C.CIRCUIT_STAGGER_SECONDS)
+            self._start_at[role] = start
 
     def _circuit_orders(self, view: View, role: str, u) -> list[dict]:
+        if view.game_seconds < self._start_at.get(role, 0.0):
+            return []                                # the stagger: not yet
         route = self._route.get(role) or []
         while route and (dist2(u.cell, route[0]) <= C.CIRCUIT_ARRIVED_CELLS ** 2):
             route.pop(0)

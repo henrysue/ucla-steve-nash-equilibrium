@@ -150,8 +150,9 @@ def test_scout_circuits_and_posts_are_reachable_on_real_maps(path):
     walk = terrain.walk_distances(view, [tuple(fx["base_center"])], 250)
     corps = ScoutCorps()
     for side in (1, -1):
-        for point in corps.circuit(view, side):
-            assert point in walk, (side, point)
+        for radius in (C.CIRCUIT_OUTER_CELLS, C.CIRCUIT_INNER_CELLS):
+            for point in corps.circuit(view, side, radius):
+                assert point in walk, (side, radius, point)
     for role in ("left", "p0", "p1", "right"):
         assert corps.post(view, role) in walk, role
 

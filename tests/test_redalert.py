@@ -3101,19 +3101,26 @@ def test_one_refinery_and_a_war_factory_early_reads_as_a_rush():
 def test_two_early_scouts_round_the_back_of_their_base_left_and_right():
     corps = ScoutCorps()
     v = dataclasses.replace(_view(_t=60.0), bounds=(0, 0, 96, 96))         # base [4,4], enemy [40,40], room behind
-    left, right = corps.circuit(v, 1), corps.circuit(v, -1)
-    assert left[0] != right[0] and left[1] != right[1]                      # one each side
+    left = corps.circuit(v, 1, C.CIRCUIT_OUTER_CELLS)
+    right = corps.circuit(v, -1, C.CIRCUIT_INNER_CELLS)
+    assert left[0] != right[0]                                              # one each side
+    d = lambda p: ((p[0] - 40) ** 2 + (p[1] - 40) ** 2) ** 0.5             # noqa: E731
+    assert all(12 <= d(p) <= 16 for p in left[1:])                          # the outer ring...
+    assert all(5 <= d(p) <= 9 for p in right[1:])                           # ...and the inner one, through the base
+    side = lambda p: (p[0] - 40) - (p[1] - 40)                              # noqa: E731  (which side of the base line)
     for route in (left, right):
-        back = route[-1]
-        assert 8 ** 2 <= (back[0] - 40) ** 2 + (back[1] - 40) ** 2 <= 13 ** 2       # round their base...
-        assert (back[0] - 4) ** 2 + (back[1] - 4) ** 2 > (40 - 4) ** 2 + (40 - 4) ** 2 - 300   # ...at its far side
+        assert any((p[0] - 4) ** 2 + (p[1] - 4) ** 2 > 2 * 36 ** 2 for p in route)   # round the back...
+        assert side(route[1]) * side(route[-1]) < 0                                  # ...and onto the other side
     rifles = [{"id": 30 + i, "type": "e1", "x": 5, "y": 5, "hp": 100, "idle": True} for i in range(3)]
     v = _view(_t=60.0, units=rifles)
     corps.update(v)
     assert set(corps.roles) == {"left", "right"} and corps._circling == {"left", "right"}
     near = [{"id": 80, "type": "e1", "x": 6, "y": 6, "hp": 100}]
     o = corps.orders(dataclasses.replace(v, enemy_units=read(_raw(visible_enemies=near)).enemy_units))
-    assert {tuple(x["to"]) for x in o} == {left[0], right[0]}                # no backing off on the circuit
+    assert [tuple(x["to"]) for x in o] == [corps._route["left"][0]]          # the right waits: staggered
+    later = dataclasses.replace(_view(_t=71.0, units=rifles), enemy_units=read(_raw(visible_enemies=near)).enemy_units)
+    o = corps.orders(later)
+    assert {tuple(x["to"]) for x in o} == {corps._route["left"][0], corps._route["right"][0]}   # no backing off
 
 
 def test_after_the_circuit_a_scout_holds_a_picket_post_and_backs_off_from_fighters():

@@ -88,6 +88,11 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
   the last sighting; modes dwell 40 s; the advisor's posture and read change
   only when two answers agree. With no trigger: build a 3000+ army, hold the
   massing point and pickets, then push and stay committed until the retreat rule.
+- **Scout rounds**: the left scout circles their base 14 cells out, the right
+  7 cells out (through it) 10 s later, each round its own side, past the back
+  and onto the other side; mid-game checks alternate the rings. On the three
+  real maps they see 74-75% of everything within 18 cells of the enemy spawn
+  (one ring of 11: 57-60%).
 - **Rush defense** (6b457914): one refinery seen after 1:40 is a suspicion
   worth the warning turret on the road in (no hold); one refinery plus an army
   of 1000+ seen before 4:00 is a rush read. An outnumbered army (under 0.8x
