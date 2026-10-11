@@ -103,6 +103,11 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
 - **The hunt** (c4caa45e: a barracks survived a 100-unit hunt): up to 8
   groups of 6+, every cell where we once knew an enemy building is a search
   point, and a point counts as checked within 5 cells (about sight).
+- **The army stays up front**: the massing point (and the rally points) no
+  longer pull back into the base when an enemy is remembered nearby (a passing
+  scout moved them for 90 s); the army fights what comes near and falls back
+  to its turret only when outnumbered. Concave slots move off cliffs, trees
+  and our buildings.
 - **An honest estimate** (f581756e: 3900 attacked "1040", really 2400-3700 in a
   defended base): no "smaller economy" discount (it halved the estimate for
   refineries we hadn't seen; a rusher spends everything on army anyway); a

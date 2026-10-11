@@ -138,17 +138,16 @@ def _massing_point(view: View) -> tuple[int, int] | None:
     ``STAGE_FRACTION`` of the way): ready to attack, between them and us.
     (Measured from the midpoint of the base and its nearest ore, it leaned
     toward the ore side — match a2952a6d massed away from the enemy; home
-    responders guard the harvesters.) If known enemies are near it,
-    ``STAGE_FALLBACK_CELLS`` only: never mass, or send reinforcements one by
-    one, into ground the enemy holds."""
+    responders guard the harvesters.) It stays there: the army up front
+    defends. It used to pull back into the base whenever an enemy unit was
+    remembered nearby (for 90 s after a scout passed), and the rally points
+    and the concave went with it; the army now fights what comes near it and
+    falls back to its turret only when outnumbered (executor._stage_forward)."""
     base = view.base_center
     toward = _enemy_side(view)
     if base is None or toward is None:
         return None
-    anchor = base
-    stage = _forward(view, anchor, toward, C.STAGE_FORWARD_CELLS, base)
-    if early_push_warning(view) or not stage_is_safe(view, stage):
-        stage = _forward(view, anchor, toward, C.STAGE_FALLBACK_CELLS, base)
+    stage = _forward(view, base, toward, C.STAGE_FORWARD_CELLS, base)
     return _clear_stage(view, stage, toward)
 
 

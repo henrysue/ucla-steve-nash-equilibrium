@@ -509,13 +509,20 @@ def _value(view: View, actors) -> float:
 def concave_slots(view: View, center, facing, n: int) -> list[tuple[int, int]]:
     """``n`` cells on an arc through ``center``, across the line to ``facing``,
     whose ends curve toward ``facing``: a concave, so every unit can fire into
-    the middle where the enemy arrives. Clamped to the map, de-duplicated."""
+    the middle where the enemy arrives. Clamped to the map, each moved to
+    the nearest open cell (not a cliff, tree or one of our buildings: units
+    sent there stopped wherever they got stuck), de-duplicated."""
     if facing is None or n <= 0:
         return [tuple(center)] if n > 0 else []
     dx, dy = facing[0] - center[0], facing[1] - center[1]
     length = (dx * dx + dy * dy) ** 0.5 or 1.0
     ux, uy = dx / length, dy / length          # toward the enemy
     px, py = -uy, ux                           # along the line
+    from .buildplan import _cells
+    taken = set(view.blocked_cells)
+    for b in view.buildings:
+        if b.cell is not None and not b.wreck:
+            taken.update(_cells(b.type, b.cell))
     slots: list[tuple[int, int]] = []
     for i in range(n):
         k = (i - (n - 1) / 2) * C.FORMATION_SPACING_CELLS
@@ -525,9 +532,20 @@ def concave_slots(view: View, center, facing, n: int) -> list[tuple[int, int]]:
         if view.bounds is not None:
             bx, by, bw, bh = view.bounds
             x, y = min(max(x, bx), bx + bw - 1), min(max(y, by), by + bh - 1)
+        x, y = _open_slot(view, (x, y), taken)
         if (x, y) not in slots:
             slots.append((x, y))
     return slots
+
+
+def _open_slot(view: View, cell, taken: set) -> tuple[int, int]:
+    """``cell``, or the nearest cell within 3 that no cliff, tree or building
+    of ours covers (``taken``)."""
+    if cell not in taken:
+        return cell
+    near = [(cell[0] + i, cell[1] + j) for i in range(-3, 4) for j in range(-3, 4)
+            if (cell[0] + i, cell[1] + j) not in taken]
+    return min(near, key=lambda c: dist2(c, cell)) if near else cell
 
 
 def _concave_orders(view: View, fighters, center, facing) -> list[dict]:
