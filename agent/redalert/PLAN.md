@@ -21,7 +21,8 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
   predicts their posture and first push early, and may set posture, route, expansion,
   army and raid targets, turret side, the waiting army's stance and the guard
   — each inside the rules' limits. Advice is validated and expires; safety
-  rules win. Haiku squad leads (`squadlead.py`) are off unless
+  rules win. Each call carries its memory: its first read of the enemy, its
+  last 4 answers, the read in effect, and our recent mode changes. Haiku squad leads (`squadlead.py`) are off unless
   `REDALERT_SQUAD_LEADS=on`.
 - **Logs**: `matchlog.py` writes a JSONL and a summary per match to
   `matchlogs/` (samples every 15 s, mode changes, refusals, advice, attacked

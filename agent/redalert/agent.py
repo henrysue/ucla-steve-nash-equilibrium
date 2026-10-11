@@ -94,6 +94,7 @@ class RedAlertAgent:
         self._harvest = HarvestManager()
         # Per-match review log (off unless a log directory is configured).
         self._matchlog = MatchLog(self._log, directory=log_dir)
+        self._mode_changes: list[dict] = []           # our army's recent mode changes (the advisor's memory)
         self._game_seconds: float | None = None
         # Flank route for the current attack (executor.choose_flank).
         self._flank_via: tuple[int, int] | None = None
@@ -179,6 +180,8 @@ class RedAlertAgent:
         # A blind attack call: a scout looks where their army masses first.
         self._patrol.look = scout.enemy_staging(view) if self._commander.wants_look else None
         if self._commander.changed:
+            self._mode_changes = (self._mode_changes + [
+                {"t": round(view.game_seconds), "to": str(self._mode)}])[-C.ADVISOR_MEMORY_READS - 2:]
             # While the raid squad holds their army, straight down the centre.
             self._flank_via = (None if self._mode is not Mode.ALL_IN or self._raid.distracting(view)
                                else self._pick_route(view, advice))
@@ -497,6 +500,7 @@ class RedAlertAgent:
             return self._advisor.poll(view, {
                 "mode": str(self._mode),
                 "mode_for_seconds": round(self._game_seconds - self._mode_since) if self._game_seconds else 0,
+                "mode_changes": list(self._mode_changes),
                 "confirming_attack": self._commander.confirming,
                 "massing_point": list(scout.choke_cell(view) or []) or None,
                 "ore_runway_seconds": (round(self._harvest.runway_seconds)

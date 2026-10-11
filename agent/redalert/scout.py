@@ -46,14 +46,27 @@ def our_yards(view: View) -> list[tuple[int, int]]:
 
 
 def early_under_attack(view: View) -> bool:
-    """An ``under_attack`` event before we have a real army is a cheese tell."""
-    if len(view.combat_units) >= 4:
+    """An ``under_attack`` event on something of ours at the main base
+    (within ``CHEESE_NEAR_BASE_CELLS``) before we have a real army is a cheese
+    tell. Our scouts shot at their base are not (82bdca3e: the sparring
+    seat's two scouts, hit at the enemy's massing point, flipped it into rush
+    defense at 2:47). The attacked actor is found by the event's id, else
+    its x/y; an event we can't place doesn't count."""
+    if len(view.combat_units) >= 4 or view.base_center is None:
         return False
+    ours = {a.id: a.cell for a in list(view.units) + list(view.buildings)
+            if a.id is not None and a.cell is not None and not a.wreck}
+    r2 = C.CHEESE_NEAR_BASE_CELLS ** 2
     for event in view.events:
         kind = str(event.get("kind") or event.get("type") or "").lower()
         tick = event.get("tick")
         fresh = not isinstance(tick, int) or view.tick - tick <= C.UNDER_ATTACK_FRESH_TICKS
-        if fresh and ("under_attack" in kind or "attacked" in kind):
+        if not (fresh and ("under_attack" in kind or "attacked" in kind)):
+            continue
+        cell = ours.get(event.get("id", event.get("actor_id")))
+        if cell is None and isinstance(event.get("x"), int) and isinstance(event.get("y"), int):
+            cell = (event["x"], event["y"])
+        if cell is not None and dist2(cell, view.base_center) <= r2:
             return True
     return False
 

@@ -60,6 +60,7 @@ class MatchLog:
         self._advice_count = 0
         self._squad_counts: dict[str, int] = {}
         self._first_seen: dict = {}            # enemy type -> (game s, kind, cell) first seen (summary)
+        self._attacks_logged = 0
         self._latencies: list[float] = []
         self._plans: list[dict] = []
 
@@ -217,6 +218,9 @@ class MatchLog:
             if not isinstance(seq, int) or seq <= self._last_event_seq:
                 continue
             self._last_event_seq = seq
+            if event.get("kind") == "under_attack" and self._attacks_logged < 30:
+                self._attacks_logged += 1
+                self._write("event_raw", {"t": round(t), **event})     # what the server sends, as sent
             if event.get("kind") in _EVENT_KINDS:
                 row = {"t": round(t), **{k: event.get(k) for k in ("kind", "type", "id")}}
                 self._buildings_lost.append(row)

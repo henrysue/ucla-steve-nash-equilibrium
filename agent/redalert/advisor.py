@@ -107,6 +107,13 @@ their base (~1:00-1:40), and say in plan when and from where you expect their fi
 An "aggressive" read puts up a warning turret on the road in (one before our war factory); keep \
 "unknown" until the scouts have actually seen their base.
 
+MEMORY (memory): first_read is your first read of this enemy, from the early scouting; \
+recent_reads your last answers, oldest first; in_effect the read and posture the engine acts on now. \
+situation.mode_changes are our army's recent moves (attack, retreat, defend). Build on them: keep \
+your read unless new evidence contradicts it, and when you change enemy_style or posture, name the \
+evidence in reasoning (what was seen, when). Track your first-push prediction: if it came, say how \
+it went; if it didn't, say what changed.
+
 YOUR READ:
 - enemy_style: what the enemy is playing, from their buildings, army and moves:
   "aggressive": early or repeated pushes, 2+ barracks or an early war factory on one refinery, units \
@@ -324,6 +331,10 @@ class Advisor:
         self._steady_values: dict = {k: getattr(Advice(made_at=0.0), k) for k in STEADY_FIELDS}
         self._advice: Advice | None = None
         self.calls = 0
+        # Its memory, sent with every call (memory()): the first read once the
+        # scouts had seen their base, and its last few answers as given.
+        self.first_read: dict | None = None
+        self._reads: list[dict] = []
 
     def poll(self, view: View, situation: dict) -> Advice | None:
         """Collect a finished answer, start a call if one is due, and return
@@ -345,9 +356,10 @@ class Advisor:
     # -- internals -------------------------------------------------------------
 
     def _start(self, view: View, situation: dict, now: float) -> None:
+        prompt = {**build_prompt(view, situation), "memory": self.memory()}
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": json.dumps(build_prompt(view, situation), separators=(",", ":"), default=str)},
+            {"role": "user", "content": json.dumps(prompt, separators=(",", ":"), default=str)},
         ]
         self._last_call = now
         self._asked_at = now
@@ -357,6 +369,24 @@ class Advisor:
             self._provider.complete_structured, messages, "red_alert_advice", ADVICE_SCHEMA,
             timeout=C.ADVISOR_TIMEOUT_SECONDS, effort="none",
         )
+
+    def memory(self) -> dict:
+        """What it said before, so its read stays consistent and changes on
+        evidence: its first read of the enemy (once our scouts had seen them),
+        its last ``ADVISOR_MEMORY_READS`` answers (as given), and the read and
+        posture in effect (two answers must agree before one takes effect)."""
+        return {
+            "first_read": self.first_read,
+            "recent_reads": self._reads[-C.ADVISOR_MEMORY_READS:],
+            "in_effect": dict(self._steady_values),
+        }
+
+    def _remember(self, advice: "Advice") -> None:
+        read = {"t": round(advice.made_at), "enemy_style": advice.enemy_style, "posture": advice.posture,
+                "balance": advice.balance, "plan": (advice.plan or "")[:240]}
+        self._reads = (self._reads + [read])[-2 * C.ADVISOR_MEMORY_READS:]
+        if self.first_read is None and advice.enemy_style != "unknown":
+            self.first_read = {**read, "reasoning": (advice.reasoning or "")[:240]}
 
     def _steady(self, advice: "Advice") -> "Advice":
         """Its posture, read, balance, expand and route take effect only when
@@ -383,6 +413,7 @@ class Advisor:
         advice = parse_advice(answer, view, self._asked_game_seconds)
         if advice is None:
             return
+        self._remember(advice)
         advice = self._steady(advice)
         self._advice = advice
         if self._on_advice is not None:

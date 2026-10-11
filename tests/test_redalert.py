@@ -676,9 +676,18 @@ def test_a_small_raid_mid_game_does_not_recall_the_army():
 
 
 def test_an_old_under_attack_event_is_not_a_fresh_threat():
-    old = _view(tick=5000, events=[{"seq": 1, "tick": 1000, "kind": "under_attack"}])
-    fresh = _view(tick=5000, events=[{"seq": 1, "tick": 4900, "kind": "under_attack"}])
+    harv = [{"id": 20, "type": "harv", "x": 6, "y": 6, "hp": 100}]
+    old = _view(tick=5000, units=harv, events=[{"seq": 1, "tick": 1000, "kind": "under_attack", "id": 20}])
+    fresh = _view(tick=5000, units=harv, events=[{"seq": 1, "tick": 4900, "kind": "under_attack", "id": 20}])
     assert scout.detect_cheese(old) is None and scout.detect_cheese(fresh) is not None
+
+
+def test_our_scouts_shot_at_their_base_are_not_a_rush():
+    scouts = [{"id": 30, "type": "e1", "x": 38, "y": 38, "hp": 60}, {"id": 31, "type": "e1", "x": 36, "y": 39, "hp": 100}]
+    shot = _view(_t=167.0, tick=4200, units=scouts, events=[{"seq": 1, "tick": 4190, "kind": "under_attack", "id": 30}])
+    assert scout.detect_cheese(shot) is None                                  # far from our base (82bdca3e)
+    unplaced = _view(_t=167.0, tick=4200, units=scouts, events=[{"seq": 1, "tick": 4190, "kind": "under_attack"}])
+    assert scout.detect_cheese(unplaced) is None                              # nowhere we can place it
 
 
 def test_units_only_spend_what_the_economy_does_not_need():
@@ -4926,3 +4935,49 @@ def test_concave_slots_stick_and_a_new_unit_does_not_reshuffle_the_line():
     o2 = executor._concave_orders(v2, v2.combat_units, (20, 20), (40, 40))
     assert o2 and all(x["units"] == [200] for x in o2)                             # only the newcomer moves
     assert all(executor._SLOTS["of"][i] == s for i, s in slot.items())             # everyone kept their slot
+
+
+def test_the_advisor_remembers_its_first_read_and_its_last_answers():
+    asked = []
+
+    class Recorder(_FakeProvider):
+        def complete_structured(self, messages, name, schema, *, timeout, effort):
+            asked.append(json.loads(messages[1]["content"])["memory"])
+            return super().complete_structured(messages, name, schema, timeout=timeout, effort=effort)
+
+    import json
+    answers = [{**_ANSWER, "enemy_style": "unknown", "plan": "scouts on the way"},
+               {**_ANSWER, "enemy_style": "aggressive", "plan": "one refinery, two barracks: push at 2:40",
+                "reasoning": "proc x1, barr x2 at 1:30"},
+               {**_ANSWER, "enemy_style": "aggressive", "plan": "hold for the push"}]
+    provider = Recorder(answers[0])
+    adv = ra_advisor.Advisor(provider, log=lambda *_: None, clock=lambda: 0.0, interval=0.0)
+    for i, answer in enumerate(answers + [answers[-1]]):
+        provider.answer = answer
+        adv.poll(_view(_t=60.0 + 15 * i), {})
+        if adv._future is not None:
+            adv._future.result()
+    adv.poll(_view(_t=125.0), {})
+    first = asked[0]
+    assert first == {"first_read": None, "recent_reads": [], "in_effect": first["in_effect"]}   # nothing yet
+    last = asked[-1]
+    assert last["first_read"]["enemy_style"] == "aggressive" and last["first_read"]["t"] == 75   # the scouts' read
+    assert "two barracks" in last["first_read"]["plan"] and last["first_read"]["reasoning"]
+    assert [r["enemy_style"] for r in last["recent_reads"]] == ["unknown", "aggressive", "aggressive"]
+    assert last["in_effect"]["enemy_style"] == "aggressive"                    # two agreed: it acts on it
+
+
+def test_the_advisor_sees_our_recent_mode_changes():
+    seen = {}
+
+    class Spy:
+        def poll(self, view, situation):
+            seen.update(situation)
+            return None
+        def close(self):
+            pass
+
+    agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0, advisor_factory=lambda log, on_advice: Spy())
+    agent.choose_action(_state(_t=300.0, buildings=BASE, units=_raid_army(2, 6)), CTX)
+    agent.choose_action(_state(_t=301.0, buildings=BASE, units=_raid_army(2, 6)), CTX)   # it is asked before deciding
+    assert seen["mode_changes"] and seen["mode_changes"][-1] == {"t": 300, "to": str(agent._mode)}
