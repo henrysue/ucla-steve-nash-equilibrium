@@ -80,7 +80,8 @@ class MatchLog:
         mode_s = str(mode)
         if mode_s != self._last_mode:
             row = {"t": round(t), "from": self._last_mode, "to": mode_s,
-                   "army": round(view.army_value), "enemy_seen": round(view.enemy_army_value)}
+                   "army": round(view.army_value), "enemy_seen": round(view.enemy_army_value),
+                   "enemy_estimate": round(_estimate(view))}
             self._modes.append(row)
             self._write("mode", row)
             self._last_mode = mode_s
@@ -182,6 +183,7 @@ class MatchLog:
             "power": [round(view.power_provided), round(view.power_drained)],
             "army": round(view.army_value),
             "enemy_seen": round(view.enemy_army_value),
+            "enemy_estimate": round(_estimate(view)),       # what attacks and retreats are weighed against
             "enemy_buildings_known": len(view.known_enemy_buildings),
             "combat_units": len(view.combat_units),
             "kills_cost": round(view.kills_cost),
@@ -274,3 +276,12 @@ class MatchLog:
         lines += ["", "## Refused orders", ""]
         lines += [f"- {c} ({r}): {n}" for (c, r), n in self._refusals.most_common()] or ["- none"]
         return "\n".join(lines) + "\n"
+
+
+def _estimate(view) -> float:
+    from .brain import enemy_estimate
+
+    try:
+        return enemy_estimate(view)
+    except Exception:   # noqa: BLE001 - the log must never break the game
+        return 0.0

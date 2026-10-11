@@ -181,6 +181,8 @@ def _army_edge(view: View) -> float:
 def _attack_threshold(view: View) -> float:
     """Edge required to commit. Lower late (anti-passivity: being ahead at the
     tiebreak requires acting), higher early (don't throw away the deathball)."""
+    if _catching_up(view):
+        return C.CATCH_UP_ARMY_EDGE      # behind at the end: a coin flip beats a sure loss
     if view.game_seconds >= C.ESCALATE_AFTER_SECONDS:
         return C.ESCALATED_ARMY_EDGE
     return C.ATTACK_ARMY_EDGE

@@ -103,6 +103,10 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
 - **The hunt** (c4caa45e: a barracks survived a 100-unit hunt): up to 8
   groups of 6+, every cell where we once knew an enemy building is a search
   point, and a point counts as checked within 5 cells (about sight).
+- **No coin-flip attacks late** (ef66403c: both seats attacked at ~1.0x after
+  7:00 and retreated within 5-7 s; seat 0's retreat was chased into its base):
+  the late attack bar is 1.2x the estimate (1.3x before 7:00), 1.0x only when
+  behind at the end. The estimate is logged with every sample and mode change.
 - **Even games keep expanding** (ef66403c: one expansion each until 9:30 at
   even trades, with the first three fields running dry around 9:00): with
   kills - losses within 2000 the advisor's "wait" doesn't hold the next

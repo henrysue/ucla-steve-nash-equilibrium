@@ -185,8 +185,10 @@ def test_all_in_with_a_clear_edge():
 
 
 def test_anti_passivity_escalates_late():
-    early = _view(buildings=BASE, _t=120.0, military={"army_value": 3300, "visible_enemy_value": 3000})
-    late = _view(buildings=BASE, _t=500.0, military={"army_value": 3300, "visible_enemy_value": 3000})
+    early = _view(buildings=BASE, _t=120.0, military={"army_value": 3700, "visible_enemy_value": 3000})
+    late = _view(buildings=BASE, _t=500.0, military={"army_value": 3700, "visible_enemy_value": 3000})
+    parity = _view(buildings=BASE, _t=500.0, military={"army_value": 3100, "visible_enemy_value": 3000})
+    assert brain.choose_mode(parity, cheese_since=None) is Mode.BUILD     # 1.03x late: no coin flip (ef66403c)
     assert brain.choose_mode(early, cheese_since=None) is Mode.BUILD
     assert brain.choose_mode(late, cheese_since=None) is Mode.ALL_IN
 
