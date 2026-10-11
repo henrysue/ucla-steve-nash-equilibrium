@@ -88,23 +88,26 @@ def next_build_orders(view: View, expansion_ore: tuple[int, int] | None = None,
         if proc and view.queued_count(proc) == 0:
             return [orders.build(proc)]
 
-    # Interrupt 2b: production to spend on, the way pros do it — more
-    # barracks (infantry-heavy army), and a second war factory only with a
-    # big bank. Barracks follow BARRACKS_SCHEDULE; a big bank skips it.
+    # Interrupt 2b: production matched to the army we want. Each queue
+    # (infantry, vehicles) builds one item at a time and every extra building
+    # of its kind only speeds it up, so the vehicle queue — tanks, harvesters,
+    # the MCV and siege units in one line — is the bottleneck for the pros'
+    # ~half-tank army: a second war factory once the service depot stands
+    # (from SECOND_FACTORY_SECONDS, money for it in hand), and barracks only
+    # up to MAX_BARRACKS (they used to reach 5 while tanks lagged and the
+    # infantry was held back for them).
     money = view.cash + view.ore
     if view.has_building(C.WAR_FACTORY) and not recovering(view):
-        very = money >= C.FUNDS_VERY_RICH
+        weap = _available(view, C.WAR_FACTORY)
+        cost = view.unit_costs.get(weap or "") or C.KNOWN_COSTS.get(C.WAR_FACTORY, C.DEFAULT_UNIT_COST)
+        second = (view.has_building(C.SERVICE_DEPOT) and view.game_seconds >= C.SECOND_FACTORY_SECONDS
+                  and money >= cost)
+        if weap and _count_built_and_queued(view, (C.WAR_FACTORY,)) < (C.MAX_WAR_FACTORIES if second else 1):
+            return [orders.build(weap)]
         rax = _available(view, C.BARRACKS)
         if rax and money >= C.BARRACKS_ADD_FUNDS and not any(view.queued_count(b) for b in C.BARRACKS):
-            if _count_built_and_queued(view, C.BARRACKS) < (C.MAX_BARRACKS if very else barracks_target(view)):
+            if _count_built_and_queued(view, C.BARRACKS) < barracks_target(view):
                 return [orders.build(rax)]
-        weap = _available(view, C.WAR_FACTORY)
-        # A second war factory once money piles up mid-game: the bank is
-        # production we failed to build (match c2fec761 sat on 3000-5700).
-        banked = money >= C.FUNDS_RICH and view.game_seconds >= C.SECOND_FACTORY_SECONDS
-        cap = C.MAX_WAR_FACTORIES_VERY_RICH if (very or banked) else C.MAX_WAR_FACTORIES
-        if weap and _count_built_and_queued(view, (C.WAR_FACTORY,)) < cap:
-            return [orders.build(weap)]
 
     # Interrupt 2d: radar dome for the end game (unlocks siege units).
     from .brain import outgunned

@@ -100,14 +100,13 @@ class EnemyMemory:
         return [m.actor for m in self._known.values() if m.building]
 
     def army_value(self, costs: dict[str, float]) -> float:
-        """The value of every enemy combat unit we remember (visible or not),
-        plus the enemy defenses we know of: an attack into pillboxes is a
-        fight against them too (match 01930376: seat 1 rated 7700 vs 1100 and
-        attacked into two pillboxes for 2 minutes, losing 8000 to kill 2200)."""
+        """The value of every enemy combat unit we remember (visible or not).
+        Units only: turrets don't walk to our base, so they don't read as a
+        rush or put us "behind on army"; they count where we attack, in
+        the fight judgment (brain.attack_odds, match 01930376: two pillboxes)."""
         skip = set(C.HARVESTER) | {C.MCV}
-        units = sum(costs.get(a.type, C.DEFAULT_UNIT_COST) for a in self.units if a.type not in skip)
-        defenses = sum(costs.get(a.type, C.DEFAULT_UNIT_COST) for a in self.buildings if a.type in C.DEFENSES)
-        return units + defenses
+        return sum(costs.get(a.type) or C.KNOWN_COSTS.get(a.type, C.DEFAULT_UNIT_COST)
+                   for a in self.units if a.type not in skip)
 
     def apply(self, view: View) -> View:
         """``view`` with the enemy army value raised to what we remember and

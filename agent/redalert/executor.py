@@ -76,18 +76,14 @@ def plan(
                               units_first=getattr(advice, "balance", None) == "more_army")
     out += list(scout_orders)
     out += list(raid_orders)
-    response, responders = home_response(view, mode, scout_id, frozenset(raid_ids) | clearing_ids)
+    # The base's defense, one handler: idle units answer what comes near them;
+    # the army's own fight, a push coming and massing are _army_home's.
+    response, responders = respond(view, mode, scout_id, frozenset(raid_ids) | clearing_ids, attacked or [], advice)
     out += response
-    # Hit back: idle fighters near a spot of ours attacked or lost moments ago.
-    hit_back, hitters = retaliate_orders(view, attacked or [], scout_id,
-                                         frozenset(raid_ids) | clearing_ids | responders)
-    out += hit_back
-    responders = responders | hitters
     # The massing point stays at the main choke (an MCV on the road gets the
     # outpost, not the army); it edges forward while an attack is confirmed.
-    stage = probe
     out += _army_orders(view, mode, scout_id, reserved=frozenset(raid_ids) | clearing_ids | responders, advice=advice,
-                        flank_via=flank_via, stage_override=stage, hunt=hunt, hunt_points=hunt_points, fan=fan)
+                        flank_via=flank_via, stage_override=probe, hunt=hunt, hunt_points=hunt_points, fan=fan)
     return _keep_clear(out, placed, clearing_ids)
 
 
@@ -258,10 +254,8 @@ def _production_orders(view: View, mode: Mode, *, sparring=None, threat: bool = 
     # at zero all game (matches b7fcbd4e, 654f1b2e, 159f4f11).
     depth = 1 if broke else min(C.MAX_QUEUE_DEPTH, C.FUNDS_VERY_RICH_DEPTH if very_rich else 2)
 
-    # Infantry-heavy, like the pro replays: riflemen and rocket soldiers (~3:1)
-    # from every barracks, tanks as support from one war factory. More
-    # barracks build faster, so the infantry queue runs deeper with each.
-    barracks = sum(1 for b in view.buildings if b.type in C.BARRACKS and not b.wreck)
+    # The pros' mix: riflemen and rocket soldiers (~3:1) and about half the
+    # army's value in main battle tanks.
     # Against a turtle (several known defenses, e.g. flame towers that shred
     # infantry): fewer riflemen per batch, a deeper tank queue, siege units.
     turtle = len(enemy_defenses(view)) >= C.TURTLE_DEFENSES
@@ -379,9 +373,6 @@ def _army_orders(
     if not combat:
         return []
 
-    if mode in DEFENSIVE:
-        return _rally_home(view, combat)
-
     if mode is Mode.RETREAT:
         return _retreat(view, scout_id, reserved)
 
@@ -424,7 +415,7 @@ def _army_orders(
             return [{**view.attack_now, "units": units}] if units else []
         return []
 
-    return _stage_forward(view, scout_id, reserved, advice, stage_override)  # OPEN / BUILD: mass at the choke, not in the base
+    return _army_home(view, mode, scout_id, reserved, stage_override)   # OPEN / BUILD / DEFEND / PROTECT_LEAD
 
 
 def _gather_stragglers(view: View, units: list[int], target, stage) -> tuple[list[int], list[dict]]:
@@ -483,131 +474,175 @@ def _fan_out(view: View, units: list[int], points: list) -> list[dict]:
     return out
 
 
-def _rally_home(view: View, combat: list[int]) -> list[dict]:
-    """Defend the base: attack-move onto the nearest enemy near it, else
-    gather at the base centre.
-
-    Going to the centre alone left the army idle while the enemy shot
-    buildings at the edge of the base, out of its range (match 9a9cd98e: 200 s
-    "defending" with 10-16 units while three war factories died).
-    """
-    if view.base_center is None:
-        return []
-    threats = [a for a in scout.enemy_threat_near_base(view) if a.cell is not None]
-    if threats:
-        yards = scout.our_yards(view)   # the threat nearest any of our yards (expansions too)
-        rally = min(threats, key=lambda a: min(dist2(a.cell, y) for y in yards)).cell
-    else:
-        rally = view.base_center
-    return [orders.attack_move(combat[:orders.MAX_UNITS_PER_ORDER], list(rally))]
-
-
 def _retreat(view: View, scout_id: int | None, reserved: frozenset = frozenset()) -> list[dict]:
-    """Pull every fighter not yet back to the staging point (else home): a
-    fighting withdrawal. Attack-move only: a plain ``move`` let units be shot
-    in the back by longer-ranged enemies without answering.
-    """
-    point = scout.choke_cell(view) or view.base_center
+    """Pull every fighter not yet back to the main base's line
+    (scout.home_line): a plain move, to break off — an attack-move stops to
+    shoot every chaser in range and never gets away. At the line our turrets
+    fight with us and the units turn (their stance)."""
+    point = scout.home_line(view) or view.base_center
     if point is None:
         return []
     r2 = C.REGROUP_RADIUS_CELLS ** 2
     away = [u.id for u in _fighters(view, scout_id, reserved) if dist2(u.cell, point) > r2]
-    return [orders.attack_move(away[:orders.MAX_UNITS_PER_ORDER], list(point))] if away else []
+    return [orders.move(away[:orders.MAX_UNITS_PER_ORDER], list(point))] if away else []
 
 
-def _stage_forward(
-    view: View, scout_id: int | None = None, reserved: frozenset = frozenset(), advice=None,
-    stage_override: tuple[int, int] | None = None,
-) -> list[dict]:
-    """While massing, gather at the massing point (scout.choke_cell; an
-    override while escorting an MCV or edging forward to confirm an attack)
-    in a concave facing the enemy base (:func:`concave_slots`); a handful of
-    units just attack-move there.
+# -- the base's defense: one handler -------------------------------------------
+#
+# Everything that comes at us is answered in one place, by one rule each:
+#
+# - the army at home (massing, defending, protecting a lead): a fight in
+#   contact with it or the main base is the army's (army_contact) — it attacks
+#   when the odds favour it, else holds the main line with the turrets; a push
+#   seen coming has it ready at that line (scout.incoming_push); otherwise the
+#   concave at the massing point (_army_home);
+# - anything else near us — a small group, a poke at the concave, a raid on the
+#   trucks, a spot we were hit at with no attacker in sight — draws the idle
+#   units nearby (respond).
+#
+# Every fight is judged the same (strength.odds). The army never walks out to
+# an expansion: its outpost, turret and nearby units hold it.
 
-    The rules own staging: the advisor's ``stage_at`` and ``stage_facing``
-    are not used (match a2952a6d: it massed the army back toward our own ore
-    field and turned the concave to face our base)."""
-    stage = stage_override or scout.choke_cell(view)
-    if stage is None:
+
+def enemy_groups(view: View) -> list[list]:
+    """The enemy fighters we see (no harvesters), grouped: each within
+    ``GROUP_CELLS`` of another member of its group."""
+    foes = [a for a in view.enemy_units if a.cell is not None and not a.wreck and a.type not in C.HARVESTER]
+    groups: list[list] = []
+    r2 = C.GROUP_CELLS ** 2
+    for a in foes:
+        joined = [g for g in groups if any(dist2(a.cell, b.cell) <= r2 for b in g)]
+        merged = [a] + [b for g in joined for b in g]
+        groups = [g for g in groups if g not in joined] + [merged]
+    return groups
+
+
+def _centre(actors) -> tuple[int, int]:
+    cells = [a.cell for a in actors if a.cell is not None]
+    return round(sum(c[0] for c in cells) / len(cells)), round(sum(c[1] for c in cells) / len(cells))
+
+
+def _main_cells(view: View) -> list[tuple[int, int]]:
+    """The main base: its centre, its buildings and the harvesters near it."""
+    base = view.base_center
+    if base is None:
         return []
-    fighters = _fighters(view, scout_id, reserved)
-    # More than a small raid near the massing army: it fights instead of
-    # standing in formation (08560d9b lost 5100 to 1500 in BUILD while tanks
-    # and artillery shot the concave from outside its range). Measured from
-    # the fighters: the massing point itself falls back when enemies come.
-    # A small raid is the home response's (two riflemen).
-    cells = [u.cell for u in fighters if u.cell is not None] or [stage]
-    # A real push at any of our bases (yards, refineries) is the army's fight
-    # too, not just one near the army: match c7a982ac's 75 units watched a
-    # refinery die 17 cells away (they counted as "home defenders", so the
-    # defend rule never fired; the raid response stops at 1500).
-    cells += [b.cell for b in view.buildings if b.cell is not None and not b.wreck
-              and b.type in (C.CONSTRUCTION_YARD, C.REFINERY)]
-    target = fight_near(view, cells)
-    if fighters and target is not None:
-        ids = [u.id for u in fighters][:orders.MAX_UNITS_PER_ORDER]
-        near = _enemies_near(view, cells)
-        ours = sum(view.unit_costs.get(u.type, C.KNOWN_COSTS.get(u.type, C.DEFAULT_UNIT_COST)) for u in fighters)
-        # By strength, not price (riflemen barely scratch tanks): short of a
-        # clear edge, meet the push at our turret line, where the turrets,
-        # buildings and new units fight with us (52a77fb1 met 3 medium tanks
-        # and 7 infantry 5 cells in front of its pillboxes and lost 6400 to
-        # 2200; 6b457914 charged 22 rushers with 9 units and lost 1300 to 300).
-        firm = strength.edge([u.type for u in fighters], [a.type for a in near])
-        outnumbered = ours < C.ENGAGE_MIN_RATIO * _value(view, near)
-        if view.base_center is not None and (outnumbered or (firm < C.ENGAGE_MIN_EDGE and _home_turret(view, near))):
-            return [orders.attack_move(ids, list(_fallback_point(view, near)))]
-        return [orders.attack_move(ids, list(target))]
-    # Guard: anything that comes at the massing army — even a small group, or
-    # units shooting from just outside the defend stance's range — is met by
-    # every idle unit, in one order (the batch has room for it); units already
-    # walking keep going, and the guards walk back to their slots once it is
-    # dead (3bd6e450: the army stood still while it was shot at). The advisor
-    # may switch it off ("guard": "off").
-    r2 = C.GUARD_RADIUS_CELLS ** 2
-    mine = [u for u in fighters if u.cell is not None]
-    close = [a for a in view.enemy_units if a.cell is not None and not a.wreck and a.type not in C.HARVESTER
-             and (dist2(a.cell, stage) <= r2 or any(dist2(a.cell, u.cell) <= r2 for u in mine))]
-    guard_orders: list[dict] = []
-    guards = [u for u in mine if u.idle][:orders.MAX_UNITS_PER_ORDER]
-    if close and guards and getattr(advice, "guard", "on") != "off":
-        cx = sum(a.cell[0] for a in close) / len(close)
-        cy = sum(a.cell[1] for a in close) / len(close)
-        nearest = min(close, key=lambda a: dist2(a.cell, (cx, cy)))
-        guard_orders = [orders.attack_move([u.id for u in guards], list(nearest.cell))]
-        taken = {u.id for u in guards}
-        fighters = [u for u in fighters if u.id not in taken]
-    # A push our scouts see coming through our half: set up across its path,
-    # between it and the base it heads for, before it arrives — when we are
-    # at least as strong (else the turret line takes it, above).
-    if stage_override is None:
-        incoming = scout.incoming_push(view)
-        if incoming is not None:
-            point, facing, group = incoming
-            stage = point                  # our turret line (else building line) facing them
-            if len(fighters) >= 3:
-                return guard_orders + _concave_orders(view, fighters, stage, facing)
-    # Massing (and holding at home) is always a concave facing the enemy's
-    # approach: every unit can fire into the middle where they arrive.
+    r2 = C.CHEESE_NEAR_BASE_CELLS ** 2
+    cells = [base] + [b.cell for b in view.buildings if b.cell is not None and not b.wreck
+                      and dist2(b.cell, base) <= C.BUILD_RADIUS_CELLS ** 2]
+    return cells + [h.cell for h in view.units_of(C.HARVESTER) if h.cell is not None and dist2(h.cell, base) <= r2]
+
+
+def army_contact(view: View, fighters, defending: bool = False) -> list:
+    """The army's own fight: enemy fighters within ``STAGE_ENGAGE_CELLS`` of
+    the army or the main base (buildings, trucks) worth more than a small
+    raid — any of them while ``defending`` (a defend mode: the threat is
+    real). Empty otherwise (a small group is the idle units' job: respond)."""
+    near = _enemies_near(view, [u.cell for u in fighters if u.cell is not None] + _main_cells(view))
+    return near if near and (defending or _value(view, near) > C.SMALL_RAID_VALUE) else []
+
+
+def respond(view: View, mode: Mode, scout_id: int | None, reserved: frozenset, hits=(), advice=None,
+            ) -> tuple[list[dict], set]:
+    """The idle units answer what comes near them: each enemy group draws
+    every idle fighter within ``RESPOND_RADIUS_CELLS`` of it (a small group
+    at the main base also the idle units at home), and each spot we were hit
+    at in the last ``RETALIATE_SECONDS`` with no attacker in sight
+    (agent.DamageScan: artillery out of sight, a raider gone) draws the idle
+    units near it. One attack-move per target. While the army is home, its
+    own fight (army_contact) is left to it. ``advice.guard`` "off" keeps the
+    concave's units out of it. Returns (orders, unit ids used)."""
+    from .guard import _at_home
+
+    if mode is Mode.RETREAT:
+        return [], set()
+    idle = [u for u in view.combat_units if u.idle and u.id is not None and u.cell is not None
+            and u.id != scout_id and u.id not in reserved]
+    if not idle:
+        return [], set()
+    if getattr(advice, "guard", "on") == "off":
+        stage = scout.choke_cell(view)
+        if stage is not None:
+            idle = [u for u in idle if dist2(u.cell, stage) > C.STAGING_RADIUS_CELLS ** 2 * 4]
+    army_fight: set = set()
+    if mode not in AGGRESSIVE:
+        army_fight = {a.id for a in army_contact(view, _fighters(view, scout_id, reserved), mode in DEFENSIVE)}
+    r2 = C.RESPOND_RADIUS_CELLS ** 2
+    main = _main_cells(view)
+    targets: list[tuple[tuple[int, int], bool]] = []          # (cell, small group at the main base)
+    groups = [g for g in enemy_groups(view) if not any(a.id in army_fight for a in g)]
+    for g in sorted(groups, key=lambda g: -_value(view, g)):
+        centre = _centre(g)
+        cell = min(g, key=lambda a: dist2(a.cell, centre)).cell
+        small_home = (_value(view, g) <= C.SMALL_RAID_VALUE
+                      and any(dist2(a.cell, c) <= C.HOME_RAID_RADIUS_CELLS ** 2 for a in g for c in main))
+        targets.append((cell, small_home))
+    seen = [a.cell for g in enemy_groups(view) for a in g]
+    for spot in hits:
+        if all(dist2(spot, c) > C.GROUP_CELLS ** 2 for c in seen) and all(dist2(spot, t) > 36 for t, _ in targets):
+            targets.append((tuple(spot), False))
+    out, used = [], set()
+    for cell, small_home in targets:
+        near = [u for u in idle if u.id not in used
+                and (dist2(u.cell, cell) <= r2 or (small_home and _at_home(view, u.cell)))]
+        if not near:
+            continue
+        ids = [u.id for u in near][:orders.MAX_UNITS_PER_ORDER]
+        out.append(orders.attack_move(ids, list(cell)))
+        used.update(ids)
+    return out, used
+
+
+def _army_home(view: View, mode: Mode, scout_id: int | None = None, reserved: frozenset = frozenset(),
+               stage_override: tuple[int, int] | None = None) -> list[dict]:
+    """The army at home — massing, defending the base, protecting a lead —
+    one decision, first match:
+
+    1. In a fight (:func:`army_contact`): attack-move at them when the odds
+       favour us (``ENGAGE_MIN_EDGE``, strength.odds), else hold the main
+       base's line facing them (scout.home_line: just behind our turret),
+       where turrets, buildings and new units fight with us (52a77fb1 met a
+       push 5 cells in front of its pillboxes and lost 6400 to 2200).
+    2. A push seen coming (scout.incoming_push): ready at that line, facing it.
+    3. Otherwise the concave at the massing point (``stage_override``: the
+       point it edges to while an attack call is confirmed) — at the main
+       line while defending the base (a defend mode).
+
+    The rules own staging (match a2952a6d: the advisor massed the army toward
+    our own ore and faced it at our base)."""
+    fighters = [u for u in _fighters(view, scout_id, reserved) if u.cell is not None]
+    if not fighters:
+        return []
+    defending = mode in DEFENSIVE
+    contact = army_contact(view, fighters, defending)
+    if contact:
+        centre = _centre(contact)
+        if strength.odds(view, [u.type for u in fighters], [a.type for a in contact]) >= C.ENGAGE_MIN_EDGE:
+            base = view.base_center or centre
+            target = min(contact, key=lambda a: dist2(a.cell, base)).cell
+            return [orders.attack_move([u.id for u in fighters][:orders.MAX_UNITS_PER_ORDER], list(target))]
+        line = scout.home_line(view, centre)
+        if line is not None:
+            return _form(view, fighters, line, centre, everyone=True)
+    push = scout.incoming_push(view)
+    if push is not None:
+        point, facing, _ = push
+        return _form(view, fighters, point, facing, everyone=True)
+    if defending:
+        line = scout.home_line(view)
+        return _form(view, fighters, line, enemy_spawn_guess(view), everyone=True) if line is not None else []
+    stage = stage_override or scout.choke_cell(view)
+    return _form(view, fighters, stage, enemy_spawn_guess(view)) if stage is not None else []
+
+
+def _form(view: View, fighters, point, facing, everyone: bool = False) -> list[dict]:
+    """The concave at ``point`` facing ``facing``; a handful just walk there
+    (the idle ones, or ``everyone`` when the army must be there now)."""
     if len(fighters) >= 3:
-        return guard_orders + _concave_orders(view, fighters, stage, enemy_spawn_guess(view))
+        return _concave_orders(view, fighters, point, facing)
     r2 = C.STAGING_RADIUS_CELLS ** 2
-    movers = [u.id for u in fighters if u.idle and dist2(u.cell, stage) > r2]
-    return guard_orders + ([orders.attack_move(movers[:orders.MAX_UNITS_PER_ORDER], list(stage))] if movers else [])
-
-
-def fight_near(view: View, cells) -> tuple[int, int] | None:
-    """A real fight at these cells: enemy fighters worth more than a small
-    raid within ``STAGE_ENGAGE_CELLS`` of any of them. The cell of the one
-    nearest their middle, else None (a raid is the home response's)."""
-    cells = [c for c in cells if c is not None]
-    if not cells:
-        return None
-    near = _enemies_near(view, cells)
-    if _value(view, near) <= C.SMALL_RAID_VALUE:
-        return None
-    centre = (sum(c[0] for c in cells) / len(cells), sum(c[1] for c in cells) / len(cells))
-    return min(near, key=lambda a: dist2(a.cell, centre)).cell
+    movers = [u.id for u in fighters if (everyone or u.idle) and dist2(u.cell, point) > r2]
+    return [orders.attack_move(movers[:orders.MAX_UNITS_PER_ORDER], list(point))] if movers else []
 
 
 def _enemies_near(view: View, cells) -> list:
@@ -617,61 +652,8 @@ def _enemies_near(view: View, cells) -> list:
             and any(dist2(a.cell, c) <= r2 for c in cells if c is not None)]
 
 
-def retaliate_orders(view: View, attacked, scout_id=None, reserved=frozenset()) -> tuple[list[dict], set]:
-    """Every idle fighter within ``RETALIATE_RADIUS_CELLS`` of a spot of ours
-    attacked or lost in the last ``RETALIATE_SECONDS`` (agent.DamageScan)
-    attack-moves there — at the nearest enemy we see by it, if any. One order
-    per spot (spots within 6 cells merged)."""
-    spots: list[tuple[int, int]] = []
-    for c in attacked:
-        if all(dist2(c, s) > 36 for s in spots):
-            spots.append(tuple(c))
-    out, used = [], set()
-    r2 = C.RETALIATE_RADIUS_CELLS ** 2
-    idle = [u for u in view.combat_units if u.idle and u.id is not None and u.cell is not None
-            and u.id != scout_id and u.id not in reserved]
-    for spot in spots:
-        near = [u.id for u in idle if u.id not in used and dist2(u.cell, spot) <= r2]
-        if not near:
-            continue
-        foes = [a.cell for a in view.enemy_units if a.cell is not None and not a.wreck
-                and a.type not in C.HARVESTER and dist2(a.cell, spot) <= 64]
-        target = min(foes, key=lambda c: dist2(c, spot)) if foes else spot
-        out.append(orders.attack_move(near[:orders.MAX_UNITS_PER_ORDER], list(target)))
-        used.update(near[:orders.MAX_UNITS_PER_ORDER])
-    return out, used
-
-
-def _home_turret(view: View, enemies) -> tuple[int, int] | None:
-    """Our turret in the main base nearest the attackers, else None."""
-    base = view.base_center
-    r2 = C.DEFENSE_MAIN_RADIUS_CELLS ** 2
-    towers = [b.cell for b in view.buildings if b.type in C.DEFENSES and b.cell is not None and not b.wreck
-              and base is not None and dist2(b.cell, base) <= r2]
-    cells = [a.cell for a in enemies if a.cell is not None]
-    if not towers or not cells:
-        return None
-    mid = (sum(c[0] for c in cells) / len(cells), sum(c[1] for c in cells) / len(cells))
-    return min(towers, key=lambda c: dist2(c, mid))
-
-
-def _fallback_point(view: View, enemies) -> tuple[int, int]:
-    """Where an outnumbered army stands: just behind our turret nearest the
-    attackers (the turret in front, within the main base), else the base centre."""
-    base = view.base_center
-    tower = _home_turret(view, enemies)
-    if tower is None:
-        return base
-    dx, dy = base[0] - tower[0], base[1] - tower[1]
-    length = (dx * dx + dy * dy) ** 0.5
-    if length < 1:
-        return tower
-    spot = (round(tower[0] + 2 * dx / length), round(tower[1] + 2 * dy / length))
-    return spot if spot not in view.blocked_cells else tower
-
-
 def _value(view: View, actors) -> float:
-    return sum(view.unit_costs.get(a.type, C.KNOWN_COSTS.get(a.type, C.DEFAULT_UNIT_COST)) for a in actors)
+    return strength.value(view, [a.type for a in actors])
 
 
 def concave_slots(view: View, center, facing, n: int) -> list[tuple[int, int]]:
@@ -826,46 +808,6 @@ def _advised_target(view: View, advice) -> tuple[int, int] | None:
     return None
 
 
-def home_response(view: View, mode: Mode, scout_id: int | None, reserved: frozenset) -> tuple[list[dict], set]:
-    """A small raid on our base or harvesters (enemies worth at most
-    ``SMALL_RAID_VALUE`` within ``HOME_RAID_RADIUS_CELLS`` of a yard or a
-    harvester of ours): the units at home — new ones included — kill it, the
-    weakest raider first, instead of walking past to the front. (Match
-    c2fec761: a low-health ranger harassed the base unanswered.) Bigger
-    threats are the defensive modes' job. Returns (orders, unit ids used)."""
-    from .guard import _at_home
-
-    if mode in DEFENSIVE or mode is Mode.RETREAT:
-        return [], set()
-    anchors = [b.cell for b in view.buildings if b.type == C.CONSTRUCTION_YARD and b.cell is not None]
-    anchors += [h.cell for h in view.units_of(C.HARVESTER) if h.cell is not None]
-    if view.base_center is not None:
-        anchors.append(view.base_center)
-    r2 = C.HOME_RAID_RADIUS_CELLS ** 2
-    raiders = [a for a in view.enemy_units if a.cell is not None and not a.wreck and a.id is not None
-               and a.type not in C.HARVESTER and any(dist2(a.cell, c) <= r2 for c in anchors)]
-    if not raiders:
-        return [], set()
-    cost = lambda a: view.unit_costs.get(a.type, C.DEFAULT_UNIT_COST)  # noqa: E731
-    value = sum(cost(a) for a in raiders)
-    if value > C.SMALL_RAID_VALUE:
-        return [], set()
-    target = min(raiders, key=lambda a: (a.hp if a.hp else 100))
-    # The nearest couple of infantry (then anything else): the rest of the
-    # army keeps its position, a scout costs us two riflemen's time.
-    home = sorted((u for u in _fighters(view, scout_id, reserved) if _at_home(view, u.cell)),
-                  key=lambda u: (u.type in C.VEHICLE_TYPES, dist2(u.cell, target.cell)))
-    picked, sent = [], 0.0
-    for u in home:
-        if sent >= C.RESPONSE_VALUE_RATIO * value and len(picked) >= C.RESPONSE_MIN_UNITS:
-            break
-        picked.append(u.id)
-        sent += cost(u)
-    if not picked:
-        return [], set()
-    return [orders.attack(picked[:orders.MAX_UNITS_PER_ORDER], target.id)], set(picked)
-
-
 def _groups(view: View, units: list[int], points: list) -> list[dict]:
     """The one way to split the army: each unit attack-moves to the nearest
     point whose group still has room (groups of about equal size, nearest
@@ -942,6 +884,23 @@ def _attack_target(view: View, hunt: tuple[int, int] | None = None) -> tuple[int
     """
     if view.base_center is None:
         return enemy_spawn_guess(view)
+    # Away from where our raid squads hold part of their army (attack_avoid),
+    # when anything else is known: the attack goes at the rest.
+    avoid = view.attack_avoid
+    if avoid is not None:
+        import dataclasses
+
+        r2 = C.RAID_SPREAD_CELLS ** 2
+
+        def far(actors):
+            return [a for a in actors if a.cell is not None and dist2(a.cell, avoid) > r2]
+
+        away = dataclasses.replace(view, attack_avoid=None, enemy_buildings=far(view.enemy_buildings),
+                                   enemy_units=far(view.enemy_units),
+                                   known_enemy_buildings=far(view.known_enemy_buildings))
+        target = _attack_target(away, hunt)
+        if target is not None and dist2(target, avoid) > r2:
+            return target
     # A known enemy expansion first: away from their army, lightly defended,
     # and their income (match 4b5980f8: a 33k army sat idle while red's
     # expansion was known for the last 2.5 minutes).

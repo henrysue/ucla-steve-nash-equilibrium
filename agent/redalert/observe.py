@@ -161,6 +161,9 @@ class View:
     enemy_turtling: bool = False             # intel: turrets up, army home, no pushes (siege them)
     # Our scouts finished a round of their base within SCOUT_FRESH_SECONDS.
     enemy_base_scouted: bool = False
+    # Where our raid squads hold part of their army: an attack then goes for
+    # targets away from it (executor._attack_target; commander latches it).
+    attack_avoid: tuple | None = None
 
     # -- derived, cheap helpers ----------------------------------------------
 

@@ -35,20 +35,24 @@ class Commander:
         self.changed = False
         self.confirm_at: float | None = None      # when the attack call being confirmed was made
         self.wants_look = False                    # a blind attack call: a scout looks at their army first
-        self._ledger: list[tuple[float, float, float]] = []   # (game seconds, kills, deaths), TRADE_LEAD_WINDOW_SECONDS
+        self._ledger: list[tuple[float, float, float]] = []   # (game seconds, army kills, army deaths), TRADE_LEAD_WINDOW_SECONDS
+        self._army_trades = [0.0, 0.0]            # kills and deaths while the main army was in a fight
+        self._last_trades: tuple[float, float] | None = None
+        self._contact = False                     # the main army was in a fight last view
         self.cheese_since: float | None = None    # threat window (brain.update_cheese_since)
         self.retreated_at: float | None = None
         self.retreat_army: float | None = None    # army value at the last retreat
         self.attack_army = 0.0                    # army value when the current attack began
+        self.attack_avoid: tuple | None = None    # where the raid held their army when this attack began
         self.attacks = 0
         self._trades: list[tuple[float, float, float]] = []   # (game seconds, kills, deaths)
         self._building_ids: set | None = None
 
     def track_threat(self, view: View) -> None:
         """Update the threat window (call first each view). Losing a building
-        to a push bigger than a small raid opens it too, however many units
+        at the main base to a push bigger than a small raid opens it too, however many units
         are "at home": match e2f73d65 lost seven buildings in 90 s and never
-        left BUILD. A small raid is the home units' job (executor.home_response)."""
+        left BUILD. A small raid is the home units' job (executor.respond)."""
         self.cheese_since = brain.update_cheese_since(view, self.cheese_since)
         ids = {b.id for b in view.buildings if b.id is not None and not b.wreck}
         if (self._building_ids is not None and self._building_ids - ids and view.game_seconds > 0
@@ -58,15 +62,15 @@ class Commander:
 
     def decide(self, view: View, *, model_pref: Mode | None = None, scout_id: int | None = None,
                squad_ids: frozenset = frozenset(), hunting: bool = False, alarm: bool = False,
-               distraction: bool = False, escorting: bool = False, rushing: bool = False,
+               distraction=None, escorting: bool = False, rushing: bool = False,
                forced: Mode | None = None) -> Mode:
         prev = self.mode
         losing = self.losing_trades(view)
-        up = self.traded_up(view)
+        up = self.traded_up(view, squad_ids)
         # A base race: our attack is winning, so it goes on while their push
         # hits our base (the home units still fight it). In the opening a
         # rush always calls the army home.
-        base_race = (prev is Mode.ALL_IN and not losing and brain._army_edge(view) >= 1.0
+        base_race = (prev is Mode.ALL_IN and not losing and brain.army_odds(view) >= 1.0
                      and view.game_seconds >= C.CHEESE_WINDOW_SECONDS)
         mode = brain.choose_mode(
             view, cheese_since=None if base_race else self.cheese_since, model_pref=model_pref, prev_mode=prev,
@@ -87,23 +91,31 @@ class Commander:
             mode = prev                            # commit: no quick flip (a confirmation is kept)
         if mode is Mode.ALL_IN:
             self.confirm_at = None
-        self._record(view, prev, mode)
+        self._record(view, prev, mode, distraction)
         return mode
 
     @property
     def confirming(self) -> bool:
         return self.confirm_at is not None
 
-    def traded_up(self, view: View) -> bool:
-        """In the last ``TRADE_LEAD_WINDOW_SECONDS`` we killed ``TRADE_LEAD_MIN``
-        more than we lost and ``TRADE_LEAD_RATIO`` x it: their army is down by
-        that much — go now (3bd6e450 won a fight 16600 to 11150 at 8:15 and
-        sat for three minutes)."""
+    def traded_up(self, view: View, squad_ids: frozenset = frozenset()) -> bool:
+        """In the last ``TRADE_LEAD_WINDOW_SECONDS`` the main army's fights
+        killed ``TRADE_LEAD_MIN`` more than they lost and ``TRADE_LEAD_RATIO``
+        x it: their army is down by that much — go now (3bd6e450 won a fight
+        16600 to 11150 at 8:15 and sat for three minutes). Only kills while
+        the main army was in contact count: a raid's refinery and harvester
+        say nothing about their army."""
         t = view.game_seconds
-        self._ledger.append((t, view.kills_cost, view.deaths_cost))
+        now = (view.kills_cost, view.deaths_cost)
+        contact = _army_in_contact(view, squad_ids)
+        if self._last_trades is not None and (contact or self._contact):
+            self._army_trades[0] += max(0.0, now[0] - self._last_trades[0])
+            self._army_trades[1] += max(0.0, now[1] - self._last_trades[1])
+        self._last_trades, self._contact = now, contact
+        self._ledger.append((t, *self._army_trades))
         self._ledger = [r for r in self._ledger if t - r[0] <= C.TRADE_LEAD_WINDOW_SECONDS]
         _, k0, d0 = self._ledger[0]
-        killed, lost = view.kills_cost - k0, view.deaths_cost - d0
+        killed, lost = self._army_trades[0] - k0, self._army_trades[1] - d0
         return killed - lost >= C.TRADE_LEAD_MIN and killed >= C.TRADE_LEAD_RATIO * max(lost, 1.0)
 
     def winning_trades(self, view: View) -> bool:
@@ -140,9 +152,11 @@ class Commander:
         """Hold a fresh attack call (on about even trades) until it has held
         for ``CONFIRM_SECONDS``; drop the call when the policy changes its mind."""
         even = abs(view.kills_cost - view.deaths_cost) <= C.CONFIRM_TRADE_BAND
-        # Past the opening, a call made on a blind estimate waits (up to
-        # CONFIRM_BLIND_MAX_SECONDS) for a scout to look where their army masses.
-        blind = view.game_seconds >= C.ESCALATE_AFTER_SECONDS and brain.blind_estimate(view)
+        # A call made knowing too little of their army waits (up to
+        # CONFIRM_BLIND_MAX_SECONDS) for a scout to look where their army
+        # masses — from the first attack, not only late: with no guess in the
+        # estimate, little seen reads as a big edge.
+        blind = brain.blind_estimate(view)
         self.wants_look = False
         if mode is Mode.ALL_IN and prev is not Mode.ALL_IN and (even or blind) and not skip:
             if self.confirm_at is None:
@@ -155,19 +169,30 @@ class Commander:
             self.confirm_at = None
         return mode
 
-    def _record(self, view: View, prev: Mode, mode: Mode) -> None:
+    def _record(self, view: View, prev: Mode, mode: Mode, distraction=None) -> None:
         self.changed = mode is not prev
         if self.changed:
             self.mode_since = view.game_seconds
             if mode is Mode.ALL_IN:
                 self.attack_army = view.army_value
                 self.attacks += 1
+                self.attack_avoid = distraction[2] if distraction else None
+        if mode is not Mode.ALL_IN:
+            self.attack_avoid = None
         if mode is Mode.RETREAT and prev is not Mode.RETREAT:
             self.retreated_at = view.game_seconds
             self.retreat_army = view.army_value
         self.mode = mode
 
 
+def _army_in_contact(view: View, squad_ids: frozenset) -> bool:
+    """An enemy fighter within ``STAGE_ENGAGE_CELLS`` of a main-army unit."""
+    r2 = C.STAGE_ENGAGE_CELLS ** 2
+    army = [u.cell for u in view.combat_units if u.cell is not None and u.id not in squad_ids]
+    foes = [a.cell for a in view.enemy_units if a.cell is not None and not a.wreck and a.type not in C.HARVESTER]
+    return any((f[0] - c[0]) ** 2 + (f[1] - c[1]) ** 2 <= r2 for f in foes for c in army)
+
+
 def _push_value(view: View) -> float:
-    """The enemy combat units at our base (scout.enemy_threat_near_base), priced."""
-    return sum(view.unit_costs.get(a.type, C.DEFAULT_UNIT_COST) for a in scout.enemy_threat_near_base(view))
+    """The enemy combat units at our main base (scout.enemy_threat_near_base), priced."""
+    return sum(view.unit_costs.get(a.type, C.DEFAULT_UNIT_COST) for a in scout.enemy_threat_near_base(view, main_only=True))

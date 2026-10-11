@@ -3,8 +3,8 @@
 The garrison: units posted at our newest expansion ("bring support to
 capture and defend an expansion"); see :class:`Garrison`. Squads claim only
 units at home (:func:`_at_home`), never from the front. (A home guard of two
-riflemen at the power plants used to live here; home responders —
-executor.home_response — now deal with small raids on the base.)
+riflemen at the power plants used to live here; the idle units nearby —
+executor.respond — now deal with small raids on the base.)
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ class Garrison:
 
     Available at any notice: they are posted only while the army masses in
     calm (BUILD / OPEN). An attack (the rules' or the advisor's), a defense,
-    a retreat, or a real fight near the army (executor.fight_near) takes them
+    a retreat, or a real fight near the army (executor.army_contact) takes them
     straight back — unless their own expansion is the one attacked, and then
     they fight the attackers there. Match 0ee93a05: four units, tanks first,
     stood at an expansion through every fight with the rusher.
@@ -52,13 +52,14 @@ class Garrison:
     def update(self, view: View, mode: Mode, expansion, taken: set) -> None:
         alive = {u.id for u in view.combat_units}
         self.unit_ids = [i for i in self.unit_ids if i in alive]
+        self._prune()
         site = forward_site(view, expansion)
         if site is None:
-            self.unit_ids = []
+            self._release()
             return
         threatened = self._threatened(view, site)
         if not threatened and (mode not in (Mode.BUILD, Mode.OPEN) or self._army_fighting(view)):
-            self.unit_ids = []           # needed elsewhere: back with the army at once
+            self._release()              # needed elsewhere: back with the army at once
             return
         if threatened or len(self.unit_ids) >= C.GARRISON_SIZE:
             return
@@ -72,6 +73,16 @@ class Garrison:
                     return
                 if u.type == kind and u.id not in self.unit_ids:
                     self.unit_ids.append(u.id)
+
+    def _release(self) -> None:
+        self.unit_ids = []
+        self._prune()
+
+    def _prune(self) -> None:
+        """Forget the guard orders of units no longer in the outpost: one
+        claimed again later is told to guard again (it used to be skipped as
+        "already guarding" and stood idle wherever it was)."""
+        self._guarding = {i: w for i, w in self._guarding.items() if i in self.unit_ids}
 
     @staticmethod
     def _ward(view: View, expansion) -> int | None:
@@ -88,10 +99,10 @@ class Garrison:
         return min(yards, key=lambda b: dist2(b.cell, site)).id if yards else None
 
     def _army_fighting(self, view: View) -> bool:
-        from .executor import fight_near
+        from .executor import army_contact
 
         ids = set(self.unit_ids)
-        return fight_near(view, [u.cell for u in view.combat_units if u.id not in ids]) is not None
+        return bool(army_contact(view, [u for u in view.combat_units if u.id not in ids]))
 
     @staticmethod
     def _threatened(view: View, site) -> bool:

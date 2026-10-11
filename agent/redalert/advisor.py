@@ -17,7 +17,7 @@ Its read of the game:
 
 Its calls, each inside the game plan and its limits:
 
-- ``posture``: ``attack`` (only when the numbers support it), ``hold``, or ``default``;
+- ``posture``: ``attack`` (at even odds, never blind or into turrets we can't break), ``hold``, or ``default``;
 - ``attack_route``: ``center`` / ``left`` / ``right`` / ``auto`` (from 10:00, or sooner when decisively ahead);
 - ``expand``: ``now`` / ``wait`` / ``auto`` (``auto`` follows the balance);
 - ``army_target``: the cell the main army attacks (used only with a known
@@ -76,16 +76,24 @@ kills_cost - deaths_cost wins, then higher assets_value. Trade efficiently and f
 OUR GAME PLAN (the engine does all of this by itself):
 - Opening: power, barracks, refinery, refinery, power, war factory (the pros' double refinery). Then, \
 unless outgunned, a third refinery and the service depot; more refineries over time, expansion to \
-the natural field, a second war factory when money piles up. Units spend what the economy doesn't need.
+the natural field, a second war factory after the depot, up to 3 barracks; about half the army's \
+value in main battle tanks. Units spend what the economy doesn't need.
 - Information: two scouts circle behind the enemy base early, then pickets watch the approach and \
-one re-checks their base every 2 minutes. One refinery plus an early war factory or 2nd barracks \
-reads as a rush (intel.enemy_opening).
-- The army masses in a concave in front of our base and fights anything big that comes near it. \
-It attacks when our army is 1.3x enemy.army_value_estimate (the fog hides most of their army: the \
-estimate is what we saw lately and what the trades imply, never just what is visible), retreats \
-when losing 1.3x what it kills, and does not flank before 10:00 unless decisively ahead. A lone \
-raider draws two riflemen; a real push recalls the army unless our own attack is winning. A raid \
-squad hunts their harvesters. The first turret faces the road in. Two infantry hold a forward expansion and rejoin the army the moment it attacks, defends or fights (an "attack" posture brings them too).
+one re-checks their base every 2.5 minutes. One refinery plus an early war factory or 2nd barracks, \
+or an early army, reads as a rush (intel.enemy_opening).
+- Every fight is judged by strength (unit types, hit points, damage per armor), not price: \
+riflemen barely scratch tanks. enemy.army_value_estimate is what we saw of their units lately, less \
+half our kills since — no guess, turrets not included.
+- The army masses in a concave at the main choke and holds it; it never walks out to an expansion \
+(an outpost, a turret and nearby units hold those). A push seen coming: it gets ready at the main \
+base's turret line. In a fight at the main base it attacks if it wins clearly, else holds at the \
+turret line. Idle units nearby answer small raids and any spot we are hit.
+- It attacks at 1.3x (1.15x after 7:00, 1.05x with a 15000+ army; their turrets at the target count), \
+or at once after clearly winning a fight (1500+ net, 1.5x). Knowing little of their army, a scout \
+looks first. It retreats (breaks off to the turret line) when losing 1.3x what it kills, and does \
+not flank before 10:00 unless decisively ahead. Raid squads go only for enemy expansions our \
+scouts found; when they hold part of their army, the main army is judged against the rest and \
+attacks away from the raid.
 
 YOUR READ:
 - enemy_style: what the enemy is playing, from their buildings, army and moves:
@@ -109,10 +117,11 @@ Never over-index: a big bank with a small army and a big army on 4 harvesters ar
 and so is "more_army" all game.
 
 YOUR CALLS (null or "default"/"auto" = the engine decides; each works inside the plan's limits):
-- posture: "attack" asks for an attack now, honored only when the engine's numbers already support \
-one; "hold" keeps massing (ignored when we clearly outnumber them or are behind at the end). Use \
-them for what the numbers miss (their army is out of position, a counter-push is coming). Keep a \
-posture 30+ seconds: flip-flopping marches the army out and back.
+- posture: "attack" starts an attack at even odds (1.0x) instead of the engine's bar — never on a \
+blind estimate (a scout looks first) and never into turrets the army can't break; "hold" keeps \
+massing (ignored when we clearly outnumber them or are behind at the end). Use them for what the \
+numbers miss (their army is out of position, a counter-push is coming). Keep a posture 30+ seconds: \
+flip-flopping marches the army out and back.
 - attack_route: "center", "left" or "right" for the next attack, from 10:00 (sooner only when \
 decisively ahead: engaged early, a flank leaves our base open). Flank a defended middle; go straight \
 when the raid squad is drawing their army away.
@@ -120,14 +129,15 @@ when the raid squad is drawing their army away.
 - army_target: [x, y] the main army attacks, used only if a known enemy building or unit is within \
 10 cells of it. Good targets: power plants, then production, then refineries; an undefended expansion.
 - raid_target_id / raid_target_cell: the raid squad's harvester (a visible harvester's id) or a \
-cell to sweep (an ore field they harvest, a fresh expansion). It kills any defenders first.
+cell to sweep, at an enemy expansion (18+ cells from their main base; their main field is never \
+raided). It kills any defenders first.
 - defense_at: [x, y] the side of our base the next turret should face (the enemy's approach).
 - army_stance: the waiting (massing) army's stance — "defend" (fire at what comes in range, hold \
 the line: the default), "attack_anything" (go after any enemy in sight: when they poke at the \
 concave from outside its range), "return_fire" (only shoot back), "hold_fire"; "auto" = the engine. \
 Attacking and defending armies always engage freely.
-- guard: "on" (default): every idle unit of the massing army goes at enemies that come within 8 cells \
-of it, then back to its slot; "off" keeps the concave still (a bait you don't want chased).
+- guard: "on" (default): idle units of the massing army go at small groups that come within 12 cells \
+of them, then back to their slots; "off" keeps the concave still (a bait you don't want chased).
 - plan: your read of the game and plan for the next minute or two, in 1-2 short sentences.
 - reasoning: the evidence for it, in 1-2 short sentences.
 

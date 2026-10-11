@@ -68,6 +68,8 @@ class RedAlertAgent:
         # The batch play_action answers next; refused order key -> blocked
         # until (clock); army (cmd, destination) -> (last sent, unit ids).
         self._last_sent: list[dict] = []
+        self._sent_batches: list[list[dict]] = []    # the last few batches sent (lost orders: last_orders)
+        self._lost_batch = None                       # the last_orders batch already read for lost orders
         self._outbox: list[tuple[float, dict]] = []   # orders that didn't fit the last batch
         self._damage = DamageScan()                    # under_attack / unit_lost: where we are hit
         self._blocked: dict[str, float] = {}
@@ -160,13 +162,19 @@ class RedAlertAgent:
         rushing = spar is not None and spar.skip_confirm
         cheese = self._commander.cheese_since
         forced = (lambda policy: spar.mode(view, cheese, policy)) if spar is not None else None
+        # Part of their army held by our raid squads: an attack goes away from it.
+        drawing = self._raid.drawing(view)
+        avoid = self._commander.attack_avoid if self._mode is Mode.ALL_IN else (drawing[2] if drawing else None)
+        view = dataclasses.replace(view, attack_avoid=avoid)
         # The army's one decision (commander.py).
         self._commander.decide(
             view, model_pref=_POSTURE.get(getattr(advice, "posture", None)), scout_id=self._patrol.unit_id,
             squad_ids=frozenset({*self._patrol.unit_ids, *self._raid.unit_ids, *self._garrison.unit_ids}),
-            hunting=hunting, alarm=threat, distraction=self._raid.distracting(view),
+            hunting=hunting, alarm=threat, distraction=drawing,
             escorting=self._expansion.escorting, rushing=rushing, forced=forced,
         )
+        if self._mode is Mode.ALL_IN and view.attack_avoid != self._commander.attack_avoid:
+            view = dataclasses.replace(view, attack_avoid=self._commander.attack_avoid)
         # A blind attack call: a scout looks where their army masses first.
         self._patrol.look = scout.enemy_staging(view) if self._commander.wants_look else None
         if self._commander.changed:
@@ -231,6 +239,7 @@ class RedAlertAgent:
         sell = buildplan.sell_for_income(view)
         if sell is not None and view.game_seconds - self._sold_at >= C.SELL_FOR_INCOME_SECONDS:
             self._sold_at = view.game_seconds
+            self._damage.sold.add(sell.get("building"))   # it will vanish: not a loss to hit back at
         else:
             sell = None
         planned = ([sell] if sell else []) + executor.plan(
@@ -255,7 +264,7 @@ class RedAlertAgent:
             warning=self._intel.suspect(view),
             fan=hunting,
             attacked=attacked,
-        ) + self._unstick.orders(view) + executor.stance_orders(
+        ) + self._unstick.orders(view, set(self._garrison.unit_ids)) + executor.stance_orders(
             view, self._mode, set(self._garrison.unit_ids), getattr(advice, "army_stance", None))
         now = self._clock()
         batch_orders = [
@@ -278,6 +287,7 @@ class RedAlertAgent:
         move = {"type": "orders", "orders": take}
 
         self._last_sent = move["orders"]
+        self._sent_batches = (self._sent_batches + [self._last_sent])[-4:]
         self._note_placements(view, self._last_sent)
         for order in self._last_sent:
             if order.get("cmd") in _ARMY_CMDS:
@@ -372,18 +382,35 @@ class RedAlertAgent:
         return self._raid.orders(view)
 
     def _forget_lost_orders(self, raw: dict) -> None:
-        """An order the server reports ``lost`` (or ``rejected``) never reached
-        the units: forget what we think we sent, so the plan sends it again
-        next view (skill/redalert: "resend lost orders"; the 20 s no-repeat
-        memory would have held it back)."""
+        """An order the server reports ``lost`` never reached its units:
+        forget that we sent it to them, so the plan sends it again next view
+        (skill/redalert: "resend lost orders"; the 20 s no-repeat memory would
+        have held it back). Only those units, once per batch: a ``rejected``
+        order is on_action_result's (held back briefly), and wiping every
+        unit's memory on each re-ordered the whole army — they are common in
+        fights (focus fire on a target that just died)."""
         last = raw.get("last_orders")
-        results = last.get("results") if isinstance(last, dict) else None
-        if not isinstance(results, list):
+        if not isinstance(last, dict) or last.get("pending"):
             return
-        if any(isinstance(r, dict) and r.get("status") in ("lost", "rejected")
-               and r.get("cmd") in ("move", "attack_move", "attack", "guard") for r in results):
-            self._unit_dest.clear()
-            self._army_sent.clear()
+        batch = last.get("batch")
+        if batch is not None and batch == self._lost_batch:
+            return
+        self._lost_batch = batch
+        rows = [r for r in last.get("results") or [] if isinstance(r, dict) and r.get("status") == "lost"
+                and r.get("cmd") in ("move", "attack_move", "attack", "guard") and isinstance(r.get("index"), int)]
+        if not rows:
+            return
+        # The batch these rows answer: the newest one sent whose orders match them.
+        sent = next((b for b in reversed(self._sent_batches)
+                     if all(0 <= r["index"] < len(b) and b[r["index"]].get("cmd") == r["cmd"] for r in rows)), None)
+        if sent is None:
+            return
+        for r in rows:
+            order = sent[r["index"]]
+            for uid in order.get("units") or ():
+                self._unit_dest.pop(uid, None)
+                self._garrison._guarding.pop(uid, None)
+            self._army_sent.pop(_army_key(order), None)
 
     def _garrison_orders(self, view) -> list[dict]:
         """The garrison's orders: its Haiku lead's call when fresh, usable and
@@ -475,6 +502,7 @@ class RedAlertAgent:
                                        if self._harvest.runway_seconds is not None else None),
                 "our_unit_value": round(brain.our_unit_value(view)),
                 "enemy_unit_value_known": round(brain.enemy_unit_value(view)),
+                "army_odds": round(min(brain.army_odds(view), 99.0), 2),   # by strength (1.0 = even)
                 "enemy_turrets_known": len(executor.enemy_defenses(view)),
                 "raid_squad": {"ids": list(self._raid.unit_ids), "situation": raid_state,
                                "drawing_their_army": self._raid.distracting(view)},
@@ -747,6 +775,7 @@ class DamageScan:
         self._seq = -1
         self._last: dict[int, tuple[tuple[int, int], str]] = {}
         self.recent: list[tuple[float, tuple[int, int], str]] = []
+        self.sold: set = set()                        # buildings we sold: they vanish, nobody hit them
 
     def update(self, view) -> list[tuple[int, int]]:
         t = view.game_seconds
@@ -767,7 +796,7 @@ class DamageScan:
             if cell is not None:
                 self.recent.append((t, cell, kind))
         for aid, (cell, kind) in self._last.items():
-            if aid not in cur and kind != C.MCV:      # an MCV that deployed just turned into a yard
+            if aid not in cur and kind != C.MCV and aid not in self.sold:   # an MCV that deployed became a yard
                 self.recent.append((t, cell, "vanished"))
         self._last = cur
         self.recent = [r for r in self.recent if t - r[0] <= C.RETALIATE_SECONDS]

@@ -8,7 +8,7 @@ it never overrides the safety rules.
 from __future__ import annotations
 
 from . import config as C
-from . import scout
+from . import scout, strength
 from .modes import AGGRESSIVE, Mode
 from .observe import View, dist2
 
@@ -28,7 +28,7 @@ def choose_mode(
     retreat_army: float | None = None,
     hunting: bool = False,
     alarm: bool = False,
-    distraction: bool = False,
+    distraction=None,
     attack_seconds: float | None = None,
 ) -> Mode:
     """The posture for this view.
@@ -43,7 +43,8 @@ def choose_mode(
     ``retreat_army`` our army value then (no new attack until it has grown).
     ``hunting``: their base is razed (scout.Hunter.hunting). ``alarm``: our
     scout was killed forward early (an early push may be coming).
-    ``distraction``: our raid squad has drawn enemy fighters (raid.py).
+    ``distraction``: (enemy ids, their value) our raid squads have drawn
+    lately (raid.RaidCorps.drawing), or None.
     """
     if not view.ok:
         return Mode.OPEN
@@ -72,7 +73,7 @@ def choose_mode(
     # b90e492f went again 51 s after one)
     just_retreated = retreated_at is not None and view.game_seconds - retreated_at < C.RETREAT_COOLDOWN_SECONDS
     if (hunting or ((_dominant(view) or beaten(view)) and not just_retreated)) and _has_real_army(view) \
-            and view.army_value >= C.MODEL_HOLD_MAX_EDGE * enemy_estimate(view):
+            and army_odds(view) >= C.OVERWHELMING_ODDS:
         return Mode.ALL_IN
 
     # Safety rail 3: near the time limit and ahead -> protect the lead (but an
@@ -80,11 +81,17 @@ def choose_mode(
     if _should_protect_lead(view) and not (prev_mode in AGGRESSIVE and winning_trades):
         return Mode.PROTECT_LEAD
 
-    # Offensive decision: do we commit the deathball? Their turrets at the
-    # target fight too (attack_edge); the retreat rule below reads the armies.
-    edge = _army_edge(view)
+    # Offensive decision: do we commit the deathball? Every fight is judged
+    # the same way (strength.odds); their turrets at the target fight too
+    # (attack_odds); the retreat rule below reads the armies.
+    edge = army_odds(view)
     threshold = _attack_threshold(view)
-    strike = attack_edge(view)
+    if model_pref is Mode.ALL_IN:
+        # The advisor sees what the numbers miss (their army out of position):
+        # its "attack" goes at parity — still never blind (commander) nor
+        # into turrets we can't break.
+        threshold = min(threshold, C.ADVISOR_ATTACK_EDGE)
+    strike = attack_odds(view)
     # Unseen enemy makes the edge infinite, so also require a real army: never
     # trickle units one at a time into the enemy base.
     cooling_down = retreated_at is not None and view.game_seconds - retreated_at < C.RETREAT_COOLDOWN_SECONDS
@@ -96,21 +103,18 @@ def choose_mode(
     # A solid plan: build a real army first (PUSH_ARMY_VALUE), then push.
     built = view.army_value >= C.PUSH_ARMY_VALUE or behind_late
     # Decisive: having just traded clearly up (TRADE_LEAD_*), go now — their
-    # army is down by what we killed; else the edge on what we know.
-    can_attack = ((strike >= threshold or traded_up) and _has_real_army(view) and built
+    # army is down by what we killed — as long as the fight, their turrets at
+    # the target included, is at least even; else the bar on what we know.
+    # (The turrets are in the odds: match 654f1b2e attacked a mixed army into
+    # three flame towers three times.)
+    can_attack = ((strike >= threshold or (traded_up and strike >= 1.0)) and _has_real_army(view) and built
                   and not cooling_down and regrown)
-    # Into turrets only with the right army: a big infantry mass (kills them
-    # fast) or tanks/artillery. (Match 654f1b2e: three attacks with a mixed
-    # army into three flame towers, three losing trades and retreats.) An
-    # attack already under way is left to the retreat rule.
-    if can_attack and prev_mode not in AGGRESSIVE and not behind_late and not can_break_defenses(view):
-        can_attack = False
     # A turtle waits for the siege: SIEGE_ATTACK_MIN siege units, or an army
     # that overwhelms army and turrets together (efefdca8: two attacks into
     # the ring, 8200 and 8650 lost) — not even when behind at the end.
     if (can_attack and prev_mode not in AGGRESSIVE and view.enemy_turtling
             and len(view.units_of(C.SIEGE_UNITS)) < C.SIEGE_ATTACK_MIN
-            and view.army_value < C.MODEL_HOLD_MAX_EDGE * (enemy_estimate(view) + defenses_at_target(view))):
+            and strike < C.OVERWHELMING_ODDS):
         can_attack = False
 
     # Retreat: losing the fight we started -> pull back before we feed the
@@ -144,10 +148,13 @@ def choose_mode(
     early = view.game_seconds < C.EARLY_ATTACK_SECONDS and not view.has_building(C.WAR_FACTORY)
     if early:
         can_attack = False
-    # Their army is busy with our raid squad and our units outweigh theirs
-    # (units only, no buildings): the main army goes down the centre now.
-    if (distraction and not can_attack and not early and _has_real_army(view) and built and not cooling_down
-            and our_unit_value(view) > enemy_unit_value(view) and (behind_late or can_break_defenses(view))):
+    # A real share of their army is busy with our raid squads: judged
+    # without it, by the same bar — the main army goes at the rest now
+    # (away from where the raid fights: _attack_target).
+    busy_ids, busy_value = (distraction or (frozenset(), 0.0, None))[:2]
+    if (busy_value >= max(C.DISTRACTION_MIN_VALUE, C.DISTRACTION_ARMY_SHARE * enemy_estimate(view))
+            and not can_attack and not early and _has_real_army(view) and built and not cooling_down and regrown
+            and attack_odds(view, busy_ids, busy_value) >= threshold):
         can_attack = True
     policy_choice = Mode.ALL_IN if can_attack else Mode.BUILD
 
@@ -156,7 +163,7 @@ def choose_mode(
     # support: its "attack" calls read the same fog-blind figures (08560d9b:
     # "a strong army value lead" at 3900 vs a real 5000-6000). It never
     # overrides the safety rails above.
-    overwhelming = view.army_value >= C.MODEL_HOLD_MAX_EDGE * enemy_estimate(view) > 0
+    overwhelming = enemy_estimate(view) > 0 and edge >= C.OVERWHELMING_ODDS
     if model_pref is Mode.BUILD and not ((overwhelming or behind_late) and can_attack):
         return Mode.BUILD
 
@@ -170,87 +177,62 @@ def _defend(view: View) -> Mode:
 
 
 def enemy_estimate(view: View) -> float:
-    """The enemy army through the fog: the most of what we see or remember,
-    what we saw of it lately less our kills since (``enemy_army_peak``), and
-    — both sides start equal on similar incomes — ``ENEMY_PRIOR_SHARE`` x our
-    army adjusted by the trades (their losses are our kills). Match 08560d9b
-    attacked with 3900 "against 1400"; they had 5000-6000, and showed 4000
-    fifteen seconds before."""
-    # What we know, no guess: the most we see or remember now, or saw lately
-    # less our kills since (enemy_army_peak). Decisions add trades
-    # (choose_mode's traded_up) and a scout's look before a blind attack.
+    """Their army's value as we know it, no guess: the most we see or
+    remember now, or saw lately less half our kills since
+    (``enemy_army_peak``). Units only. Decisions add trades (traded_up)
+    and a scout's look before a blind attack (blind_estimate)."""
     return max(view.enemy_army_value, view.enemy_army_peak, 0.0)
 
 
 def behind_on_army(view: View) -> bool:
-    """Past the opening, their army (:func:`enemy_estimate`) is
-    ``BEHIND_ARMY_RATIO`` x ours or more: units come before economy and tech.
-    Match 52a77fb1 banked 1200-3800 for 4 minutes, held for an MCV, a second
-    war factory and refineries, while the estimate was 2-3x our army."""
+    """Past the opening, their army beats ours by ``BEHIND_ARMY_RATIO``
+    (:func:`army_odds` at most its inverse): units come before economy and
+    tech. Match 52a77fb1 banked 1200-3800 for 4 minutes, held for an MCV, a
+    second war factory and refineries, while 2-3x behind."""
     if view.game_seconds < C.BEHIND_AFTER_SECONDS:
         return False
-    return enemy_estimate(view) >= C.BEHIND_ARMY_RATIO * max(view.army_value, 1.0)
+    return army_odds(view) <= 1.0 / C.BEHIND_ARMY_RATIO
 
 
 def blind_estimate(view: View) -> bool:
-    """The estimate is mostly our guess: the "about as big as us" prior is
-    over ``BLIND_PRIOR_RATIO`` x what we saw of them lately, and no fresh look
-    at their base. Match ee2ac21b attacked 5150 into "4440" (the prior: our
-    income had stopped, theirs had not) and met 13500."""
+    """We know too little of their army to commit: no fresh look at their
+    base and less than ``BLIND_SEEN_SHARE`` x our army seen lately (match
+    efefdca8 attacked 13150 with 700 seen; ee2ac21b attacked 5150 into a
+    guess of 4440 and met 13500). A scout looks first (commander)."""
     if view.enemy_base_scouted:
         return False
-    # We have seen little of them lately (efefdca8 attacked 13150 with 700
-    # seen): a scout looks before we commit.
     look = max(view.enemy_army_value, view.enemy_seen_recent, 0.0)
     return look < C.BLIND_SEEN_SHARE * view.army_value
 
 
-def _army_edge(view: View) -> float:
-    """Our army value over the estimated enemy army (:func:`enemy_estimate`).
-    Large when nothing is known of them, small when outmatched."""
-    ours = view.army_value
-    theirs = enemy_estimate(view)
-    if theirs <= 0:
-        return float("inf") if ours > 0 else 0.0
-    return ours / theirs * mix_factor(view)
+def army_odds(view: View) -> float:
+    """Our army against theirs (strength.army_odds: what we see or remember
+    and the most we saw lately). Large when nothing is known of them."""
+    return strength.army_odds(view)
 
 
-def defenses_at_target(view: View) -> float:
-    """``DEFENSE_VALUE_WEIGHT`` x the price of the enemy turrets we know
-    within ``DEFENSE_CLUSTER_CELLS`` of our attack target."""
+def turrets_at_target(view: View) -> list[str]:
+    """The enemy turrets we know within ``DEFENSE_CLUSTER_CELLS`` of our
+    attack target, by type."""
     from .executor import _attack_target
 
     target = _attack_target(view)
     if target is None:
-        return 0.0
+        return []
     r2 = C.DEFENSE_CLUSTER_CELLS ** 2
     known = {(a.id if a.id is not None else a.cell): a
              for a in list(view.enemy_buildings) + list(view.known_enemy_buildings)
              if a.type in C.ENEMY_DEFENSE_TYPES and a.cell is not None and not a.wreck
              and dist2(a.cell, target) <= r2}
-    cost = lambda k: view.unit_costs.get(k) or C.KNOWN_COSTS.get(k, C.DEFAULT_UNIT_COST)  # noqa: E731
-    return C.DEFENSE_VALUE_WEIGHT * sum(cost(a.type) for a in known.values())
+    return [a.type for a in known.values()]
 
 
-def attack_edge(view: View) -> float:
-    """The army edge for starting an attack: their turrets at the target
-    count with their army (match efefdca8: two attacks into a turtle's
-    ring, 13150 and 15300 against armies the edge called even or weaker)."""
-    ours = view.army_value
-    theirs = enemy_estimate(view) + defenses_at_target(view)
-    if theirs <= 0:
-        return float("inf") if ours > 0 else 0.0
-    return ours / theirs * mix_factor(view)
-
-
-def mix_factor(view: View) -> float:
-    """How much better or worse our unit mix fights theirs than the prices
-    say (strength.matchup: riflemen barely scratch tanks), from the enemy
-    units we see or remember; 1.0 until both sides are known well enough."""
-    from .executor import _enemy_kinds
-    from .strength import matchup
-
-    return matchup(view, [u.type for u in view.combat_units], _enemy_kinds(view))
+def attack_odds(view: View, busy_ids=frozenset(), busy_value: float = 0.0) -> float:
+    """The odds of an attack: our army against theirs plus their turrets at
+    the target, which fight too (match efefdca8: two attacks into a turtle's
+    ring the army odds called even). ``busy_*``: their units held by our
+    raid squads, left out."""
+    return strength.army_odds(view, turrets_at_target(view), busy_ids, busy_value)
 
 
 def _attack_threshold(view: View) -> float:
@@ -266,9 +248,9 @@ def _attack_threshold(view: View) -> float:
 
 
 def _regrouped(view: View, scout_id: int | None, squad_ids: frozenset = frozenset()) -> bool:
-    """Most of the army is back near the staging point (or there is nowhere
-    to regroup / nothing left to regroup)."""
-    stage = scout.choke_cell(view)
+    """Most of the army is back at the main base's line (or there is
+    nowhere to regroup / nothing left to regroup)."""
+    stage = scout.home_line(view)        # where a retreat goes (executor._retreat)
     army = [u for u in view.combat_units if u.id != scout_id and u.id not in squad_ids]   # scouts, raid, guards out
     if stage is None or not army:
         return True
@@ -310,49 +292,23 @@ def _dominant(view: View) -> bool:
 
 def our_unit_value(view: View) -> float:
     """Our combat units' value (no buildings)."""
-    return sum(view.unit_costs.get(u.type, C.DEFAULT_UNIT_COST) for u in view.combat_units)
+    return strength.value(view, [u.type for u in view.combat_units])
 
 
 def enemy_unit_value(view: View) -> float:
     """The enemy combat units we see or remember (no buildings, harvesters or MCV)."""
-    skip = set(C.HARVESTER) | {C.MCV}
-    seen = {a.id: a for a in list(view.known_enemy_units) + list(view.enemy_units)
-            if a.id is not None and not a.wreck and a.type not in skip}
-    return sum(view.unit_costs.get(a.type, C.DEFAULT_UNIT_COST) for a in seen.values())
+    return strength.value(view, strength.enemy_kinds(view))
 
 
 def outgunned(view: View) -> bool:
-    """Combat units only: the enemy fighters we see or saw recently (no
-    turrets, buildings or harvesters) are worth ``OUTGUNNED_MIN_VALUE`` and
-    more than our fighters. Then units come before an MCV or another
+    """The enemy fighters we see or remember (no turrets, buildings or
+    harvesters) are worth ``OUTGUNNED_MIN_VALUE`` and beat ours
+    (strength.odds under 1). Then units come before an MCV or another
     refinery (match e2f73d65: a fourth MCV and three refineries with 7
     fighters left)."""
-    enemy = enemy_unit_value(view)
-    return enemy >= C.OUTGUNNED_MIN_VALUE and our_unit_value(view) < enemy
-
-
-def can_break_defenses(view: View) -> bool:
-    """No ground turrets guard the attack target, or our army can take them:
-    ``INFANTRY_PER_DEFENSE`` infantry per turret (``INFANTRY_MASS_MIN`` at
-    least), or ``ARMOR_PER_DEFENSE`` tanks per turret (siege units double)."""
-    from .executor import _attack_target
-
-    target = _attack_target(view)
-    if target is None:
-        return True
-    r2 = C.DEFENSE_CLUSTER_CELLS ** 2
-    known = {(a.id if a.id is not None else a.cell): a
-             for a in list(view.enemy_buildings) + list(view.known_enemy_buildings)
-             if a.type in C.GROUND_DEFENSE_TYPES and a.cell is not None and not a.wreck
-             and dist2(a.cell, target) <= r2}
-    n = len(known)
-    if n == 0:
-        return True
-    infantry = sum(1 for u in view.combat_units if u.type not in C.VEHICLE_TYPES)
-    armor = sum(2 if u.type in C.SIEGE_UNITS else 1 for u in view.combat_units
-                if u.type in C.VEHICLE_TYPES and u.type not in ("jeep", "apc"))
-    return (infantry >= max(C.INFANTRY_MASS_MIN, C.INFANTRY_PER_DEFENSE * n)
-            or armor >= C.ARMOR_PER_DEFENSE * n)
+    theirs = strength.enemy_kinds(view)
+    return (strength.value(view, theirs) >= C.OUTGUNNED_MIN_VALUE
+            and strength.odds(view, [u.type for u in view.combat_units], theirs) < 1.0)
 
 
 def must_attack(view: View) -> bool:
@@ -376,14 +332,11 @@ def _overwhelming(view: View) -> bool:
 
 
 def _overwhelming_known(view: View) -> bool:
-    """Our army is at least MODEL_HOLD_MAX_EDGE x the estimated enemy army
-    (enemy_estimate: what we saw lately and what the trades imply), while
-    ahead on trades. An estimate of 0 is not "unknown": nothing seen lately
-    and the trades say they have nothing left (match 8db23b32 protected a
-    lead at 19:24 against no army and four buildings instead of finishing)."""
-    theirs = enemy_estimate(view)
+    """Our army's odds are at least ``OVERWHELMING_ODDS`` while ahead on
+    trades (match 8db23b32 protected a lead at 19:24 against no army and
+    four buildings instead of finishing)."""
     return (view.army_value >= C.MIN_ATTACK_ARMY_VALUE and view.kills_cost >= view.deaths_cost
-            and view.army_value >= C.MODEL_HOLD_MAX_EDGE * theirs)
+            and army_odds(view) >= C.OVERWHELMING_ODDS)
 
 
 def _catching_up(view: View) -> bool:

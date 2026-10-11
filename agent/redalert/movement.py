@@ -8,7 +8,10 @@ orders it afresh, which makes it look for a new path.
 
 Not stuck, though stationary:
 
-- fighting: an enemy within ``ENGAGED_RADIUS_CELLS`` (it is shooting);
+- fighting: an enemy unit or building within ``ENGAGED_RADIUS_CELLS`` (it
+  is shooting; siege units within ``SIEGE_TARGET_RADIUS_CELLS``: they shell
+  turrets from out of their range);
+- guarding (the outpost's ``guard`` order, ``skip``): it stands by its ward;
 - a harvester beside one of our refineries (unloading);
 - an MCV (it may be deploying).
 """
@@ -26,18 +29,20 @@ class Unstick:
         self._still: dict[int, tuple[tuple[int, int], float]] = {}
         self.unstuck = 0          # how many stops we have sent (for the log)
 
-    def orders(self, view: View) -> list[dict]:
+    def orders(self, view: View, skip=frozenset()) -> list[dict]:
         t = view.game_seconds
         stuck: list[int] = []
         seen: set[int] = set()
-        enemies = [a.cell for a in view.enemy_units if a.cell is not None and not a.wreck]
+        enemies = [a.cell for a in list(view.enemy_units) + list(view.enemy_buildings)
+                   if a.cell is not None and not a.wreck]
         refineries = [b.cell for b in view.buildings if b.type == C.REFINERY and b.cell is not None]
-        r_engaged = C.ENGAGED_RADIUS_CELLS ** 2
         for u in view.units:
-            if u.id is None or u.cell is None or u.wreck or u.idle or u.type == C.MCV:
+            if (u.id is None or u.cell is None or u.wreck or u.idle or u.type == C.MCV or u.id in skip
+                    or "guard" in (u.act or "").lower()):
                 continue
             seen.add(u.id)
-            if any(dist2(u.cell, e) <= r_engaged for e in enemies):
+            reach = C.SIEGE_TARGET_RADIUS_CELLS if u.type in C.SIEGE_UNITS else C.ENGAGED_RADIUS_CELLS
+            if any(dist2(u.cell, e) <= reach * reach for e in enemies):
                 self._still.pop(u.id, None)          # fighting, not stuck
                 continue
             if u.type in C.HARVESTER and any(dist2(u.cell, r) <= 16 for r in refineries):

@@ -15,13 +15,15 @@ from .observe import View, dist2
 _NON_THREAT = set(C.HARVESTER)
 
 
-def enemy_threat_near_base(view: View) -> list:
-    """Enemy combat actors within ``CHEESE_NEAR_BASE_CELLS`` of our base.
+def enemy_threat_near_base(view: View, main_only: bool = False) -> list:
+    """Enemy combat actors within ``CHEESE_NEAR_BASE_CELLS`` of our base
+    (every yard of ours; ``main_only``: the main base alone — the army's
+    business: expansions have their outpost, turret and nearby units).
 
     Counts units and a forward enemy MCV (a base-move/MCV-rush tell). Harvesters
     are ignored. Returns the offending actors so the caller can size the threat.
     """
-    yards = our_yards(view)
+    yards = ([view.base_center] if view.base_center is not None else []) if main_only else our_yards(view)
     if not yards:
         return []
     radius2 = C.CHEESE_NEAR_BASE_CELLS ** 2
@@ -63,7 +65,7 @@ def detect_cheese(view: View) -> dict | None:
     enemy MCV is seen, or we are taking damage before we have an army. The
     thresholds are intentionally high to avoid tempo-wrecking false alarms.
     """
-    near = enemy_threat_near_base(view)
+    near = enemy_threat_near_base(view, main_only=True)
     forward_mcv = any(a.type in (C.MCV, C.CONSTRUCTION_YARD) for a in near)
     if (not forward_mcv and view.game_seconds >= C.CHEESE_WINDOW_SECONDS
             and not _base_needs_army(view, near)):
@@ -81,21 +83,25 @@ def detect_cheese(view: View) -> dict | None:
 
 
 def _base_needs_army(view: View, near: list) -> bool:
-    """After the opening, call the army home only for a real threat: worth
-    ``BASE_DEFEND_MIN_VALUE`` and more than what already defends the base
-    (our units near it and our turrets). Two stragglers used to recall a
-    winning attack every time (match feba5f26: attack, recall, park 40-120 s,
-    attack again, six times against a rusher's stream of reinforcements)."""
-    cost = lambda a: view.unit_costs.get(a.type, C.DEFAULT_UNIT_COST)  # noqa: E731
-    threat = sum(cost(a) for a in near)
-    if threat < C.BASE_DEFEND_MIN_VALUE:
+    """After the opening, call the army home only for a real threat at the
+    main base: worth more than a small raid (``SMALL_RAID_VALUE``) and not
+    beaten by what already defends it — our units near it and our turrets,
+    judged like every fight (strength.odds under ``BASE_DEFEND_HOME_ODDS``).
+    Two stragglers used to recall a winning attack every time (match
+    feba5f26: attack, recall, park 40-120 s, attack again, six times)."""
+    from . import strength
+
+    theirs = [a.type for a in near if a.type not in C.ALL_BUILDING_TYPES and a.type != C.MCV]
+    if strength.value(view, theirs) <= C.SMALL_RAID_VALUE:
         return False
-    yards = our_yards(view)
+    base = view.base_center
+    if base is None:
+        return True
     r2 = C.CHEESE_NEAR_BASE_CELLS ** 2
-    home = sum(cost(u) for u in view.combat_units
-               if u.cell is not None and any(dist2(u.cell, y) <= r2 for y in yards))
-    turrets = sum(cost(b) for b in view.buildings if b.type in C.DEFENSES and not b.wreck)
-    return threat > C.BASE_DEFEND_HOME_RATIO * (home + turrets)
+    home = [u.type for u in view.combat_units if u.cell is not None and dist2(u.cell, base) <= r2]
+    home += [b.type for b in view.buildings if b.type in C.DEFENSES and not b.wreck and b.cell is not None
+             and dist2(b.cell, base) <= C.DEFENSE_MAIN_RADIUS_CELLS ** 2]
+    return strength.odds(view, home, theirs) < C.BASE_DEFEND_HOME_ODDS
 
 
 def _open_cell(view: View, cell) -> tuple[int, int]:
@@ -114,11 +120,14 @@ def _open_cell(view: View, cell) -> tuple[int, int]:
 
 def early_push_warning(view: View) -> bool:
     """Early in the game, a known enemy army (seen recently, see memory.py)
-    big enough to threaten us: before ``EARLY_PUSH_WINDOW_SECONDS``, at least
-    ``EARLY_PUSH_MIN_VALUE`` and ``EARLY_PUSH_RATIO`` x our army."""
+    big enough to threaten us: before ``EARLY_PUSH_WINDOW_SECONDS``, worth
+    at least ``EARLY_PUSH_MIN_VALUE`` and our army's odds against it no
+    better than ``EARLY_PUSH_RATIO`` (strength.army_odds)."""
+    from . import strength
+
     return (view.game_seconds < C.EARLY_PUSH_WINDOW_SECONDS
             and view.enemy_army_value >= C.EARLY_PUSH_MIN_VALUE
-            and view.enemy_army_value >= C.EARLY_PUSH_RATIO * view.army_value)
+            and strength.army_odds(view) <= C.EARLY_PUSH_RATIO)
 
 
 _STAGE: list = [None, None]   # [view, massing point]: computed once per view
@@ -142,7 +151,7 @@ def _massing_point(view: View) -> tuple[int, int] | None:
     defends. It used to pull back into the base whenever an enemy unit was
     remembered nearby (for 90 s after a scout passed), and the rally points
     and the concave went with it; the army now fights what comes near it and
-    falls back to its turret only when outnumbered (executor._stage_forward)."""
+    holds the main line by its turrets when it can't win (executor._army_home)."""
     base = view.base_center
     toward = _enemy_side(view)
     if base is None or toward is None:
@@ -450,12 +459,13 @@ def watch_point(view: View, yard) -> tuple[int, int] | None:
 
 
 _INTERCEPT: dict = {"at": None, "facing": None, "group": [], "seen": -1e9}
+_LINE: dict = {}
 
 
 def _defensive_line(view: View, yard, threat) -> tuple[int, int] | None:
-    """Where the army meets a push on the base round ``yard``: 2 cells behind
-    our turret nearest ``threat``, else 2 cells in front of our building
-    nearest it, else part of the way out from the yard toward it."""
+    """2 cells behind our turret nearest ``threat`` (within the build radius
+    of ``yard``), else 2 cells in front of our building nearest it, else part
+    of the way out from the yard toward it."""
     r2 = C.BUILD_RADIUS_CELLS ** 2
 
     def step(frm, to, cells):
@@ -471,45 +481,58 @@ def _defensive_line(view: View, yard, threat) -> tuple[int, int] | None:
     if mine:
         front = min((b.cell for b in mine), key=lambda c: dist2(c, threat))
         return step(front, threat, 2)
-    # nothing built there yet: part of the way out from the yard toward them
     d = dist2(yard, threat) ** 0.5
     return step(yard, threat, min(0.5 * d, C.STAGE_FORWARD_CELLS)) if d > 0 else None
 
 
+def home_line(view: View, toward=None) -> tuple[int, int] | None:
+    """The one defensive line, at the main base, facing ``toward`` (default:
+    the enemy's side): just behind our turret nearest it (the turrets fire
+    first), else just in front of our building nearest it (buildings, new
+    units and repairs at our back), else part of the way out from the base.
+    The army readies here for a push it sees coming, meets a push here when
+    it can't win in the open, and regroups here after a retreat."""
+    base = view.base_center
+    toward = tuple(toward) if toward is not None else _enemy_side(view)
+    if base is None or toward is None:
+        return None
+    key = (id(view), toward)
+    if _LINE.get("view") is not view:
+        _LINE.clear()
+        _LINE["view"] = view
+    if key not in _LINE:
+        point = _defensive_line(view, base, toward)
+        _LINE[key] = None if point is None else _open_cell(view, point)   # by the turret: no clearance needed
+    return _LINE[key]
+
+
 def incoming_push(view: View):
     """(set-up point, facing, the enemy group) for an enemy army worth
-    ``INTERCEPT_MIN_VALUE`` seen (or remembered) in our half: at the base it
-    heads for, just behind our turret nearest them (the turrets fire first),
-    else just in front of our building nearest them (buildings, new units
-    and repairs at our back). Held ``INTERCEPT_HOLD_SECONDS`` after the last
-    sighting so the army doesn't swing back and forth. None when nothing is
-    coming."""
+    ``INTERCEPT_MIN_VALUE`` we see in our half: the army gets ready at the
+    main base's line facing it (:func:`home_line`) — never out at an
+    expansion, which its outpost, turret and nearby units hold. Held
+    ``INTERCEPT_HOLD_SECONDS`` after the last sighting so the army doesn't
+    swing back and forth; seen units only (a remembered one may be long
+    gone). None when nothing is coming."""
+    from . import strength
     from .observe import enemy_spawn_guess
 
     base, enemy = view.base_center, enemy_spawn_guess(view)
     t = view.game_seconds
     if base is None or enemy is None:
         return None
-    yards = list(our_yards(view)) or [base]
-    seen = {a.id: a for a in list(view.known_enemy_units) + list(view.enemy_units)
+    ours = [a for a in view.enemy_units
             if a.id is not None and a.cell is not None and not a.wreck and a.type not in C.HARVESTER
-            and a.type != C.MCV}
-    ours = [a for a in seen.values()
-            if min(dist2(a.cell, y) for y in yards) < dist2(a.cell, enemy)]
-    cost = lambda a: view.unit_costs.get(a.type) or C.KNOWN_COSTS.get(a.type, C.DEFAULT_UNIT_COST)  # noqa: E731
+            and a.type != C.MCV and dist2(a.cell, base) < dist2(a.cell, enemy)]
     group = []
     if ours:
-        lead = min(ours, key=lambda a: min(dist2(a.cell, y) for y in yards))   # the one nearest us
+        lead = min(ours, key=lambda a: dist2(a.cell, base))   # the one nearest us
         group = [a for a in ours if dist2(a.cell, lead.cell) <= 12 ** 2]
-    if group and sum(cost(a) for a in group) >= C.INTERCEPT_MIN_VALUE:
-        cx = sum(a.cell[0] for a in group) / len(group)
-        cy = sum(a.cell[1] for a in group) / len(group)
-        target = min(yards, key=lambda y: dist2(y, (cx, cy)))
-        point = _defensive_line(view, target, (cx, cy))
+    if group and strength.value(view, [a.type for a in group]) >= C.INTERCEPT_MIN_VALUE:
+        facing = (round(sum(a.cell[0] for a in group) / len(group)), round(sum(a.cell[1] for a in group) / len(group)))
+        point = home_line(view, facing)
         if point is not None:
-            facing = (round(cx), round(cy))
-            _INTERCEPT.update(at=_clear_stage(view, _open_cell(view, point), facing), facing=facing,
-                              group=group, seen=t)
+            _INTERCEPT.update(at=point, facing=facing, group=group, seen=t)
     if _INTERCEPT["at"] is not None and t - _INTERCEPT["seen"] <= C.INTERCEPT_HOLD_SECONDS and t >= _INTERCEPT["seen"]:
         return _INTERCEPT["at"], _INTERCEPT["facing"], _INTERCEPT["group"]
     _INTERCEPT.update(at=None, facing=None, group=[], seen=-1e9)

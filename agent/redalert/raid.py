@@ -17,11 +17,11 @@ expansion found: no raid. At an expansion, nearest first:
 Before any of that, the fight in front of it (:meth:`Raid.situation`):
 enemy fighters within ``RAID_THREAT_RADIUS_CELLS`` are defending, so the
 squad kills them first (weakest first) and only then the harvesters; if they
-are worth more than ``RAID_OUTMATCH_RATIO`` x the squad, it pulls back,
-fighting, to our staging point. Either way it has drawn their army: for
-``DISTRACTION_SECONDS`` the main army may attack down the centre
-(brain.py), and once the main army is in a fight the squad attack-moves into
-it — the second prong. (A lone raider used to keep shooting a harvester while
+beat the squad (strength.odds, the one fight judgment), it breaks off to our
+massing point. Either way it has drawn part of their army: for
+``DISTRACTION_SECONDS`` the main army is judged against the rest and may
+attack away from the raid (brain.py), and once the main army is in a fight
+the squad attack-moves into it — the second prong. (A lone raider used to keep shooting a harvester while
 infantry shot it, and die.)
 
 The squad forms only after ``RAID_START_SECONDS``, only when it has a target,
@@ -54,7 +54,7 @@ class Raid:
         self._formed_size = 0
         self._released_at: float | None = None
         self._advice = None
-        self._drawing_at: float | None = None   # last time enemy fighters were on the squad
+        self._drawing: tuple | None = None       # (when, enemy ids, their value, where) fighters were last on the squad
         self._via: tuple[int, int] | None = None  # flank waypoint (macro enemy), until reached
         self._via_done = False
         self.avoid: list[tuple[int, int]] = []    # the other squads' targets (RaidCorps)
@@ -98,13 +98,23 @@ class Raid:
                    and a.type not in C.HARVESTER and dist2(a.cell, centre) <= r2]
         if not threats:
             return "clear", [], 0.0
-        cost = lambda a: view.unit_costs.get(a.type, C.DEFAULT_UNIT_COST)  # noqa: E731
-        theirs, ours = sum(cost(a) for a in threats), sum(cost(u) for u in members)
-        return ("outmatched" if theirs > C.RAID_OUTMATCH_RATIO * ours else "fight"), threats, theirs
+        from . import strength
+
+        theirs = strength.value(view, [a.type for a in threats])
+        odds = strength.odds(view, [u.type for u in members], [a.type for a in threats])
+        return ("outmatched" if odds < C.RAID_OUTMATCH_ODDS else "fight"), threats, theirs
+
+    def drawing(self, view: View) -> tuple | None:
+        """(enemy ids, their value, where) of the fighters on the squad in the
+        last ``DISTRACTION_SECONDS``, else None."""
+        d = self._drawing
+        if d is None or view.game_seconds - d[0] > C.DISTRACTION_SECONDS:
+            return None
+        return d[1], d[2], d[3]
 
     def distracting(self, view: View) -> bool:
-        """Enemy fighters have been on the squad recently: their army is busy."""
-        return self._drawing_at is not None and view.game_seconds - self._drawing_at <= C.DISTRACTION_SECONDS
+        """Enemy fighters have been on the squad recently: part of their army is busy."""
+        return self.drawing(view) is not None
 
     def orders(self, view: View, main_fight: tuple[int, int] | None = None) -> list[dict]:
         members = self._members(view)
@@ -113,11 +123,13 @@ class Raid:
         ids = [u.id for u in members]
         state, threats, value = self.situation(view)
         if state != "clear" and value >= C.DISTRACTION_MIN_VALUE:
-            self._drawing_at = view.game_seconds
+            self._drawing = (view.game_seconds, frozenset(a.id for a in threats), value, _centroid(threats))
         if state == "outmatched":
+            # Break off with a plain move (an attack-move stops to shoot every
+            # chaser and never gets away), back to the army.
             from .scout import choke_cell
             back = choke_cell(view) or view.base_center
-            return [orders.attack_move(ids, list(back))] if back else []
+            return [orders.move(ids, list(back))] if back else []
         if state == "fight":
             weakest = min(threats, key=lambda a: (a.hp if a.hp else 100, dist2(a.cell, _centroid(members))))
             return [orders.attack(ids, weakest.id)]
@@ -303,8 +315,17 @@ class RaidCorps:
             value += v
         return state, threats, value
 
+    def drawing(self, view: View) -> tuple | None:
+        """(enemy ids, their value, where the biggest share fights) the squads
+        have drawn lately, else None (brain: the distraction)."""
+        ds = [d for d in (s.drawing(view) for s in self.squads) if d is not None]
+        if not ds:
+            return None
+        ids = frozenset(i for d in ds for i in d[0])
+        return ids, sum(d[1] for d in ds), max(ds, key=lambda d: d[1])[2]
+
     def distracting(self, view: View) -> bool:
-        return any(s.distracting(view) for s in self.squads)
+        return self.drawing(view) is not None
 
     def orders(self, view: View, main_fight: tuple[int, int] | None = None) -> list[dict]:
         out: list[dict] = []
