@@ -3091,7 +3091,7 @@ def test_a_distracted_enemy_army_opens_the_centre_for_our_main_army():
     theirs = [{"id": 80 + i, "type": "3tnk", "x": 30, "y": 30, "hp": 100} for i in range(6)]
     v = _view(_t=400.0, buildings=BASE + [{"id": 12, "type": "weap", "x": 4, "y": 8}], units=ours,
               visible_enemies=theirs, military={"army_value": 3600, "visible_enemy_value": 3000})
-    assert brain.choose_mode(v, cheese_since=None, prev_mode=Mode.BUILD) is Mode.BUILD        # edge 1.2: hold
+    assert brain.choose_mode(v, cheese_since=None, prev_mode=Mode.BUILD) is Mode.BUILD        # edge 1.15: hold
     assert brain.choose_mode(v, cheese_since=None, prev_mode=Mode.BUILD, distraction=True) is Mode.ALL_IN
     weaker = dataclasses.replace(v, units=v.units[:4])
     assert brain.choose_mode(weaker, cheese_since=None, prev_mode=Mode.BUILD, distraction=True) is Mode.BUILD
@@ -4141,3 +4141,50 @@ def test_an_attack_winning_its_trades_keeps_going():
     assert c.winning_trades(v)
     assert brain.choose_mode(v, cheese_since=None, prev_mode=Mode.ALL_IN, winning_trades=True) is Mode.ALL_IN
     assert brain.choose_mode(v, cheese_since=None, prev_mode=Mode.ALL_IN) in (Mode.RETREAT, Mode.PROTECT_LEAD)
+
+
+# -- healthy macro: more raid squads the longer the game goes ----------------------------------------
+
+
+def _healthy_view(t, n=30, enemies=(), ore=()):
+    units = [{"id": 100 + i, "type": "e3" if i % 2 else "e1", "x": 12, "y": 12, "hp": 100} for i in range(n)]
+    units += [{"id": 300 + i, "type": "harv", "x": 6, "y": 8, "hp": 100} for i in range(4)]
+    v = _view(_t=t, buildings=BASE, units=units, visible_enemies=list(enemies))
+    return dataclasses.replace(v, ore_cells=tuple(ore)) if ore else v
+
+
+_SIDE_ORE = [(4 + i, 40 + j) for i in range(4) for j in range(3)] + [(40 + i, 4 + j) for i in range(4) for j in range(3)]
+
+
+def test_raid_squads_scale_with_a_healthy_game():
+    from agent.redalert import raid as ra
+    assert ra.squads_allowed(_healthy_view(300.0)) == 1                       # early: one squad
+    assert ra.squads_allowed(_healthy_view(400.0)) == 2                       # 6:00+: a second
+    assert ra.squads_allowed(_healthy_view(900.0)) == C.RAID_MAX_SQUADS       # 12:00+: the most
+    big = [{"id": 900 + i, "type": "3tnk", "x": 30, "y": 30, "hp": 100} for i in range(40)]
+    assert ra.squads_allowed(_healthy_view(900.0, enemies=big)) == 1          # outgunned: one
+
+
+def test_extra_raid_squads_spread_over_different_targets():
+    from agent.redalert import raid as ra
+    corps = ra.RaidCorps()
+    v = _healthy_view(560.0, ore=_SIDE_ORE)
+    corps.update(v, Mode.BUILD, scout_id=None)
+    assert corps.active == 2
+    a, b = corps.targets(v)
+    assert a != b and (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 > C.RAID_SPREAD_CELLS ** 2
+    assert len(corps.unit_ids) <= 4 + int(C.RAID_MAX_ARMY_SHARE * 30)        # the main army keeps most
+    o = corps.orders(v)
+    assert {tuple(x["to"]) for x in o} == {tuple(a), tuple(b)}
+    corps.update(_healthy_view(570.0, ore=_SIDE_ORE,
+                               enemies=[{"id": 900 + i, "type": "3tnk", "x": 30, "y": 30, "hp": 100} for i in range(40)]),
+                 Mode.BUILD, scout_id=None)
+    assert corps.active <= 1                                                  # outgunned: extras rejoin
+
+
+def test_raiders_clear_a_scout_in_the_field():
+    from agent.redalert import raid as ra
+    scout = {"id": 950, "type": "e1", "x": 22, "y": 20, "hp": 100}           # the middle of the map
+    assert ra._target(_healthy_view(400.0, enemies=[scout]), []) == 950
+    deep = {"id": 951, "type": "e1", "x": 38, "y": 38, "hp": 100}            # at their base: not a picket
+    assert ra._target(_healthy_view(400.0, enemies=[deep]), []) != 951

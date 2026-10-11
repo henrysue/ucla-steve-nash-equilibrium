@@ -143,6 +143,15 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
   scout moved them for 90 s); the army fights what comes near and falls back
   to its turret only when outnumbered. Concave slots move off cliffs, trees
   and our buildings.
+- **Attack bar 1.15 after 7:00** (was 1.2; 1.3 before, 1.05 with a 15k+ army).
+- **More raiders the longer a healthy game goes** (no big army idling): with
+  4+ harvesters and not outgunned, a second raid squad forms at 6:00 and one
+  more every 3 minutes (up to 4), each a unit bigger and re-forming after 12 s
+  instead of 30 s; together they never take more than 35% of the fighters.
+  Each squad targets something 12+ cells from the others' targets (harvesters,
+  remote expansions, refineries), and enemy scouts and pickets out in the field
+  (groups worth 1200 or less, at least 45% of the way from their base) are
+  targets too. Outgunned or short on harvesters: the extra squads rejoin the army.
 - **Mass farther out on big maps**: the massing point is 10 cells in front of
   the base or a quarter of the way to the enemy, whichever is farther (still
   capped at 30%): Shadowfiend II 17 cells, Trapped ~14, Sidestep ~13. The army

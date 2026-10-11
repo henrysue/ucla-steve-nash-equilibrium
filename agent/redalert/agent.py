@@ -30,7 +30,7 @@ from .commander import Commander
 from .expand import Expansion
 from .expand import enemy_expansions as _enemy_expansions
 from .guard import Garrison
-from .raid import Raid
+from .raid import RaidCorps
 from . import config as C
 from .matchlog import MatchLog
 from .memory import EnemyMemory
@@ -76,7 +76,7 @@ class RedAlertAgent:
         self._patrol = scouting.ScoutCorps()
         self._intel = intel.EnemyIntel()
         self._memory = EnemyMemory()
-        self._raid = Raid()
+        self._raid = RaidCorps()
         self._expansion = Expansion()
         self._garrison = Garrison()
         self._unstick = Unstick()
@@ -180,6 +180,7 @@ class RedAlertAgent:
             # Confirms the live game_config carries the map picture.
             "map_ore_cells": len(view.ore_cells), "enemy_ore_field": enemy_ore_field(view),
             "raid_target": self._raid.target(view),
+            "raid_squads": self._raid.active, "raid_targets": self._raid.targets(view),
             "flank_via": self._flank_via,
             "expansion": self._expansion.state, "expansion_site": self._expansion.site,
             "expansions_done": self._expansion.sites, "garrison": len(self._garrison.unit_ids),
