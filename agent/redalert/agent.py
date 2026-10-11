@@ -159,6 +159,11 @@ class RedAlertAgent:
         # sparring (TEST ONLY): against ourselves in a test match, one seat
         # plays a fixed archetype (rusher / turtler / macro), without the advisor.
         spar = self._sparring.resolve(context, raw.get("your_seat"))
+        if spar is None and not self._opponents and self._sparring.opponent:   # sparring: TEST ONLY
+            # Against our sparring partner: profile and analyse it like a
+            # tournament opponent (the tournament path, rehearsed in self-play).
+            self._opponents = (self._sparring.opponent,)
+            self._load_profile()
         if spar is not None:
             advice = spar.advice(view)
         else:
@@ -576,6 +581,9 @@ class RedAlertAgent:
         obs = raw.get("observation") if isinstance(raw.get("observation"), dict) else {}
         self._match_info = {"map": (raw.get("map") or {}).get("id") if isinstance(raw.get("map"), dict) else None,
                             "our_faction": obs.get("faction"), "their_faction": obs.get("enemy_faction")}
+        self._load_profile()
+
+    def _load_profile(self) -> None:
         if self._advisor is not None and self._opponents:
             history = opponents.load(self._opponents)
             self._advisor.opponent_history = [{k: v for k, v in r.items() if k != "analysis"} for r in history]

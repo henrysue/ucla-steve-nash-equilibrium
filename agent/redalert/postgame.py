@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 from collections import Counter
 from pathlib import Path
 
@@ -143,14 +144,34 @@ def digest(path) -> dict:
     }
 
 
+_FILLER = re.compile(r"^(that is|keep it|end|thank you|no further notes|done)\b", re.I)
+
+
+def _tidy(value, sentences: int, limit: int) -> str:
+    """Whole sentences only — at most ``sentences`` of them within ``limit``
+    characters — without filler (the model once padded its suggestion with
+    "Keep it. — End. Thank you. . . .")."""
+    text = " ".join(str(value or "").split())
+    parts = [p.strip(" -—") for p in re.split(r"(?<=[.!?])\s+", text)]
+    parts = [p for p in parts if p.strip(". ()") and not (len(p) < 40 and _FILLER.match(p.strip("( ")))]
+    out = ""
+    for p in parts[:sentences]:
+        if len(out) + len(p) + 1 > limit:
+            break
+        out = f"{out} {p}".strip()
+    if not out and parts:                       # one long sentence: cut it at a word
+        out = parts[0][:limit].rsplit(" ", 1)[0] + "…"
+    return out
+
+
 def _clean(answer) -> dict | None:
     if not isinstance(answer, dict):
         return None
-    text = lambda v, n: " ".join(str(v or "").split())[:n]  # noqa: E731
-    out = {k: text(answer.get(k), n) for k, n in (("summary", 700), ("playstyle", 200), ("opening", 300),
-                                                 ("how_to_beat", 400))}
+    out = {k: _tidy(answer.get(k), n, c) for k, n, c in (("summary", 4, 700), ("playstyle", 2, 300),
+                                                         ("opening", 3, 450), ("how_to_beat", 2, 400))}
     for k in _LISTS:
-        out[k] = [text(v, 160) for v in (answer.get(k) or [])[:4] if isinstance(v, str) and v.strip()]
+        out[k] = [_tidy(v, 1, 200) for v in (answer.get(k) or [])[:4] if isinstance(v, str) and v.strip()]
+        out[k] = [v for v in out[k] if v]
     return out if out["summary"] or out["how_to_beat"] else None
 
 
@@ -212,8 +233,11 @@ def timeout_from_env() -> float:
 
 
 def main(argv=None) -> int:
+    from dotenv import load_dotenv
+
     from . import opponents
 
+    load_dotenv()                                   # credentials and the log directory, as the agent has them
     p = argparse.ArgumentParser(description="Analyse a Red Alert match log against an opponent (Claude Opus).")
     p.add_argument("log", type=Path, help="the match log (.jsonl)")
     p.add_argument("--opponent", required=True, help="the opponent's display name")

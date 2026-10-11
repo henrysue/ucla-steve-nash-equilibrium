@@ -5209,3 +5209,43 @@ def test_finished_raids_are_logged_with_their_trades():
     assert corps.drain() == [{"t": 380, "seconds": 40, "size": 4, "survivors": 2, "target": [10, 40],
                               "killed": 0, "lost": 1200}]
     assert corps.drain() == []
+
+
+def test_our_sparring_partner_is_profiled_and_analysed_like_a_tournament_opponent(tmp_path, monkeypatch):
+    from agent.redalert import postgame, sparring
+    monkeypatch.setenv("RA_SPARRING", "macro")
+    monkeypatch.setenv("RA_SPARRING_SEAT", "1")
+    monkeypatch.setenv("REDALERT_PROFILE_DIR", str(tmp_path / "opponents"))
+    monkeypatch.setattr(sparring, "_MARKER_DIR", tmp_path / "markers")
+    monkeypatch.setattr(postgame, "provider_from_env", lambda log=None: types.SimpleNamespace(
+        complete_structured=lambda *a, **k: _ANALYSIS))
+
+    def seats(session):
+        ctx = [DecisionContext(session_id=session, tournament_id=None, game_type="red_alert", agent_id="me",
+                               seat_position=k) for k in (0, 1)]
+        agents = [RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0, log_dir=str(tmp_path / "logs"),
+                                advisor_factory=lambda log, on_advice: ra_advisor.Advisor(
+                                    _FakeProvider(_ANSWER), log=log, clock=lambda: 0.0, interval=1e9))
+                  for _ in (0, 1)]
+        for t in (1.0, 2.0):                                   # both seats seen: self-play confirmed
+            for a, c in zip(agents, ctx):
+                a.choose_action(_state(_t=t, buildings=BASE), c)
+        return agents, ctx
+
+    (us, spar), ctx = seats("s1")
+    assert us._opponents == ("sparring-macro",) and spar._opponents == ()        # only we profile them
+    us.on_match_end(types.SimpleNamespace(raw={"result": {"your_return": 1}}, final_result=None), ctx[0])
+    spar.on_match_end(types.SimpleNamespace(raw={"result": {"your_return": 0}}, final_result=None), ctx[1])
+    (record,) = __import__("agent.redalert.opponents", fromlist=["load"]).load(["sparring-macro"])
+    assert record["analysis"]["how_to_beat"].startswith("Hold the first push")
+    (us2, _), _ = seats("s2")                                                     # the next sparring game
+    assert "AGAINST THIS OPPONENT" in us2._advisor.addendum and us2._advisor.opponent_history
+
+
+def test_the_analysis_keeps_whole_sentences_and_drops_filler():
+    from agent.redalert import postgame
+    padded = "Hold until tank-heavy, then all-in. Raid their second refinery. That is the instruction to follow. " \
+             "Keep it. \u2014 End. Thank you. (No further notes.) . . . . ."
+    assert postgame._tidy(padded, 2, 400) == "Hold until tank-heavy, then all-in. Raid their second refinery."
+    assert postgame._tidy("One. Two. Three is a long one.", 5, 12) == "One. Two."
+    assert postgame._tidy("a" * 50 + " " + "b" * 50, 1, 60).endswith("\u2026")

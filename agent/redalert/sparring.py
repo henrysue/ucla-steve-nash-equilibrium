@@ -334,6 +334,8 @@ class Sparring:
         self._settled = False
         self._marked = False
 
+    opponent: str | None = None    # the other seat's archetype as an opponent name ("sparring-macro"), self-play only
+
     def resolve(self, context, your_seat=None) -> Archetype | None:
         """This seat's archetype in a test match against ourselves, else None.
         ``your_seat``: the observation's seat ("Multi1"), used when the
@@ -367,6 +369,8 @@ class Sparring:
         want = requested_seat()
         if want.isdigit() and int(want) == int(seat):
             self._archetype = _BY_NAME[name]()
+        else:
+            self.opponent = f"sparring-{name}"   # we play the archetype: profile it like a tournament opponent
         return self._archetype
 
     @staticmethod
