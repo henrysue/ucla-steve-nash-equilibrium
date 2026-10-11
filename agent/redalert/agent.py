@@ -171,6 +171,7 @@ class RedAlertAgent:
             "enemy_opening": self._intel.opening(), "threat": threat,
             "confirming": self._confirm_at is not None,
             "raid_squad": len(self._raid.unit_ids),
+            "positions": self._positions(view),
 
             # Confirms the live game_config carries the map picture.
             "map_ore_cells": len(view.ore_cells), "enemy_ore_field": enemy_ore_field(view),
@@ -561,6 +562,29 @@ class RedAlertAgent:
             return False
         sent_at, units = last
         return now - sent_at < C.ARMY_REISSUE_SECONDS and set(order.get("units") or ()) <= units
+
+    def _positions(self, view) -> dict:
+        """Where things stand, for the match log: the army's centre, the
+        massing point, each factory's rally point, our fighters (type, cell,
+        role), harvesters and the enemy units in sight. Logs used to hold only
+        totals, so "the army went behind the base" needed the replay."""
+        roles = {i: "raid" for i in self._raid.unit_ids}
+        roles.update({i: "scout" for i in self._patrol.unit_ids})
+        roles.update({i: "outpost" for i in self._garrison.unit_ids})
+        army = [u.cell for u in view.combat_units if u.cell is not None and u.id not in roles]
+        centre = ([round(sum(c[0] for c in army) / len(army)), round(sum(c[1] for c in army) / len(army))]
+                  if army else None)
+        return {
+            "army_centre": centre,
+            "massing": list(scout.choke_cell(view) or []) or None,
+            "rally": [[b.type, *b.rally] for b in view.buildings
+                      if b.rally is not None and (b.type in C.BARRACKS or b.type == C.WAR_FACTORY)],
+            "units": [[u.type, u.cell[0], u.cell[1], roles.get(u.id, "army")]
+                      for u in view.combat_units if u.cell is not None][:80],
+            "harvesters": [list(h.cell) for h in view.units_of(C.HARVESTER) if h.cell is not None][:16],
+            "enemies": [[a.type, a.cell[0], a.cell[1]] for a in view.enemy_units
+                        if a.cell is not None and not a.wreck][:40],
+        }
 
     def _tagged(self, line: str) -> None:
         """Console lines say which seat they come from ("[redalert seat 1] ..."):

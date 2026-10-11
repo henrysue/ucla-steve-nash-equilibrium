@@ -3989,3 +3989,13 @@ def test_concave_slots_avoid_cliffs_and_our_buildings():
     taken = set(v.blocked_cells) | {c for b in v.buildings for c in buildplan._cells(b.type, b.cell)}
     slots = executor.concave_slots(v, (24, 25), (40, 40), 12)
     assert slots and not any(s in taken for s in slots)
+
+
+def test_the_match_log_records_where_the_army_stands():
+    agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
+    units = [{"id": 30 + i, "type": "e1", "x": 10, "y": 12, "hp": 100} for i in range(4)]
+    v = _view(_t=300.0, buildings=BASE, units=units + _harvs(2), visible_enemies=[{"id": 900, "type": "dog", "x": 30, "y": 30}])
+    pos = agent._positions(v)
+    assert pos["army_centre"] == [10, 12] and pos["massing"] == [11, 11]
+    assert len(pos["units"]) == 4 and pos["units"][0][3] == "army"
+    assert pos["harvesters"] and pos["enemies"] == [["dog", 30, 30]]
