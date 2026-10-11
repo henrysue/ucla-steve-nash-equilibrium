@@ -720,7 +720,7 @@ def _raid_army(n_rockets=4, n_rifles=6):
     return units
 
 
-_ENEMY_HARV = {"id": 90, "type": "harv", "x": 35, "y": 30, "hp": 100}
+_ENEMY_HARV = {"id": 90, "type": "harv", "x": 20, "y": 40, "hp": 100}   # at an expansion: 20 cells from their main (40,40)
 
 
 def test_raid_forms_from_rockets_and_hunts_a_visible_harvester():
@@ -739,12 +739,17 @@ def test_raid_waits_for_the_opening_to_pass_and_spares_defenders():
     assert r.unit_ids == []  # 6 units can't spare 4 and keep 6 defenders
 
 
-def test_raid_targets_a_known_refinery_when_no_harvester_is_known():
+def test_raid_targets_a_known_expansion_refinery_but_never_their_main():
     r = Raid()
     v = _view(_t=200.0, buildings=BASE, units=_raid_army(),
-              visible_enemy_buildings=[{"id": 80, "type": "proc", "x": 38, "y": 38, "hp": 100}])
+              visible_enemy_buildings=[{"id": 80, "type": "proc", "x": 20, "y": 40, "hp": 100}])
     r.update(v, Mode.BUILD, None)
-    assert r.orders(v) == [{"cmd": "attack_move", "units": [100, 101, 102, 103], "to": [38, 38]}]
+    assert r.orders(v) == [{"cmd": "attack_move", "units": [100, 101, 102, 103], "to": [20, 40]}]
+    main = Raid()
+    mv = _view(_t=200.0, buildings=BASE, units=_raid_army(),
+               visible_enemy_buildings=[{"id": 80, "type": "proc", "x": 38, "y": 38, "hp": 100}])
+    main.update(mv, Mode.BUILD, None)
+    assert main.unit_ids == [] and main.orders(mv) == []                     # their main refinery: no raid
 
 
 def test_raid_without_a_target_never_forms():
@@ -869,11 +874,11 @@ def test_scout_route_visits_the_enemy_ore_field():
     assert (37, 34) in route and len(route) == 9
 
 
-def test_raid_falls_back_to_the_enemy_ore_field():
+def test_no_raid_on_their_main_ore_field():
     r = Raid()
     v = dataclasses.replace(_view(_t=200.0, buildings=BASE, units=_raid_army()), ore_cells=_ORE)
     r.update(v, Mode.BUILD, None)
-    assert r.orders(v) == [{"cmd": "attack_move", "units": [100, 101, 102, 103], "to": [37, 34]}]
+    assert r.unit_ids == [] and r.orders(v) == []                            # match 52a77fb1: units sent in to die
 
 
 def test_no_layout_no_enemy_ore_field():
@@ -983,7 +988,10 @@ def test_advice_drives_the_raid_and_turret_side_while_the_rules_form_the_concave
     r = Raid()
     rv = _view(_t=200.0, buildings=BASE, units=_raid_army())
     r.update(rv, Mode.BUILD, None, adv)
-    assert r.orders(rv)[0]["to"] == [37, 34]
+    assert r.orders(rv) == []                          # its pick is their main field: no raid there
+    far = dataclasses.replace(adv, raid_target_cell=(20, 40))
+    r.update(rv, Mode.BUILD, None, far)
+    assert r.orders(rv)[0]["to"] == [20, 40]           # an expansion: the advisor's pick
     # defense_at picks the side (here: east, within 60 deg of the enemy to the south-east);
     # the rules pick a legal cell on it
     pv = _view(base_center=[10, 10], buildings=[{"id": 10, "type": "fact", "x": 10, "y": 10}], production=[{"item": "pbox", "queue": "Defense", "ready": True}])
@@ -1381,7 +1389,7 @@ def test_expansion_scouts_then_trains_moves_and_deploys(monkeypatch):
     assert e.orders(_exp_view(t=271.0)) == [{"cmd": "train", "item": "mcv", "count": 1}]
     mcv = [{"id": 70, "type": "mcv", "x": 6, "y": 10, "hp": 100}]
     e.update(_exp_view(t=300.0, units=mcv), Mode.BUILD)
-    assert e.state == "moving" and e.escorting and e.stage_override == e.site
+    assert e.state == "moving" and e.escorting
     assert e.orders(_exp_view(t=301.0, units=mcv)) == [{"cmd": "move", "units": [70], "to": list(e.site)}]
     there = [{"id": 70, "type": "mcv", "x": e.site[0], "y": e.site[1], "hp": 100}]
     assert e.orders(_exp_view(t=330.0, units=there)) == [{"cmd": "deploy", "units": [70]}]
@@ -1420,16 +1428,19 @@ def test_advisor_can_hold_or_hurry_the_expansion():
     assert e.state == "scouting"
 
 
-def test_the_army_escorts_the_mcv_instead_of_attacking():
+def test_the_army_holds_the_main_choke_while_the_outpost_escorts_the_mcv():
     agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
     agent._expansion.state, agent._expansion.site, agent._expansion.mcv_id = "moving", (20, 8), 70
     agent._expansion._since = 280.0                                          # on the road for 20 s
     tanks = [{"id": 30 + i, "type": "1tnk", "x": 5, "y": 5, "hp": 100, "idle": True} for i in range(4)]
+    rifles = [{"id": 50 + i, "type": "e1", "x": 12, "y": 12, "hp": 100, "idle": True} for i in range(9)]
     mcv = [{"id": 70, "type": "mcv", "x": 10, "y": 8, "hp": 100}]
-    dec = agent.choose_action(_state(_t=300.0, buildings=BASE, units=tanks + mcv, military={"army_value": 4000}), CTX)
+    dec = agent.choose_action(_state(_t=300.0, buildings=BASE, units=tanks + rifles + mcv,
+                                     military={"army_value": 4000}), CTX)
     assert agent._mode is Mode.BUILD
-    assert any(o["cmd"] == "attack_move" and (o["to"][0] - 20) ** 2 + (o["to"][1] - 8) ** 2 <= 5 ** 2
-               for o in dec.action["orders"])                                # a concave at the site
+    tank_orders = [o for o in dec.action["orders"] if o["cmd"] == "attack_move" and set(o["units"]) & {30, 31, 32, 33}]
+    assert tank_orders and all((o["to"][0] - 13) ** 2 + (o["to"][1] - 13) ** 2 <= 6 ** 2 for o in tank_orders)  # the massing point
+    assert len(agent._garrison.unit_ids) == C.GARRISON_SIZE                  # two riflemen walk with it
 
 
 def test_the_expansion_refinery_goes_beside_the_new_ore():
@@ -1484,7 +1495,7 @@ def test_a_defended_enemy_expansion_is_left_to_the_main_army():
     v = dataclasses.replace(_view(_t=300.0, buildings=BASE, units=_raid_army(), visible_enemy_buildings=blds),
                             ore_cells=_THEIR_ORE)
     r.update(v, Mode.BUILD, None)
-    assert r.orders(v)[0]["to"] != [42, 13]
+    assert all(o.get("to") != [42, 13] for o in r.orders(v))
 
 
 def test_a_visible_harvester_still_comes_first():
@@ -3107,7 +3118,7 @@ def _raid_with(units, enemies, t=400.0):
 
 
 _RAIDERS = [{"id": 30 + i, "type": "e3", "x": 30, "y": 30, "hp": 100} for i in range(4)]
-_THEIR_HARV = {"id": 90, "type": "harv", "x": 31, "y": 31, "hp": 100}
+_THEIR_HARV = {"id": 90, "type": "harv", "x": 31, "y": 31, "hp": 100}   # 12-13 from their main: their main field
 
 
 def test_the_raid_kills_defenders_before_harvesters():
@@ -3115,7 +3126,8 @@ def test_the_raid_kills_defenders_before_harvesters():
     r, v = _raid_with(_RAIDERS, [_THEIR_HARV, rifle])
     assert r.situation(v)[0] == "fight"
     assert r.orders(v) == [{"cmd": "attack", "units": [30, 31, 32, 33], "target": 80}]
-    r2, v2 = _raid_with(_RAIDERS, [_THEIR_HARV])
+    far = [dict(u, x=20, y=36) for u in _RAIDERS]
+    r2, v2 = _raid_with(far, [dict(_THEIR_HARV, x=20, y=38)])                # at an expansion
     assert r2.orders(v2) == [{"cmd": "attack", "units": [30, 31, 32, 33], "target": 90}]   # undefended: the truck
 
 
@@ -3282,7 +3294,7 @@ def test_squad_units_dont_count_when_checking_the_army_regrouped():
     assert brain._regrouped(v, None, frozenset(u["id"] for u in away))
 
 
-def test_the_mcv_escort_beats_the_attack_look_ahead_for_the_massing_point():
+def test_a_travelling_mcv_does_not_move_the_massing_point():
     class Escort:
         stage_override = (20, 8)
         def refinery_job(self, view): return None
@@ -3293,7 +3305,7 @@ def test_the_mcv_escort_beats_the_attack_look_ahead_for_the_massing_point():
     tanks = [{"id": 30 + i, "type": "1tnk", "x": 5, "y": 5, "hp": 100, "idle": True} for i in range(4)]
     out = executor.plan(_view(_t=400.0, buildings=BASE, units=tanks), Mode.BUILD, expansion=Escort(), probe=(30, 30))
     moves = [o for o in out if o["cmd"] == "attack_move"]
-    assert moves and all((o["to"][0] - 20) ** 2 + (o["to"][1] - 8) ** 2 <= 6 ** 2 for o in moves)
+    assert moves and all((o["to"][0] - 30) ** 2 + (o["to"][1] - 30) ** 2 <= 6 ** 2 for o in moves)   # the look-ahead, not the MCV
 
 
 @pytest.mark.usefixtures("visible_only")
@@ -3660,17 +3672,17 @@ def test_an_aggressive_enemy_gets_turrets_and_more_army_skips_the_extra_refinery
 
 def test_against_a_macro_enemy_the_raid_party_is_bigger_and_flanks():
     import types
-    macro = types.SimpleNamespace(enemy_style="macro", raid_target_id=None, raid_target_cell=(40, 40))
+    macro = types.SimpleNamespace(enemy_style="macro", raid_target_id=None, raid_target_cell=(20, 40))
     army = [{"id": 30 + i, "type": "e3", "x": 6, "y": 6, "hp": 100} for i in range(14)]
     v = _view(_t=300.0, buildings=BASE, units=army)
     r = Raid()
     r.update(v, Mode.BUILD, None, macro)
     assert len(r.unit_ids) == C.RAID_SQUAD_SIZE_MACRO
     o = r.orders(v)
-    assert len(o) == 2 and o[1].get("queued") and o[1]["to"] == [40, 40]     # round the side, then in
+    assert len(o) == 2 and o[1].get("queued") and o[1]["to"] == [20, 40]     # round the side, then in
     plain = Raid()
     plain.update(v, Mode.BUILD, None, types.SimpleNamespace(enemy_style="standard", raid_target_id=None,
-                                                             raid_target_cell=(40, 40)))
+                                                             raid_target_cell=(20, 40)))
     assert len(plain.unit_ids) == C.RAID_SQUAD_SIZE and len(plain.orders(v)) == 1
 
 
@@ -4058,11 +4070,11 @@ def test_an_expansion_behind_our_base_needs_no_escort():
     e = Expansion()
     e.state, e.site = "moving", (1, 2)                                        # behind [4,4] (the enemy is at [40,40])
     e.track_site(_exp_view(t=700.0))
-    assert not e.escorting and e.stage_override is None
+    assert not e.escorting
     f = Expansion()
     f.state, f.site = "moving", (24, 20)                                      # forward
     f.track_site(_exp_view(t=700.0))
-    assert f.escorting and f.stage_override == (24, 20)
+    assert f.escorting
 
 
 def test_a_roaming_picket_checks_remote_fields_and_the_raid_goes_there_first():
@@ -4077,7 +4089,7 @@ def test_a_roaming_picket_checks_remote_fields_and_the_raid_goes_there_first():
     o = corps.orders(roamer)
     assert o and tuple(o[0]["to"]) in sites                                   # off to a remote field, not its post
     from agent.redalert import raid as ra_raid
-    assert ra_raid._target(v, []) in sites                                     # the raid: remote fields first
+    assert ra_raid._target(v, []) is None                                      # unscouted fields: the scouts' job, no raid
 
 
 def test_a_fresh_look_at_a_weak_enemy_starts_an_attack():
@@ -4188,11 +4200,13 @@ def test_an_attack_winning_its_trades_keeps_going():
 # -- healthy macro: more raid squads the longer the game goes ----------------------------------------
 
 
-def _healthy_view(t, n=30, enemies=(), ore=()):
+def _healthy_view(t, n=30, enemies=(), ore=(), expansions=((8, 40), (40, 8))):
     units = [{"id": 100 + i, "type": "e3" if i % 2 else "e1", "x": 12, "y": 12, "hp": 100} for i in range(n)]
     units += [{"id": 400 + i, "type": "3tnk", "x": 12, "y": 12, "hp": 100} for i in range(6)]
     units += [{"id": 300 + i, "type": "harv", "x": 6, "y": 8, "hp": 100} for i in range(4)]
-    v = _view(_t=t, buildings=BASE, units=units, visible_enemies=list(enemies))
+    v = _view(_t=t, buildings=BASE, units=units, visible_enemies=list(enemies),
+              visible_enemy_buildings=[{"id": 800 + i, "type": "proc", "x": x, "y": y, "hp": 100}
+                                       for i, (x, y) in enumerate(expansions)])   # two expansions our scouts found
     return dataclasses.replace(v, ore_cells=tuple(ore)) if ore else v
 
 
@@ -4225,12 +4239,15 @@ def test_extra_raid_squads_spread_over_different_targets():
     assert corps.active <= 1                                                  # outgunned: extras rejoin
 
 
-def test_raiders_clear_a_scout_in_the_field():
+def test_no_expansion_found_no_raid():
     from agent.redalert import raid as ra
-    scout = {"id": 950, "type": "e1", "x": 22, "y": 20, "hp": 100}           # the middle of the map
-    assert ra._target(_healthy_view(400.0, enemies=[scout]), []) == 950
-    deep = {"id": 951, "type": "e1", "x": 38, "y": 38, "hp": 100}            # at their base: not a picket
-    assert ra._target(_healthy_view(400.0, enemies=[deep]), []) != 951
+    scout = {"id": 950, "type": "e1", "x": 22, "y": 20, "hp": 100}
+    harv = {"id": 951, "type": "harv", "x": 36, "y": 36, "hp": 100}          # on their main field
+    v = _healthy_view(700.0, enemies=[scout, harv], ore=_SIDE_ORE, expansions=())
+    assert ra._target(v, []) is None
+    corps = ra.RaidCorps()
+    corps.update(v, Mode.BUILD, scout_id=None)
+    assert corps.active == 0 and corps.unit_ids == []
 
 
 # -- match ee2ac21b: squads sharing units, raiding on with a small army, a blind attack -------------

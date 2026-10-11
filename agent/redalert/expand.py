@@ -73,14 +73,11 @@ class Expansion:
     @property
     def escorting(self) -> bool:
         """The MCV is on the road to a forward site (nearer the enemy than our
-        base): the army escorts it instead of attacking. A site behind our
-        base is safe: no escort (match f333a770 walked 50-60 units behind
-        both bases for a minute to guard an MCV nobody threatened)."""
+        base): no new attack starts, and the outpost (guard.Garrison) walks
+        with it. The army itself stays at the main choke (match 52a77fb1:
+        the whole army escorted the MCV for two minutes and left the main
+        open; f333a770 walked it behind both bases)."""
         return self.state == "moving" and getattr(self, "_site_forward", True)
-
-    @property
-    def stage_override(self) -> tuple[int, int] | None:
-        return self.site if self.escorting else None
 
     def track_site(self, view: View) -> None:
         """Whether the site lies forward (nearer the enemy than our base)."""

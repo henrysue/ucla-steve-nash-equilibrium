@@ -4,13 +4,15 @@ Harvesters are the enemy's whole income: each one lost costs them 1100
 credits and the ore it would have brought in, and a few cheap infantry can
 kill one far from its army. So, alongside the main army, a squad of
 ``RAID_SQUAD_SIZE`` infantry (rocket soldiers first: harvesters are armored)
-goes after them:
+goes after them — only at an enemy expansion our scouts have found
+(``ENEMY_EXPANSION_MIN_CELLS`` or more from their main base), never their
+main field, where their army and turrets wait (match 52a77fb1). No
+expansion found: no raid. At an expansion, nearest first:
 
-1. a visible enemy harvester -> ``attack`` it by id (focus fire);
+1. the advisor's pick there, or a visible enemy harvester -> ``attack`` it by id;
 2. else a known, lightly defended enemy expansion -> ``attack_move`` to it;
-2b. else the last cell of a harvester we remember -> ``attack_move`` there;
-3. else a known enemy refinery, where harvesters unload -> ``attack_move``;
-4. else the enemy's ore field from the map layout -> ``attack_move``.
+2b. else the last cell of a harvester we remember there -> ``attack_move``;
+3. else a known enemy refinery there, where harvesters unload -> ``attack_move``.
 
 Before any of that, the fight in front of it (:meth:`Raid.situation`):
 enemy fighters within ``RAID_THREAT_RADIUS_CELLS`` are defending, so the
@@ -43,7 +45,7 @@ from __future__ import annotations
 from . import config as C
 from . import orders
 from .modes import DEFENSIVE, Mode
-from .observe import Actor, View, dist2, enemy_ore_field, enemy_spawn_guess
+from .observe import Actor, View, dist2, enemy_spawn_guess
 
 
 class Raid:
@@ -54,7 +56,6 @@ class Raid:
         self._advice = None
         self._drawing_at: float | None = None   # last time enemy fighters were on the squad
         self._via: tuple[int, int] | None = None  # flank waypoint (macro enemy), until reached
-        self._visited: dict[tuple[int, int], float] = {}   # remote field -> when the squad was last there
         self._via_done = False
         self.avoid: list[tuple[int, int]] = []    # the other squads' targets (RaidCorps)
         self.cooldown = C.RAID_COOLDOWN_SECONDS
@@ -81,7 +82,7 @@ class Raid:
     def target(self, view: View):
         """The squad's current target (a harvester id or a cell), for the log."""
         members = self._members(view)
-        return _target(view, members, self._advice, self._visited, self.avoid) if members else None
+        return _target(view, members, self._advice, self.avoid) if members else None
 
     def situation(self, view: View) -> tuple[str, list[Actor], float]:
         """("none" | "clear" | "fight" | "outmatched", the enemy fighters on
@@ -120,11 +121,7 @@ class Raid:
             return [orders.attack(ids, weakest.id)]
         if main_fight is not None:
             return [orders.attack_move(ids, list(main_fight))]   # the second prong
-        centre = _centroid(members)
-        for s, _ in list(self._visited.items()) + [(c, 0) for c in _remote(view)]:
-            if centre is not None and dist2(centre, s) <= 36:
-                self._visited[s] = view.game_seconds
-        target = _target(view, members, self._advice, self._visited, self.avoid)
+        target = _target(view, members, self._advice, self.avoid)
         if target is None:
             return []
         if isinstance(target, int):
@@ -165,7 +162,7 @@ class Raid:
             return False
         if self._released_at is not None and view.game_seconds - self._released_at < self.cooldown:
             return False
-        return _target(view, [], self._advice, self._visited, self.avoid) is not None
+        return _target(view, [], self._advice, self.avoid) is not None
 
     def _form(self, view: View, scout_id: int | None, taken: set = frozenset()) -> None:
         fighters = [u for u in view.combat_units if u.id is not None and u.id != scout_id and u.id not in taken]
@@ -319,83 +316,52 @@ def _cell_of(view: View, target) -> tuple[int, int] | None:
     return tuple(target) if target is not None else None
 
 
-def _picket(view: View, origin, free) -> Actor | None:
-    """The nearest small enemy group out in the field (their scouts and
-    pickets, at least ``RAID_PICKET_SIDE`` of the way from their base): worth
-    ``RAID_PICKET_MAX_VALUE`` or less with its friends close by."""
-    base, enemy = view.base_center, enemy_spawn_guess(view)
-    if base is None or enemy is None:
-        return None
-    side2 = dist2(base, enemy) * C.RAID_PICKET_SIDE ** 2
-    r2 = C.RAID_PICKET_RADIUS_CELLS ** 2
-    cost = lambda a: view.unit_costs.get(a.type, C.DEFAULT_UNIT_COST)  # noqa: E731
-    field = [a for a in view.enemy_units if a.id is not None and a.cell is not None and not a.wreck
-             and a.type not in C.HARVESTER and a.type != C.MCV and dist2(a.cell, enemy) >= side2]
-    small = [a for a in field if free(a.cell)
-             and sum(cost(b) for b in field if dist2(b.cell, a.cell) <= r2) <= C.RAID_PICKET_MAX_VALUE]
-    return min(small, key=lambda a: dist2(a.cell, origin)) if small else None
-
-
-def _remote(view: View) -> list[tuple[int, int]]:
-    from .scouting import remote_sites
-    return remote_sites(view)
-
-
-def _target(view: View, members: list[Actor], advice=None, visited: dict | None = None,
-            avoid=()) -> int | tuple[int, int] | None:
-    """The advisor's pick when it is usable (a visible enemy harvester's id,
-    or a cell), else, nearest the squad (or our base, before it exists): a
-    visible harvester's id, a known lightly defended enemy expansion, a
-    remembered harvester, a known refinery — else the enemy ore field."""
+def _target(view: View, members: list[Actor], advice=None, avoid=()) -> int | tuple[int, int] | None:
+    """Only at their expansions (``ENEMY_EXPANSION_MIN_CELLS`` or more from
+    their main base) that our scouts have found: never their main field,
+    where their army and turrets are (match 52a77fb1 sent squad after squad
+    to it, to die). Nearest the squad (or our base, before it exists): the
+    advisor's pick there, a visible harvester there, a lightly defended
+    expansion, a remembered harvester there, a refinery there. ``None`` (no
+    raid) until a scout finds an expansion."""
     from .expand import enemy_expansions, expansion_defenses
 
-    picked = getattr(advice, "raid_target_id", None)
-    if picked is not None and any(a.id == picked and a.type in C.HARVESTER for a in view.enemy_units):
-        return picked
-    if getattr(advice, "raid_target_cell", None) is not None:
-        return advice.raid_target_cell
-    origin = _centroid(members) or view.base_center
+    main = enemy_spawn_guess(view)
+    far2 = C.ENEMY_EXPANSION_MIN_CELLS ** 2
     s2 = C.RAID_SPREAD_CELLS ** 2
 
-    def free(cell) -> bool:
-        """Not another squad's target."""
-        return all(dist2(cell, a) > s2 for a in avoid)
+    def ok(cell) -> bool:
+        """At an expansion, and not another squad's target."""
+        return (cell is not None and (main is None or dist2(cell, main) >= far2)
+                and all(dist2(cell, a) > s2 for a in avoid))
+
+    picked = getattr(advice, "raid_target_id", None)
+    hit = next((a for a in view.enemy_units if a.id == picked and a.type in C.HARVESTER), None) if picked else None
+    if hit is not None and ok(hit.cell):
+        return picked
+    cell = getattr(advice, "raid_target_cell", None)
+    if cell is not None and ok(cell):
+        return cell
+    origin = _centroid(members) or view.base_center
 
     def nearest(actors):
-        actors = [a for a in actors if a.cell is not None and free(a.cell)]
+        actors = [a for a in actors if ok(a.cell)]
         return min(actors, key=lambda a: dist2(a.cell, origin)) if actors else None
 
     visible = nearest(a for a in view.enemy_units if a.type in C.HARVESTER and a.id is not None)
     if visible is not None:
         return visible.id
-    # Their scouts and pickets out in the field: cheap kills that blind them.
-    picket = _picket(view, origin, free)
-    if picket is not None:
-        return picket.id
     # A known enemy expansion, lightly defended: its refinery is where its
     # harvesters unload, and a fresh expansion has the least protection.
-    soft = [c for c in enemy_expansions(view)
-            if expansion_defenses(view, c) <= C.RAID_EXPANSION_MAX_DEFENSES and free(c)]
+    soft = [c for c in enemy_expansions(view) if expansion_defenses(view, c) <= C.RAID_EXPANSION_MAX_DEFENSES and ok(c)]
     if soft:
         return min(soft, key=lambda c: dist2(c, origin))
     remembered = nearest(a for a in view.known_enemy_units if a.type in C.HARVESTER)
     if remembered is not None:
         return remembered.cell
-    # A refinery, unless defenses guard it: raids hunt soft targets.
     refinery = nearest(a for a in view.enemy_buildings + view.known_enemy_buildings if a.type == C.REFINERY
                        and a.cell is not None and expansion_defenses(view, a.cell) <= C.RAID_EXPANSION_MAX_DEFENSES)
-    if refinery is not None:
-        return refinery.cell
-    # Nothing seen yet: a remote field they may have expanded to (not their
-    # defended main field: f333a770's squads went there and died), nearest
-    # first and not one we checked lately; else their main field.
-    t = view.game_seconds
-    due = [s for s in _remote(view)
-           if t - (visited or {}).get(s, -1e9) >= C.REMOTE_SITE_RECHECK_SECONDS and free(s)]
-    if due:
-        return min(due, key=lambda s: dist2(s, origin))
-    main = enemy_ore_field(view)
-    return main if main is None or free(main) else None
+    return refinery.cell if refinery is not None else None
 
 
 def _centroid(actors: list[Actor]) -> tuple[int, int] | None:

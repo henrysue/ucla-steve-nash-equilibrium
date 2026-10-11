@@ -117,11 +117,15 @@ class Garrison:
 
 
 def forward_site(view: View, expansion) -> tuple[int, int] | None:
-    """Our newest expansion that lies nearer the enemy than our main base, else None."""
+    """Where the outpost goes: the forward site an MCV is on its way to (the
+    outpost escorts it; the army stays at the main choke), else our newest
+    expansion that lies nearer the enemy than our main base, else None."""
     from .observe import enemy_spawn_guess
 
     enemy, base = enemy_spawn_guess(view), view.base_center
     if enemy is None or base is None:
         return None
+    if getattr(expansion, "escorting", False) and expansion.site is not None:
+        return expansion.site
     ahead = [s for s in expansion.sites if dist2(s, enemy) < dist2(base, enemy)]
     return ahead[-1] if ahead else None

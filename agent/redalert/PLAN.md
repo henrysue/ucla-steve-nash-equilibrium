@@ -148,14 +148,27 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
   4+ harvesters and not outgunned, a second raid squad forms at 6:00 and one
   more every 3 minutes (up to 4), each a unit bigger and re-forming after 12 s
   instead of 30 s; together they never take more than 35% of the fighters.
-  Each squad targets something 12+ cells from the others' targets (harvesters,
-  remote expansions, refineries), and enemy scouts and pickets out in the field
-  (groups worth 1200 or less, at least 45% of the way from their base) are
-  targets too. Outgunned or short on harvesters: the extra squads rejoin the army.
+  Each squad targets something 12+ cells from the others' targets.
+  Outgunned or short on harvesters: the extra squads rejoin the army.
   Healthy also needs an army worth 6000+ and ore ahead (ee2ac21b raided on with
   a 9-unit army and mined-out fields); a unit is in one squad only (squads
   re-forming took each other's units); raids that lost 800+ net over the last
   few send only one squad for 2 minutes.
+- **Raids only at their expansions** (52a77fb1 sent squad after squad into
+  their main field to die): a raid forms only for a target at an enemy
+  expansion our scouts found (18+ cells from their main base) — a harvester,
+  refinery or lightly defended expansion there, or the advisor's pick there.
+  No expansion found: no raid (the roaming picket checks remote fields).
+- **The army holds the main choke, always**: an MCV on its way to a forward
+  site gets the 2-rifle outpost as escort, not the army (52a77fb1 walked the
+  whole army to the expansion for two minutes and the main lay open). No new
+  attack starts while it travels.
+- **Behind on army, units first**: estimate 1.3x our army (or the advisor's
+  "more_army"), past 3:00: no money held for an MCV, refineries, depot or dome —
+  only power, barracks, war factories and harvesters keep theirs (52a77fb1
+  banked 1200-3800 for 4 minutes at 2-3x behind).
+- **A lost war factory is rebuilt first** (past 3:00), jumping the dome, depot,
+  kennel or silo in the queue, its money kept even while defending.
 - **No blind attacks**: past 7:00, an attack call whose estimate is mostly the
   "about as big as us" prior (over 2x what we saw lately, no fresh base look)
   waits up to 40 s while a scout looks where their army masses (our massing
