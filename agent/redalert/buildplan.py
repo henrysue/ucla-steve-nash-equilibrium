@@ -66,6 +66,17 @@ def next_build_orders(view: View, expansion_ore: tuple[int, int] | None = None,
             return [orders.cancel(blocker)]
         # If power is queued/placing, fall through — don't stall other logic.
 
+    # Interrupt 2z: no war factory past the opening (lost to an attack):
+    # rebuild it before anything else — tanks, harvesters and the MCV all
+    # come from it — jumping ahead of optional buildings in the queue.
+    if factory_lost(view):
+        weap = _available(view, C.WAR_FACTORY)
+        if weap and not view.queued_count(weap) and not view.ready_in_queue(weap):
+            return [orders.build(weap)]
+        blocker = _ahead_of(view, weap)
+        if blocker in C.OPTIONAL_BUILDINGS:
+            return [orders.cancel(blocker)]
+
     if sparring is not None:   # sparring (TEST ONLY): the rusher's build, the macro's extra refineries
         own = sparring.build(view, depleted)
         if own is not None:
@@ -157,6 +168,30 @@ def _build_order(view: View) -> tuple:
     return C.BUILD_ORDER + C.FOLLOW_UP
 
 
+def factory_lost(view: View) -> bool:
+    """Past the opening (``WAR_FACTORY_REBUILD_AFTER_SECONDS``, a barracks and
+    a refinery up) with no war factory standing: it was destroyed (or never
+    finished). Rebuilding it comes first."""
+    return (view.game_seconds >= C.WAR_FACTORY_REBUILD_AFTER_SECONDS
+            and view.has_building(C.CONSTRUCTION_YARD) and view.has_building(C.BARRACKS)
+            and view.has_building(C.REFINERY) and not view.has_building(C.WAR_FACTORY))
+
+
+def factory_reserve(view: View) -> float:
+    """Money set aside for a lost war factory's rebuild (what is left to pay
+    on it), kept even while defending: units must not starve it."""
+    if not factory_lost(view):
+        return 0.0
+    weap = _available(view, C.WAR_FACTORY) or C.WAR_FACTORY
+    cost = view.unit_costs.get(weap) or C.KNOWN_COSTS.get(weap, C.DEFAULT_UNIT_COST)
+    for p in view.production:
+        if str(p.get("item") or "").lower() == weap and not p.get("ready"):
+            progress = p.get("progress")
+            done = float(progress) if isinstance(progress, (int, float)) and not isinstance(progress, bool) else 0.0
+            return cost * max(0.0, 1.0 - done)
+    return cost
+
+
 def recovering(view: View) -> bool:
     """Fewer harvesters than refineries once the war factory is up: income
     first — no depot, kennel, dome or extra production until the trucks are
@@ -208,6 +243,9 @@ def build_reserve(view: View) -> float:
         resolved = _available(view, step) or (step if isinstance(step, str) else step[0])
         nxt = cost(resolved)
         break
+    weap = _available(view, C.WAR_FACTORY) or C.WAR_FACTORY
+    if factory_lost(view) and not view.queued_count(weap):
+        nxt = max(nxt, cost(weap))     # a lost war factory, not yet queued: its money waits
     return owed + nxt
 
 
@@ -993,6 +1031,20 @@ def refinery_target(view: View) -> int:
         if view.game_seconds >= at:
             want = n
     return min(want, C.MAX_REFINERIES)
+
+
+def _ahead_of(view: View, item: str | None) -> str | None:
+    """The unfinished item at the head of the Building queue when ``item`` is
+    waiting behind it, else ``None``."""
+    if item is None:
+        return None
+    waiting = [
+        str(p.get("item") or "").lower() for p in view.production
+        if str(p.get("queue") or "").lower() == "building" and not p.get("ready")
+    ]
+    if waiting and waiting[0] != item and item in waiting:
+        return waiting[0]
+    return None
 
 
 def _ahead_of_power(view: View, powr: str | None) -> str | None:

@@ -228,7 +228,9 @@ def _production_orders(view: View, mode: Mode, *, sparring=None, threat: bool = 
     # order (and buildings, harvesters, an MCV in production) is pre-funded —
     # unless a rush is on its way or we are defending: then everything goes
     # into the army.
-    reserve = 0.0 if (threat or mode in DEFENSIVE) else buildplan.build_reserve(view)
+    # A lost war factory's rebuild keeps its money even then: it is where
+    # the tanks (and harvesters) come from.
+    reserve = buildplan.factory_reserve(view) if (threat or mode in DEFENSIVE) else buildplan.build_reserve(view)
     spare = funds(view) - reserve
     unit_cost = lambda item: view.unit_costs.get(item, C.DEFAULT_UNIT_COST)  # noqa: E731
 

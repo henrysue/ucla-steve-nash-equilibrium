@@ -52,6 +52,8 @@ BUILD_ORDER = (
 # Then, unless outgunned (units first): the third refinery and the service
 # depot (tanks and the expansion MCV).
 FOLLOW_UP = (REFINERY, SERVICE_DEPOT)
+WAR_FACTORY_REBUILD_AFTER_SECONDS = 180.0   # past the opening, a lost (or missing) war factory is rebuilt first...
+OPTIONAL_BUILDINGS = ("dome", "fix", "kenn", "silo")   # ...cancelling any of these ahead of it in the Building queue
 POWER_MARGIN = 25                  # build power when provided - drained falls below this
 SILO_FILL_RATIO = 0.8              # build a silo when stored ore passes this share of capacity
 

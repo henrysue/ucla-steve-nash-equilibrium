@@ -4286,3 +4286,40 @@ def test_a_blind_attack_call_waits_for_a_look_at_their_army(monkeypatch):
     looked.decide(seen(600.0))
     assert looked.decide(seen(605.0)) is Mode.ALL_IN                          # a fresh look: the usual 4 s
     assert scout.enemy_staging(v(600.0)) is not None
+
+
+# -- a lost war factory is rebuilt first --------------------------------------------------------------
+
+
+_NO_WEAP = [{"id": 10, "type": "fact", "x": 4, "y": 4}, {"id": 11, "type": "powr", "x": 8, "y": 4},
+            {"id": 12, "type": "tent", "x": 8, "y": 8}, {"id": 13, "type": "proc", "x": 12, "y": 8},
+            {"id": 14, "type": "powr", "x": 1, "y": 8}, {"id": 15, "type": "proc", "x": 12, "y": 12}]
+_OFFERED = ["weap", "proc", "powr", "tent", "pbox", "e1", "fix", "dome", "silo"]
+
+
+def _no_weap(t, production=(), cash=3000, **kw):
+    harv = [{"id": 40 + i, "type": "harv", "x": 14, "y": 14, "hp": 100} for i in range(3)]
+    v = _view(_t=t, buildings=_NO_WEAP, units=harv, economy={"cash": cash}, available_production=_OFFERED,
+              production=list(production), **kw)
+    return dataclasses.replace(v, ore_cells=tuple((16 + i, 16 + j) for i in range(8) for j in range(6)))
+
+
+def test_a_lost_war_factory_is_rebuilt_before_more_refineries():
+    v = _no_weap(600.0)                                                       # the schedule wants refineries too
+    assert buildplan.factory_lost(v)
+    assert buildplan.next_build_orders(v) == [{"cmd": "build", "item": "weap"}]
+    assert not buildplan.factory_lost(_no_weap(120.0))                        # the opening: its own order
+
+
+def test_a_lost_war_factory_jumps_optional_buildings_in_the_queue():
+    q = [{"item": "dome", "queue": "Building", "ready": False, "progress": 0.2},
+         {"item": "weap", "queue": "Building", "ready": False}]
+    assert buildplan.next_build_orders(_no_weap(600.0, production=q)) == [{"cmd": "cancel", "item": "dome"}]
+
+
+def test_a_lost_war_factory_keeps_its_money_even_while_defending():
+    v = _no_weap(600.0, cash=1000)
+    assert buildplan.factory_reserve(v) >= 1000                               # the whole price waits for it
+    o = executor._production_orders(v, Mode.DEFEND_BASE)
+    assert not any(x.get("cmd") == "train" and x.get("item") == "e1" for x in o)   # no rifle eats it
+    assert buildplan.factory_reserve(_view(_t=600.0, buildings=BASE + [{"id": 12, "type": "weap", "x": 4, "y": 8}])) == 0
