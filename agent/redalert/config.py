@@ -49,6 +49,7 @@ KNOWN_COSTS = {                    # the skill guide's prices, when the rules gi
     # units (OpenRA mods/ra/rules): the strength model and fights price them too
     "e2": 150, "e4": 300, "1tnk": 700, "2tnk": 850, "3tnk": 1150, "4tnk": 2000, "jeep": 500, "apc": 850,
     "ftrk": 600, "arty": 850, "v2rl": 900,
+    "pbox": 600, "hbox": 750, "gun": 800, "ftur": 600, "tsla": 1200, "agun": 800, "sam": 700,
 }
 
 # -- opening: the pros' double refinery into the war factory (a repeated id = one more of it) --
@@ -108,6 +109,9 @@ SIEGE_TARGET_RADIUS_CELLS = 10     # siege units fire on known defenses this clo
 TURTLE_DEFENSES = 2                # this many known enemy defenses: lean on tanks over infantry
 GROUND_DEFENSE_TYPES = ("pbox", "hbox", "gun", "ftur", "tsla")   # turrets that shoot ground units
 DEFENSE_CLUSTER_CELLS = 12         # turrets this close to the attack target defend it
+DEFENSE_VALUE_WEIGHT = 1.5         # ...and count as this x their price in their army when we weigh an attack
+                                   # (40000 hp each, as much as a medium tank, and they shoot first: efefdca8)
+RAID_FAILED_TARGET_SECONDS = 240.0  # a target where a raid lost more than it killed is left alone this long
 INFANTRY_PER_DEFENSE = 6           # attack defended ground with this many infantry per turret...
 INFANTRY_MASS_MIN = 15             # ...and at least this many...
 ARMOR_PER_DEFENSE = 3              # ...or this many tanks per turret (siege units count double)

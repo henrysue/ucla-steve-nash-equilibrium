@@ -63,6 +63,8 @@ class Raid:
         self.limit: int | None = None             # most units this squad may take (extra squads)
         self._start: tuple[float, float] | None = None   # (kills, deaths) when formed
         self.results: list[float] = []            # net trade (kills - losses) of each finished raid
+        self._aim: tuple[int, int] | None = None  # the cell it was last sent at
+        self.failed: list[tuple[tuple[int, int], float]] = []   # (target, when) of raids that lost
 
     def update(self, view: View, mode: Mode, scout_id: int | None, advice=None, taken: set = frozenset()) -> None:
         """Drop dead members; release or form the squad."""
@@ -124,6 +126,7 @@ class Raid:
         target = _target(view, members, self._advice, self.avoid)
         if target is None:
             return []
+        self._aim = _cell_of(view, target) or self._aim
         if isinstance(target, int):
             return [orders.attack(ids, target)]
         via = self._flank(view, members, target)
@@ -189,8 +192,12 @@ class Raid:
 
     def _release(self, view: View) -> None:
         if self._start is not None:
-            self.results.append((view.kills_cost - self._start[0]) - (view.deaths_cost - self._start[1]))
+            net = (view.kills_cost - self._start[0]) - (view.deaths_cost - self._start[1])
+            self.results.append(net)
+            if net < 0 and self._aim is not None:
+                self.failed.append((self._aim, view.game_seconds))   # it lost there: leave it alone a while
             self._start = None
+        self._aim = None
         self.unit_ids = []
         self._formed_size = 0
         self._released_at = view.game_seconds
@@ -259,7 +266,10 @@ class RaidCorps:
         for s in self.squads:
             s.unit_ids = [i for i in s.unit_ids if i not in seen]
             seen |= set(s.unit_ids)
-        claimed: list[tuple[int, int]] = []
+        # Where a raid lost more than it killed (efefdca8: a squad a minute fed
+        # to a turtle's natural): no squad goes there for a while.
+        blocked = [c for s in self.squads for c, at in s.failed if t - at < C.RAID_FAILED_TARGET_SECONDS]
+        claimed: list[tuple[int, int]] = list(blocked)
         for i, s in enumerate(self.squads):
             if i >= allowed:
                 if s.unit_ids:

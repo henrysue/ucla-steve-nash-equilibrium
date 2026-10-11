@@ -79,9 +79,11 @@ def choose_mode(
     if _should_protect_lead(view) and not (prev_mode in AGGRESSIVE and winning_trades):
         return Mode.PROTECT_LEAD
 
-    # Offensive decision: do we commit the deathball?
+    # Offensive decision: do we commit the deathball? Their turrets at the
+    # target fight too (attack_edge); the retreat rule below reads the armies.
     edge = _army_edge(view)
     threshold = _attack_threshold(view)
+    strike = attack_edge(view)
     # Unseen enemy makes the edge infinite, so also require a real army: never
     # trickle units one at a time into the enemy base.
     cooling_down = retreated_at is not None and view.game_seconds - retreated_at < C.RETREAT_COOLDOWN_SECONDS
@@ -92,7 +94,7 @@ def choose_mode(
                or view.army_value >= C.REATTACK_ARMY_GROWTH * retreat_army)
     # A solid plan: build a real army first (PUSH_ARMY_VALUE), then push.
     built = view.army_value >= C.PUSH_ARMY_VALUE or behind_late
-    can_attack = edge >= threshold and _has_real_army(view) and built and not cooling_down and regrown
+    can_attack = strike >= threshold and _has_real_army(view) and built and not cooling_down and regrown
     # Into turrets only with the right army: a big infantry mass (kills them
     # fast) or tanks/artillery. (Match 654f1b2e: three attacks with a mixed
     # army into three flame towers, three losing trades and retreats.) An
@@ -190,7 +192,10 @@ def blind_estimate(view: View) -> bool:
     income had stopped, theirs had not) and met 13500."""
     if view.enemy_base_scouted:
         return False
-    look = max(view.enemy_army_value, view.enemy_army_peak, 0.0)
+    # What we actually SAW lately — not the peak, whose rebuild term adds our
+    # own growth since a sighting (efefdca8 attacked 13150 into "10440" with
+    # 700 seen: the peak read 5000+, so it never counted as blind).
+    look = max(view.enemy_army_value, view.enemy_seen_recent, 0.0)
     prior = C.ENEMY_PRIOR_SHARE * (view.army_value + view.deaths_cost - view.kills_cost)
     return prior > C.BLIND_PRIOR_RATIO * look
 
@@ -200,6 +205,34 @@ def _army_edge(view: View) -> float:
     Large when nothing is known of them, small when outmatched."""
     ours = view.army_value
     theirs = enemy_estimate(view)
+    if theirs <= 0:
+        return float("inf") if ours > 0 else 0.0
+    return ours / theirs * mix_factor(view)
+
+
+def defenses_at_target(view: View) -> float:
+    """``DEFENSE_VALUE_WEIGHT`` x the price of the enemy turrets we know
+    within ``DEFENSE_CLUSTER_CELLS`` of our attack target."""
+    from .executor import _attack_target
+
+    target = _attack_target(view)
+    if target is None:
+        return 0.0
+    r2 = C.DEFENSE_CLUSTER_CELLS ** 2
+    known = {(a.id if a.id is not None else a.cell): a
+             for a in list(view.enemy_buildings) + list(view.known_enemy_buildings)
+             if a.type in C.ENEMY_DEFENSE_TYPES and a.cell is not None and not a.wreck
+             and dist2(a.cell, target) <= r2}
+    cost = lambda k: view.unit_costs.get(k) or C.KNOWN_COSTS.get(k, C.DEFAULT_UNIT_COST)  # noqa: E731
+    return C.DEFENSE_VALUE_WEIGHT * sum(cost(a.type) for a in known.values())
+
+
+def attack_edge(view: View) -> float:
+    """The army edge for starting an attack: their turrets at the target
+    count with their army (match efefdca8: two attacks into a turtle's
+    ring, 13150 and 15300 against armies the edge called even or weaker)."""
+    ours = view.army_value
+    theirs = enemy_estimate(view) + defenses_at_target(view)
     if theirs <= 0:
         return float("inf") if ours > 0 else 0.0
     return ours / theirs * mix_factor(view)

@@ -126,6 +126,7 @@ class RedAlertAgent:
             view = dataclasses.replace(view, failed_cells=frozenset(self._failed_cells))
         seen_at = self._patrol.base_seen_at
         view = dataclasses.replace(view, enemy_army_peak=self._enemy_peak(view),
+                                   enemy_seen_recent=max((r[1] for r in self._enemy_seen), default=0.0),
                                    ore_running_dry=self._harvest.running_dry(view),
                                    enemy_base_scouted=(seen_at is not None
                                                        and view.game_seconds - seen_at <= C.SCOUT_FRESH_SECONDS))

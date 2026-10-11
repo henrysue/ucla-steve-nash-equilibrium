@@ -4504,3 +4504,42 @@ def test_the_mix_moves_the_army_edge():
     answer = brain.mix_factor(_view(_t=500.0, buildings=BASE, units=rockets, visible_enemies=tanks))
     assert answer > 1.0 and answer > brain.mix_factor(v)                      # rockets are the answer to tanks
     assert brain.mix_factor(_view(_t=500.0, buildings=BASE, units=rifles[:3], visible_enemies=tanks)) == 1.0  # too few to judge
+
+
+# -- match efefdca8: attacks into a turtle's ring --------------------------------------------------------
+
+
+@pytest.mark.usefixtures("visible_only")
+def test_blind_means_what_we_actually_saw_not_the_rebuild_guess(monkeypatch):
+    monkeypatch.setattr(C, "ENEMY_PRIOR_SHARE", 0.8)
+    v = dataclasses.replace(_strong(425.0, army_value=13150, visible_enemy_value=700, kills_cost=600, deaths_cost=500),
+                            enemy_army_peak=5600.0, enemy_seen_recent=700.0)
+    assert brain.blind_estimate(v)                                            # 700 seen: blind, look first
+
+
+@pytest.mark.usefixtures("visible_only")
+def test_turrets_at_the_target_count_against_an_attack():
+    ring = [{"id": 80 + i, "type": "ftur", "x": 38 + i, "y": 37, "hp": 100} for i in range(5)]
+    base = [{"id": 90, "type": "fact", "x": 40, "y": 40, "hp": 100}]
+    v = _strong(500.0, army_value=6000, visible_enemy_value=3500)
+    assert brain.choose_mode(v, cheese_since=None) is Mode.ALL_IN
+    walled = dataclasses.replace(v, enemy_buildings=read(_raw(visible_enemy_buildings=ring + base)).enemy_buildings)
+    assert brain.defenses_at_target(walled) == 1.5 * 5 * 600
+    assert brain.choose_mode(walled, cheese_since=None) is Mode.BUILD         # 6000 vs 3500 + 4500 of turrets
+
+
+def test_a_raid_target_that_cost_us_is_left_alone():
+    from agent.redalert import raid as ra
+    corps = ra.RaidCorps()
+    v = _healthy_view(560.0, ore=_SIDE_ORE)
+    corps.update(v, Mode.BUILD, scout_id=None)
+    first = corps.squads[0]
+    first.orders(v)
+    aim = first._aim
+    assert aim is not None
+    first._start = (v.kills_cost, v.deaths_cost - 1200)                       # it lost 1200 there
+    first._release(v)
+    assert first.failed and first.failed[0][0] == aim
+    first._released_at = -1e9
+    corps.update(dataclasses.replace(v, game_seconds=600.0), Mode.BUILD, scout_id=None)
+    assert all(t is None or (ra._cell_of(v, t) or t) != aim for t in corps.targets(v))

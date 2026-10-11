@@ -176,6 +176,14 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
   at a time for two minutes). Expansion refineries avoid predicted ore; one that
   comes up elsewhere is asked for again at once,
   its spot skipped. Behind on army: no new refinery or MCV unless home runs dry.
+- **Against a turtle** (efefdca8, our agent vs the rules-only turtler: lost
+  39k to 92k): the 7:05 attack (13150 into "10440", 700 actually seen) wasn't
+  caught as blind because the check used the peak, whose rebuild term adds our
+  own growth since a sighting — it now uses what we actually saw lately. Known
+  turrets at the target count as 1.5x their price in the enemy army when we
+  decide to attack (the 7:05 and 13:55 attacks went into 5-7 turrets). A raid
+  target where a squad lost more than it killed is left alone for 4 minutes
+  (a squad a minute died at the turtle's natural).
 - **Unit strength, not price** (strength.py, from the OpenRA weapon/armor tables):
   hit points, armor class and damage per second against each class — a rifleman
   does 1875/s to infantry but 125/s to a tank, a rocket soldier 2500/s to a tank.
