@@ -103,6 +103,12 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
 - **The hunt** (c4caa45e: a barracks survived a 100-unit hunt): up to 8
   groups of 6+, every cell where we once knew an enemy building is a search
   point, and a point counts as checked within 5 cells (about sight).
+- **An honest estimate** (f581756e: 3900 attacked "1040", really 2400-3700 in a
+  defended base): no "smaller economy" discount (it halved the estimate for
+  refineries we hadn't seen; a rusher spends everything on army anyway); a
+  past sighting loses only half our kills since (the rest are buildings and
+  trucks). "Outgunned" compares combat units only (fighters seen recently vs
+  ours; no turrets, buildings or trades).
 - **No coin-flip attacks late** (ef66403c: both seats attacked at ~1.0x after
   7:00 and retreated within 5-7 s; seat 0's retreat was chased into its base):
   the late attack bar is 1.2x the estimate (1.3x before 7:00), 1.0x only when

@@ -510,19 +510,17 @@ class RedAlertAgent:
 
     def _enemy_peak(self, view) -> float:
         """The most enemy army seen in the last ``ENEMY_PEAK_SECONDS``, less
-        what we have killed since each sighting, plus what they could have
-        built since: as much as we built (our army's growth plus our losses),
-        scaled by their refineries against ours. Without the rebuild, a good
+        ``KILL_ARMY_SHARE`` of what we have killed since each sighting (the
+        rest were buildings and trucks: f581756e killed 1800 while their army
+        fell 900), plus what they could have built since: as much as we built
+        (our army's growth plus our losses). Without the rebuild, a good
         defense drove the estimate to nothing and sent 13 units "to finish"
         an enemy that had rebuilt 25 (match b90e492f, 10:01)."""
-        from .brain import _economy_ratio
-
         t = view.game_seconds
         self._enemy_seen.append((t, view.enemy_army_value, view.kills_cost, view.army_value, view.deaths_cost))
         self._enemy_seen = [r for r in self._enemy_seen if t - r[0] <= C.ENEMY_PEAK_SECONDS]
-        ratio = _economy_ratio(view)
-        return max(0.0, max(seen - (view.kills_cost - kills)
-                            + ratio * max(0.0, (view.army_value - army) + (view.deaths_cost - lost))
+        return max(0.0, max(seen - C.KILL_ARMY_SHARE * (view.kills_cost - kills)
+                            + max(0.0, (view.army_value - army) + (view.deaths_cost - lost))
                             for _, seen, kills, army, lost in self._enemy_seen))
 
     def _audit_placements(self, view) -> None:

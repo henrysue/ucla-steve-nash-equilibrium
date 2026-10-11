@@ -3552,7 +3552,7 @@ def test_the_enemy_estimate_sees_through_the_fog():
 def test_what_we_saw_of_their_army_counts_until_we_kill_it():
     agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
     assert agent._enemy_peak(_view(_t=700.0, military={"visible_enemy_value": 4000, "kills_cost": 20000})) == 4000
-    assert agent._enemy_peak(_view(_t=760.0, military={"visible_enemy_value": 1400, "kills_cost": 21000})) == 3000
+    assert agent._enemy_peak(_view(_t=760.0, military={"visible_enemy_value": 1400, "kills_cost": 21000})) == 3500
     assert agent._enemy_peak(_view(_t=900.0, military={"visible_enemy_value": 1400, "kills_cost": 21000})) == 1400
 
 
@@ -3691,15 +3691,6 @@ def test_the_outpost_comes_back_at_any_notice_unless_its_expansion_is_attacked()
 def test_an_aggressive_read_brings_turrets_not_a_standing_hold():
     a = ra_advisor.parse_advice({**_ANSWER, "posture": "default", "enemy_style": "aggressive"}, _view(), 100.0)
     assert a.posture == "default" and a.enemy_style == "aggressive"
-
-
-def test_the_fog_prior_scales_with_the_refineries_we_have_seen():
-    ours = BASE + [{"id": 20 + i, "type": "proc"} for i in range(4)]
-    one = [{"id": 90, "type": "proc", "x": 40, "y": 40, "hp": 100}]
-    blind = _view(_t=500.0, buildings=ours, military={"army_value": 6000, "deaths_cost": 1000})
-    assert brain.enemy_estimate(blind) == 0.8 * 7000                          # nothing known: equal income
-    seen = _view(_t=500.0, buildings=ours, visible_enemy_buildings=one, military={"army_value": 6000, "deaths_cost": 1000})
-    assert brain.enemy_estimate(seen) == 0.8 * 7000 * 0.5                     # one refinery to our four: floored at half
 
 
 def test_the_retreat_floor_grows_with_the_army():
@@ -3912,7 +3903,7 @@ def test_the_estimate_counts_what_they_rebuilt_since_we_saw_them():
                                                  "army_value": 1600, "deaths_cost": 9900}))
     peak = agent._enemy_peak(_view(_t=601.0, military={"visible_enemy_value": 0, "kills_cost": 11900,
                                                         "army_value": 2300, "deaths_cost": 9900}))
-    assert peak == 1200 - 600 + 700                                           # seen, less kills, plus a rebuild like ours
+    assert peak == 1200 - 300 + 700                                           # seen, less half our kills, plus a rebuild like ours
 
 
 def test_no_finishing_straight_after_a_retreat():
@@ -3959,3 +3950,24 @@ def test_console_lines_and_the_reasoning_say_which_seat_they_come_from():
     agent._log("[redalert] advisor t=100s hold: test")
     assert console[-1].startswith("[redalert seat 1] advisor t=100s")
     assert dec.reasoning_summary.startswith("seat 1 | ")
+
+
+# -- match f581756e: an attack on a half-scouted enemy "worth 1040" ---------------------------------
+
+
+def test_a_half_scouted_base_does_not_shrink_the_estimate():
+    ours = BASE + [{"id": 20 + i, "type": "proc"} for i in range(4)]
+    two = [{"id": 90 + i, "type": "proc", "x": 40 + 3 * i, "y": 40, "hp": 100} for i in range(2)]
+    v = _view(_t=434.0, buildings=ours, visible_enemy_buildings=two,
+              military={"army_value": 3900, "kills_cost": 5400, "deaths_cost": 4100})
+    assert brain.enemy_estimate(v) == 0.8 * (3900 + 4100 - 5400)              # not halved for the refineries we missed
+
+
+def test_outgunned_compares_combat_units_only():
+    ours = [{"id": 30 + i, "type": "e1", "x": 5, "y": 5, "hp": 100} for i in range(6)]       # 1800
+    towers = [{"id": 90 + i, "type": "pbox", "x": 40, "y": 40 + i, "hp": 100} for i in range(6)]
+    v = _view(_t=666.0, buildings=BASE, units=ours, visible_enemy_buildings=towers,
+              military={"army_value": 1800, "kills_cost": 11800, "deaths_cost": 14500})
+    assert not brain.outgunned(v)                                             # their turrets and the trades don't count
+    tanks = [{"id": 900 + i, "type": "3tnk", "x": 30, "y": 30, "hp": 100} for i in range(8)]   # 2400
+    assert brain.outgunned(_view(_t=666.0, buildings=BASE, units=ours, visible_enemies=tanks))

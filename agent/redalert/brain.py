@@ -151,21 +151,8 @@ def enemy_estimate(view: View) -> float:
     army adjusted by the trades (their losses are our kills). Match 08560d9b
     attacked with 3900 "against 1400"; they had 5000-6000, and showed 4000
     fifteen seconds before."""
-    prior = C.ENEMY_PRIOR_SHARE * (view.army_value + view.deaths_cost - view.kills_cost) * _economy_ratio(view)
+    prior = C.ENEMY_PRIOR_SHARE * (view.army_value + view.deaths_cost - view.kills_cost)
     return max(view.enemy_army_value, view.enemy_army_peak, prior, 0.0)
-
-
-def _economy_ratio(view: View) -> float:
-    """Their known refineries over ours (capped at 1, floored at
-    ``ENEMY_ECONOMY_FLOOR``): a rusher on one refinery can't field an army
-    the size of ours (match 0ee93a05 held 13 minutes against one on 1-3
-    harvesters, its estimate assuming equal income). 1 with none known."""
-    seen = {b.id: b for b in list(view.known_enemy_buildings) + list(view.enemy_buildings)
-            if b.id is not None and not b.wreck and b.type == C.REFINERY}
-    ours = sum(1 for b in view.buildings if b.type == C.REFINERY and not b.wreck)
-    if not seen or not ours:
-        return 1.0
-    return max(C.ENEMY_ECONOMY_FLOOR, min(1.0, len(seen) / ours))
 
 
 def _army_edge(view: View) -> float:
@@ -245,10 +232,11 @@ def enemy_unit_value(view: View) -> float:
 
 
 def outgunned(view: View) -> bool:
-    """The enemy units we know of are worth ``OUTGUNNED_MIN_VALUE`` and more
-    than ours: units come before an MCV or another refinery (match e2f73d65:
-    red bought a fourth MCV and three refineries with 7 fighters left, and
-    blue's 25 walked through its base)."""
+    """Combat units only: the enemy fighters we see or saw recently (no
+    turrets, buildings or harvesters) are worth ``OUTGUNNED_MIN_VALUE`` and
+    more than our fighters. Then units come before an MCV or another
+    refinery (match e2f73d65: a fourth MCV and three refineries with 7
+    fighters left)."""
     enemy = enemy_unit_value(view)
     return enemy >= C.OUTGUNNED_MIN_VALUE and our_unit_value(view) < enemy
 
