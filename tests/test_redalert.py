@@ -1066,8 +1066,8 @@ def test_advisor_plan_goes_to_console_only_when_it_changes(tmp_path):
                                              _view(), 112.0), 3.0)
     console = [l for l in lines if "advisor t=" in l]
     assert len(console) == 2
-    assert "hold, enemy unknown, balanced: Mass at home, raid their ore. | why: Their army is bigger" in console[0]
-    assert "attack, enemy unknown, balanced: Push their power now." in console[1]
+    assert "hold, enemy unknown (50% sure), balanced: Mass at home, raid their ore. | why: Their army is bigger" in console[0]
+    assert "attack, enemy unknown (50% sure), balanced: Push their power now." in console[1]
 
     final = GameState.from_mcp_state({**_raw(), "phase": "finished", "is_terminal": True,
                                       "result": {"outcome": "win", "reason": "time_limit"}})
