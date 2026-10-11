@@ -65,7 +65,7 @@ def choose_mode(
     # for the win. No protect-lead, no model hold (matches 0561274e and
     # 654f1b2e went to the time limit this way, the latter 59k to 26k with
     # the enemy down to a 400 army and no harvesters).
-    if (hunting or _dominant(view)) and _has_real_army(view) \
+    if (hunting or _dominant(view) or beaten(view)) and _has_real_army(view) \
             and view.army_value >= C.MODEL_HOLD_MAX_EDGE * enemy_estimate(view):
         return Mode.ALL_IN
 
@@ -278,11 +278,20 @@ def must_attack(view: View) -> bool:
     return _catching_up(view) or _overwhelming(view)
 
 
+def beaten(view: View) -> bool:
+    """Nothing left that can fight us: overwhelming (``_overwhelming``) and
+    ahead on trades. Then finish them, and a flank is safe."""
+    return _overwhelming(view) and view.kills_cost > view.deaths_cost
+
+
 def _overwhelming(view: View) -> bool:
-    """Our army is at least MODEL_HOLD_MAX_EDGE x a KNOWN enemy army (an
-    unseen enemy is not a beaten one: fog hides armies)."""
+    """Our army is at least MODEL_HOLD_MAX_EDGE x the estimated enemy army
+    (enemy_estimate: what we saw lately and what the trades imply), while
+    ahead on trades. An estimate of 0 is not "unknown": nothing seen lately
+    and the trades say they have nothing left (match 8db23b32 protected a
+    lead at 19:24 against no army and four buildings instead of finishing)."""
     theirs = enemy_estimate(view)
-    return (theirs > 0 and view.army_value >= C.MIN_ATTACK_ARMY_VALUE
+    return (view.army_value >= C.MIN_ATTACK_ARMY_VALUE and view.kills_cost >= view.deaths_cost
             and view.army_value >= C.MODEL_HOLD_MAX_EDGE * theirs)
 
 

@@ -2573,11 +2573,14 @@ def test_a_stale_advisor_target_does_not_hold_the_army_off_the_last_building():
 @pytest.mark.usefixtures("visible_only")
 def test_hunting_beats_protecting_the_lead_and_a_model_hold():
     units = [{"id": 30 + i, "type": "1tnk", "x": 20, "y": 20, "hp": 100} for i in range(10)]
-    v = _view(buildings=BASE, units=units, _r=60.0,
-              military={"army_value": 9000, "kills_cost": 9000, "deaths_cost": 6000})    # ahead, not dominant
-    assert brain.choose_mode(v, cheese_since=None) is Mode.PROTECT_LEAD              # without the hunt
-    assert brain.choose_mode(v, cheese_since=None, hunting=True) is Mode.ALL_IN
-    assert brain.choose_mode(v, cheese_since=None, model_pref=Mode.BUILD, hunting=True) is Mode.ALL_IN
+    strong = _view(buildings=BASE, units=units, _r=60.0,
+                   military={"army_value": 9000, "visible_enemy_value": 4000, "kills_cost": 9000, "deaths_cost": 6000})
+    assert brain.choose_mode(strong, cheese_since=None) is Mode.PROTECT_LEAD        # a real army left: keep the lead
+    beaten = _view(buildings=BASE, units=units, _r=60.0,
+                   military={"army_value": 9000, "kills_cost": 9000, "deaths_cost": 6000})
+    assert brain.choose_mode(beaten, cheese_since=None) is Mode.ALL_IN              # nothing left: finish (8db23b32)
+    assert brain.choose_mode(beaten, cheese_since=None, hunting=True) is Mode.ALL_IN
+    assert brain.choose_mode(beaten, cheese_since=None, model_pref=Mode.BUILD, hunting=True) is Mode.ALL_IN
 
 
 def test_a_blind_army_follows_the_hunter_not_a_stale_advisor_target():
@@ -3747,3 +3750,15 @@ def test_no_more_harvesters_while_the_fields_run_dry():
     v = _view(buildings=blds, units=_harvs(2))
     assert executor.harvester_target(v) == 4
     assert executor.harvester_target(dataclasses.replace(v, ore_running_dry=True)) == 2
+
+
+def test_with_nothing_left_to_fight_us_we_finish_instead_of_protecting_the_lead():
+    # match 8db23b32 at 19:24: 13600 army, 54300 killed to 35200 lost, no enemy army seen, four buildings left
+    left = [{"id": 90 + i, "type": t, "x": 30 + i, "y": 30, "hp": 100} for i, t in enumerate(("weap", "barr", "proc", "powr"))]
+    v = _view(_t=1164.0, _r=36.0, buildings=BASE, visible_enemy_buildings=left,
+              military={"army_value": 13600, "kills_cost": 54300, "deaths_cost": 35200})
+    assert brain.beaten(v)
+    assert brain.choose_mode(v, cheese_since=None, prev_mode=Mode.ALL_IN) is Mode.ALL_IN
+    level = _view(_t=1164.0, _r=36.0, buildings=BASE, visible_enemy_buildings=left,
+                  military={"army_value": 6000, "visible_enemy_value": 5000, "kills_cost": 30000, "deaths_cost": 28000})
+    assert brain.choose_mode(level, cheese_since=None, prev_mode=Mode.BUILD) is Mode.PROTECT_LEAD   # a real army left
