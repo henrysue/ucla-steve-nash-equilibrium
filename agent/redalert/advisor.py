@@ -28,8 +28,7 @@ Its calls, each inside the game plan and its limits:
 - ``plan`` / ``reasoning``: its read and why, for our log and console.
 
 Where the army masses, how it is formed and how it attacks are the rules'
-(the advisor's staging fields were dropped: match a2952a6d massed toward our
-own ore and faced our own base). Every field may be null: the rules decide.
+Every field may be null: the rules decide.
 
 Real time rules everything here:
 
@@ -116,8 +115,10 @@ it; when you change it, put that evidence in evidence and reasoning. Flip-floppi
 answers apart) marches the army out and back: change only on something new.
 - since_last_ask: what happened since you were last asked — our kills and losses, units, buildings \
 and scouts lost, new sightings, our army's mode changes. Read the change, not just the snapshot.
-- opponent_history: our past games against this opponent (their opening, first push, your read, \
-the result). Expect the same unless the scouting says otherwise, and say so in your first read.
+- opponent_history (and AGAINST THIS OPPONENT, after the plan): our past games against this \
+opponent. A hypothesis, not a fact: players change. Use it to know what to look for, confirm it with \
+this game's scouting, and drop it the moment a sighting contradicts it (tanks early against a \
+"passive" read, no push when a rush was expected). Until confirmed it is worth confidence 0.5 at most.
 - situation.attack_results: how our recent attacks went (who called them, seconds, killed, lost, how \
 they ended) — calibrate your posture on them. situation.mode_changes: our army's recent moves.
 Track your first-push prediction: if it came, say how it went; if it didn't, say what changed.
@@ -150,7 +151,9 @@ and so is "more_army" all game.
 
 YOUR CALLS (null or "default"/"auto" = the engine decides; each works inside the plan's limits):
 - posture: "attack" starts an attack at even odds (1.0x) instead of the engine's bar — never on a \
-blind estimate (a scout looks first) and never into turrets the army can't break; "hold" keeps \
+blind estimate (a scout looks first) and never into turrets the army can't break. Not on a stale \
+estimate either: when situation.enemy_army_last_seen_seconds_ago is over 60, what we know of their \
+army is old and they have rebuilt (a rusher trains riflemen nonstop) — hold until a look; "hold" keeps \
 massing (ignored when we clearly outnumber them or are behind at the end). Use them for what the \
 numbers miss (their army is out of position, a counter-push is coming). Keep a posture 30+ seconds: \
 flip-flopping marches the army out and back.
@@ -275,7 +278,12 @@ def parse_advice(answer: Any, view: View, made_at: float) -> Advice | None:
         defense_at=cell(answer.get("defense_at")),
         army_stance=answer.get("army_stance") if answer.get("army_stance") in C.ARMY_STANCES else "auto",
         guard="off" if answer.get("guard") == "off" else "on",
-        confidence=_confidence(answer.get("confidence")),
+        # No evidence from this game, no more than half sure: a read carried
+        # over from past games alone must not raise turrets or act early
+        # (9ff91807: "passive macro" from history held while they fielded tanks).
+        confidence=(_confidence(answer.get("confidence")) if any(isinstance(e, str) and e.strip()
+                                                                  for e in (answer.get("evidence") or []))
+                    else min(_confidence(answer.get("confidence")), C.ADVISOR_NO_EVIDENCE_CONFIDENCE)),
         evidence=tuple(" ".join(e.split())[:120] for e in (answer.get("evidence") or [])[:4]
                        if isinstance(e, str) and e.strip()),
         plan=" ".join(str(answer.get("plan") or "").split())[:300],

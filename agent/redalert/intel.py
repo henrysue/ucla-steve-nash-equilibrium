@@ -94,7 +94,16 @@ class EnemyIntel:
                 self.first_seen.setdefault(a.type, round(t))
                 new.append({"t": round(t), "kind": kind, "type": a.type, "cell": list(a.cell)})
         self.fresh = new
-        self.sightings = (self.sightings + new)[-60:]
+        self.sightings = (self.sightings + new)[-200:]
+
+    def recent_mix(self, view: View, seconds: float) -> tuple:
+        """The enemy unit types first seen in the last ``seconds`` (each unit
+        once; no harvesters or MCVs): what their army is made of, over more
+        than the units in sight right now."""
+        t = view.game_seconds
+        skip = set(C.HARVESTER) | {C.MCV}
+        return tuple(s["type"] for s in self.sightings
+                     if s["kind"] == "unit" and s["type"] not in skip and t - s["t"] <= seconds)
 
     @property
     def sighted(self) -> int:

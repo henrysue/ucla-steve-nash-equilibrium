@@ -278,7 +278,7 @@ def test_live_shape_prices_the_army_from_unit_costs():
 def test_live_shape_army_attacks_once_it_is_real():
     units = [{"id": i, "type": "1tnk", "x": 5, "y": 5, "hp": 100} for i in range(30, 35)]
     agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
-    agent._patrol.base_seen_at = 190.0                                        # a fresh look at their base
+    agent._patrol.army_looked_at = 190.0                                         # a fresh look at their army
     agent.choose_action(GameState.from_mcp_state(_live_raw(_t=196.0, buildings=BASE, units=units)),
                         DecisionContext(session_id="s", tournament_id=None, game_type="red_alert", agent_id="me",
                                         seat_position=0, game_config=LIVE_CONFIG))     # the attack call...
@@ -578,7 +578,7 @@ def test_retreat_breaks_off_to_the_main_line():
 def test_the_agent_retreats_after_its_attack_goes_bad():
     units = [{"id": 30 + i, "type": "1tnk", "x": 38, "y": 38, "hp": 100} for i in range(3)]
     agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
-    agent._patrol.base_seen_at = 390.0                                        # a fresh look at their base
+    agent._patrol.army_looked_at = 390.0                                         # a fresh look at their army
     agent.choose_action(_state(_t=396.0, buildings=BASE, units=units, military={"army_value": 3100}), CTX)
     agent.choose_action(_state(_t=400.0, buildings=BASE, units=units, military={"army_value": 3100}), CTX)
     assert agent._mode is Mode.ALL_IN                                       # confirmed 4 s later
@@ -1108,7 +1108,7 @@ def test_model_hold_cannot_stop_an_overwhelming_attack():
 def test_the_army_commits_instead_of_flip_flopping():
     tanks = [{"id": 30 + i, "type": "1tnk", "x": 22, "y": 22, "hp": 100} for i in range(4)]
     agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
-    agent._patrol.base_seen_at = 360.0                                        # a fresh look at their base
+    agent._patrol.army_looked_at = 360.0                                         # a fresh look at their army
     agent.choose_action(_state(_t=366.0, buildings=BASE, units=tanks, military={"army_value": 3500}), CTX)
     agent.choose_action(_state(_t=370.0, buildings=BASE, units=tanks, military={"army_value": 3500}), CTX)
     assert agent._mode is Mode.ALL_IN
@@ -1247,11 +1247,11 @@ def test_a_model_defense_side_behind_the_base_is_ignored():
 
 
 def test_double_refinery_order():
-    """Power, barracks, refinery, refinery, power, war factory, refinery, depot."""
+    """Power, barracks, refinery, refinery, power, war factory, depot (tanks), refinery."""
     avail = ["powr", "tent", "proc", "weap", "fix"]
     eco = {"power_provided": 300, "power_drained": 100}
     have = [{"id": 10, "type": "fact"}]
-    expected = ["powr", "tent", "proc", "proc", "powr", "weap", "proc", "fix"]
+    expected = ["powr", "tent", "proc", "proc", "powr", "weap", "fix", "proc"]
     for i, item in enumerate(expected):
         order = buildplan.next_build_orders(_view(buildings=have, units=_harvs(3), available_production=avail, economy=eco))
         assert order == [{"cmd": "build", "item": item}], (i, order)
@@ -1651,13 +1651,14 @@ def test_behind_at_the_end_the_army_attacks_despite_hold_and_regrowth():
 
 def test_production_matches_the_mix_two_factories_three_barracks():
     eco = {"cash": 0, "ore": 20000, "resource_capacity": 30000, "power_provided": 500, "power_drained": 100}
-    base = _ECON_BASE + [{"id": 15, "type": "powr"}, {"id": 16, "type": "fix"}]
-    assert buildplan.next_build_orders(_view(_t=300.0, buildings=base, units=_harvs(1), economy=eco)) == [
+    base = _ECON_BASE + [{"id": 15, "type": "powr"}, {"id": 16, "type": "fix"},
+                         {"id": 18, "type": "proc"}, {"id": 19, "type": "proc"}]          # the follow-up stands
+    assert buildplan.next_build_orders(_view(_t=300.0, buildings=base, units=_harvs(3), economy=eco)) == [
         {"cmd": "build", "item": "tent"}]
-    assert buildplan.next_build_orders(_view(_t=400.0, buildings=base, units=_harvs(1), economy=eco)) == [
+    assert buildplan.next_build_orders(_view(_t=400.0, buildings=base, units=_harvs(3), economy=eco)) == [
         {"cmd": "build", "item": "weap"}]                                      # the vehicle queue first
     full = base + [{"id": 17, "type": "weap"}] + [{"id": 20 + i, "type": "tent"} for i in range(2)]
-    later = buildplan.next_build_orders(_view(_t=400.0, buildings=full, units=_harvs(1), economy=eco))
+    later = buildplan.next_build_orders(_view(_t=400.0, buildings=full, units=_harvs(3), economy=eco))
     assert not any(o.get("item") in ("tent", "weap") for o in later)           # 2 factories, 3 barracks: enough
 
 
@@ -1913,8 +1914,10 @@ def test_the_build_order_waits_instead_of_jumping_to_the_second_power_plant():
 
 
 def test_barracks_multiply_after_the_service_depot():
-    base = _ECON_BASE + [{"id": 15, "type": "powr"}]
+    base = _ECON_BASE + [{"id": 15, "type": "powr"}, {"id": 18, "type": "proc"}, {"id": 19, "type": "proc"}]
     assert buildplan.barracks_target(_view(buildings=base)) == 1
+    two_refineries = [b for b in base if b["id"] != 19] + [{"id": 16, "type": "fix"}]
+    assert buildplan.barracks_target(_view(buildings=two_refineries)) == 1    # the third refinery comes first
     assert buildplan.barracks_target(_view(buildings=base + [{"id": 16, "type": "fix"}])) == 2
     assert buildplan.barracks_target(_view(_t=340.0, buildings=base + [{"id": 16, "type": "fix"}])) == C.MAX_BARRACKS
 
@@ -3326,7 +3329,7 @@ def test_the_army_attacks_in_a_semi_concave_of_groups():
 def test_an_attack_call_on_even_trades_is_checked_again_before_committing():
     tanks = [{"id": 30 + i, "type": "3tnk", "x": 10, "y": 10, "hp": 100} for i in range(6)]
     ahead = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
-    ahead._patrol.base_seen_at = 395.0                                        # a fresh look: not blind
+    ahead._patrol.army_looked_at = 395.0                                        # a fresh look: not blind
     ahead.choose_action(_state(_t=400.0, buildings=BASE, units=tanks,
                                military={"army_value": 5000, "visible_enemy_value": 1000, "kills_cost": 3000}), CTX)
     assert ahead._mode is Mode.ALL_IN                                         # 3000 up on trades: no second look
@@ -3632,12 +3635,16 @@ def test_the_advisor_reads_the_scouts_from_the_first_second():
     assert len(seen[-1][1]["recent_sightings"]) == 7     # each actor once, not every view
 
 
-def test_after_the_opening_refinery_three_and_the_depot_only_when_not_outgunned():
+def test_after_the_opening_the_depot_then_refinery_three_only_when_not_outgunned():
     done = [{"id": 10 + i, "type": t} for i, t in enumerate(("fact", "powr", "tent", "proc", "proc", "powr", "weap"))]
     eco = {"power_provided": 300, "power_drained": 100}
-    calm = _view(_t=170.0, buildings=done, units=_harvs(2), economy=eco)
+    offered = ["powr", "tent", "proc", "weap", "fix", "e1", "e3", "harv"]
+    calm = _view(_t=170.0, buildings=done, units=_harvs(2), economy=eco, available_production=offered)
     assert buildplan.opening_done(calm)
-    assert buildplan.next_build_orders(calm) == [{"cmd": "build", "item": "proc"}]
+    assert buildplan.next_build_orders(calm) == [{"cmd": "build", "item": "fix"}]       # tanks unlock first
+    with_fix = _view(_t=200.0, buildings=done + [{"id": 30, "type": "fix"}], units=_harvs(2), economy=eco,
+                     available_production=offered)
+    assert buildplan.next_build_orders(with_fix) == [{"cmd": "build", "item": "proc"}]
     hot = _view(_t=170.0, buildings=done, units=_harvs(2), economy=eco, visible_enemies=_push(8))
     assert not any(o.get("item") in ("proc", "fix") for o in buildplan.next_build_orders(hot))
 
@@ -5022,11 +5029,14 @@ def test_an_unsure_aggressive_read_puts_up_no_turret():
             {"id": 12, "type": "weap", "x": 4, "y": 8}, {"id": 13, "type": "pbox", "x": 14, "y": 14}]
     v = _view(_t=200.0, buildings=blds, economy={"cash": 3000}, available_production=["pbox", "e1"])
     unsure = ra_advisor.parse_advice({**_ANSWER, "enemy_style": "aggressive", "confidence": 0.3}, v, 200.0)
-    sure = ra_advisor.parse_advice({**_ANSWER, "enemy_style": "aggressive", "confidence": 0.8}, v, 200.0)
+    sure = ra_advisor.parse_advice({**_ANSWER, "enemy_style": "aggressive", "confidence": 0.8,
+                                    "evidence": ["9 riflemen at their exit 2:12"]}, v, 200.0)
+    no_evidence = ra_advisor.parse_advice({**_ANSWER, "enemy_style": "aggressive", "confidence": 0.9}, v, 200.0)
+    assert no_evidence.confidence == C.ADVISOR_NO_EVIDENCE_CONFIDENCE          # history alone: half sure at most
     count = lambda adv: sum(1 for o in executor.plan(v, Mode.BUILD, advice=adv)                 # noqa: E731
                             if o.get("cmd") == "build" and o.get("item") == "pbox")
     assert count(sure) == 1 and count(unsure) == 0                              # the standing one only, unless sure
-    assert ra_advisor.parse_advice({**_ANSWER, "confidence": 7}, v, 1.0).confidence == 1.0       # clamped
+    assert ra_advisor.parse_advice({**_ANSWER, "confidence": 7, "evidence": ["x"]}, v, 1.0).confidence == 1.0   # clamped
     assert ra_advisor.parse_advice({**_ANSWER, "confidence": "high"}, v, 1.0).confidence == 0.5
 
 
@@ -5306,3 +5316,32 @@ def test_a_test_match_opponent_can_be_named_by_hand(tmp_path, monkeypatch):
     assert agent._opponents == ("yuriko_red",)
     agent.on_match_end(types.SimpleNamespace(raw={"result": {"your_return": 1}}, final_result=None), CTX)
     assert opponents.load(["yuriko_red"])[0]["result"] == 1
+
+
+def test_only_a_look_at_their_army_makes_an_attack_call_not_blind():
+    agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
+    agent._patrol.base_seen_at = 300.0                                          # a lap round their base...
+    v = agent._patrol.army_looked_at                                            # ...is not a look at their army
+    assert v is None
+    tanks = [{"id": 30 + i, "type": "3tnk", "x": 10, "y": 10, "hp": 100} for i in range(6)]
+    agent.choose_action(_state(_t=305.0, buildings=BASE, units=tanks, military={"army_value": 6900}), CTX)
+    assert agent._mode is not Mode.ALL_IN and agent._commander.wants_look       # cb4bfc36: it went at 5:08 on a lap
+
+
+def test_under_a_rush_read_the_harvesters_keep_their_money():
+    q = [{"item": "harv", "queue": "Vehicle", "ready": False, "progress": 0.5}]
+    v = _view(buildings=BASE, production=q)
+    assert buildplan.threat_reserve(v) == 550.0                                # half a truck still to pay
+    assert buildplan.threat_reserve(_view(buildings=BASE)) == 0.0
+
+
+def test_the_rocket_ratio_follows_the_last_minutes_of_sightings():
+    from agent.redalert.intel import EnemyIntel
+    intel = EnemyIntel()
+    tanks = [{"id": 900 + i, "type": "2tnk", "x": 30, "y": 30, "hp": 100} for i in range(4)]
+    rifles = [{"id": 950 + i, "type": "e1", "x": 30, "y": 30, "hp": 100} for i in range(4)]
+    intel.update(_view(_t=300.0, visible_enemies=tanks + rifles))
+    mix = intel.recent_mix(_view(_t=400.0), 180.0)
+    assert sorted(mix) == ["2tnk"] * 4 + ["e1"] * 4                            # all of it, though none in sight now
+    assert intel.recent_mix(_view(_t=600.0), 180.0) == ()                      # forgotten after three minutes
+    assert strength.rifles_per_rocket(list(mix)) < C.RIFLE_TO_ROCKET           # armor: more rockets

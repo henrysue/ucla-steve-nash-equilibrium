@@ -164,6 +164,9 @@ class View:
     # Where our raid squads hold part of their army: an attack then goes for
     # targets away from it (executor._attack_target; commander latches it).
     attack_avoid: tuple | None = None
+    # The enemy unit types our scouts first saw in the last ENEMY_MIX_SECONDS
+    # (intel.recent_mix): their mix, for our counter-mix.
+    enemy_mix: tuple = ()
 
     # -- derived, cheap helpers ----------------------------------------------
 

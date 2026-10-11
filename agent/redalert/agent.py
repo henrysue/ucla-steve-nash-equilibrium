@@ -100,6 +100,7 @@ class RedAlertAgent:
         self._opponents: tuple = ()                    # their display names (DecisionContext.opponents)
         self._match_info: dict = {}                    # map, their faction (the opponent profile)
         self._trades = (0.0, 0.0)                      # kills, deaths at the last view
+        self._enemy_army_seen_at: float | None = None   # when an enemy fighter was last in sight
         self._game_seconds: float | None = None
         # The current attack's waypoints: round the chokes, through a flank point (_pick_route).
         self._flank_via: list = []
@@ -136,7 +137,12 @@ class RedAlertAgent:
                               if view.game_seconds - t < C.FAILED_SPOT_SECONDS}
         if self._failed_cells:
             view = dataclasses.replace(view, failed_cells=frozenset(self._failed_cells))
-        seen_at = self._patrol.base_seen_at
+        # Fresh only from a look where their army masses: a lap of their base
+        # keeps clear of their exit and misses it (cb4bfc36 attacked at 5:08
+        # on a lap at 5:07 and met the riflemen massed at Yuriko's exit).
+        seen_at = self._patrol.army_looked_at
+        if any(a.type not in C.HARVESTER and not a.wreck for a in view.enemy_units):
+            self._enemy_army_seen_at = view.game_seconds
         view = dataclasses.replace(view, enemy_army_peak=self._enemy_peak(view),
                                    enemy_seen_recent=max((r[1] for r in self._enemy_seen), default=0.0),
                                    ore_running_dry=self._harvest.running_dry(view),
@@ -147,7 +153,8 @@ class RedAlertAgent:
         self._commander.track_threat(view)
 
         self._intel.update(view)
-        view = dataclasses.replace(view, enemy_turtling=self._intel.turtling(view))
+        view = dataclasses.replace(view, enemy_turtling=self._intel.turtling(view),
+                                   enemy_mix=self._intel.recent_mix(view, C.ENEMY_MIX_SECONDS))
         self._patrol.update(view, taken={*self._raid.unit_ids, *self._garrison.unit_ids})
         if self._patrol.alarm(view):
             self._intel.scouts_lost(view)
@@ -549,6 +556,8 @@ class RedAlertAgent:
                 "our_unit_value": round(brain.our_unit_value(view)),
                 "enemy_unit_value_known": round(brain.enemy_unit_value(view)),
                 "army_odds": round(min(brain.army_odds(view), 99.0), 2),   # by strength (1.0 = even)
+                "enemy_army_last_seen_seconds_ago": (round(view.game_seconds - self._enemy_army_seen_at)
+                                                     if self._enemy_army_seen_at is not None else None),
                 "enemy_turrets_known": len(executor.enemy_defenses(view)),
                 "raid_squad": {"ids": list(self._raid.unit_ids), "situation": raid_state,
                                "drawing_their_army": self._raid.distracting(view)},

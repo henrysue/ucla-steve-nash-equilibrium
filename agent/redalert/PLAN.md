@@ -29,7 +29,10 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
   (`opponents.py`, saved at each match end under `REDALERT_PROFILE_DIR` or
   `<REDALERT_LOG_DIR>/opponents`). Each answer gives a confidence and its
   evidence: an "aggressive" read raises turrets only at 0.6+, and at 0.8+ with
-  evidence a change takes effect without waiting for a second answer. The
+  evidence a change takes effect without waiting for a second answer; with no
+  evidence from this game it is at most 0.5 sure (the opponent history is a
+  hypothesis to confirm, not a fact). It sees how long ago their army was last
+  seen and doesn't call an attack on a stale estimate. The
   system prompt is cached.
 - **Between games** (`postgame.py`): after a tournament match, Claude Opus
   reads a digest of the match log (timeline, mode changes, first sightings,
@@ -70,8 +73,10 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
 ### 1. Economy
 
 - **Opening**: power, barracks, refinery, refinery, power, war factory (the
-  pros' double refinery), its money set aside. Then a third refinery and the
-  service depot, unless outgunned.
+  pros' double refinery), its money set aside. Then the service depot (it
+  unlocks the main battle tanks) and a third refinery, unless outgunned; more
+  barracks only after those. Under a rush read everything goes into units —
+  except a lost war factory's rebuild and the harvesters in production.
 - **Harvesters**: refineries + 2, at most 3 per refinery. **Refineries** by
   game time, spread over the fields by load (at most 3 per field).
 - **Expansions**: to the natural after the depot (from ~3:45), then every 2
@@ -87,9 +92,10 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
 
 ### 2. The army's make-up
 
-About half the combat value in main battle tanks (the strongest offered,
-never light tanks once better ones exist), riflemen and rockets 3:1 shifting
-to 1:1 as their armor grows. Siege units once enemy turrets are known; against
+Half the combat value in main battle tanks (the strongest offered, never
+light tanks once better ones exist), riflemen and rockets 3:1 shifting to 1:1
+as their armor grows — judged from the enemy units our scouts saw in the last
+3 minutes, not just those in sight. Siege units once enemy turrets are known; against
 a turtle about one per turret (3–6) before any attack.
 
 ### 3. Information
@@ -136,8 +142,10 @@ push, raids, the base's defense, behind/outgunned.
    at the end or on the advisor's "attack". Or at once after the main army
    clearly won a fight (1500+ net and 1.5x in 2 minutes) when at least even.
    - **Look first**: knowing little of them (under half our army seen lately,
-     no fresh look at their base), a scout looks first (up to 40 s); on even
-     trades, a second look 4 s later.
+     and no fresh look where their army masses — the mouth of the choke on
+     their side; a lap round their base doesn't count), a scout looks first
+     (up to 40 s); on even trades, a second look 4 s later (cb4bfc36 attacked
+     on a lap and met the riflemen massed at their exit).
    - **Never**: before 3:00 and a war factory, a new attack while the MCV
      travels, within 60 s of a retreat, into a turtle without 3 siege units
      (unless the odds are 2.5+).
@@ -183,6 +191,9 @@ An attack goes on until the retreat rule ends it. No mass/attack flip within
 - **Retreat**: a plain move to the main turret line; regroup there.
 - **Micro**: focus fire on the weakest enemy fighter within 4 cells; siege
   units shell turrets.
+- **Turrets**: a line on the base's front edge straight toward the enemy
+  (side by side across that line, within 35° of it, never behind the base);
+  when it is full, no more are built until the base grows that way.
 
 ### 7. The end
 

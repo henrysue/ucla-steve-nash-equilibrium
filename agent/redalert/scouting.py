@@ -43,6 +43,7 @@ class ScoutCorps:
         self._peek_at: dict[str, float] = {}          # role -> when its last look at their exit ended
         self._peeking: set = set()                    # roles out on a look right now
         self.base_seen_at: float | None = None
+        self.army_looked_at: float | None = None      # when a scout last looked where their army masses (look)
         self._sent: dict[int, tuple[int, int]] = {}  # unit id -> waypoint last ordered
         self._start_at: dict[str, float] = {}        # role -> when its circuit may set out (the stagger)
         self._site_seen: dict[tuple[int, int], float] = {}   # remote ore field -> when a scout last saw it
@@ -147,7 +148,7 @@ class ScoutCorps:
                 look_done = True
                 if dist2(u.cell, self.look) <= 36:
                     self.look = None                 # seen: a fresh look at them
-                    self.base_seen_at = view.game_seconds
+                    self.base_seen_at = self.army_looked_at = view.game_seconds
                 else:
                     out += self._go(view, u, self.look)[0]
                     continue

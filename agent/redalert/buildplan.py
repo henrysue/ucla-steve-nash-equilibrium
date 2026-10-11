@@ -199,6 +199,22 @@ def factory_reserve(view: View) -> float:
     return cost
 
 
+def threat_reserve(view: View) -> float:
+    """Under a threat everything goes into units — except what a lost war
+    factory's rebuild and the harvesters in production still need: an army
+    with no income behind it loses the next fight (cb4bfc36: under a rush read
+    the bank sat at 0 and the third harvester came at 3:36)."""
+    cost = lambda item: view.unit_costs.get(item) or C.KNOWN_COSTS.get(item, C.DEFAULT_UNIT_COST)  # noqa: E731
+    owed = 0.0
+    for p in view.production:
+        item = str(p.get("item") or "").lower()
+        if item in C.HARVESTER and not p.get("ready"):
+            progress = p.get("progress")
+            done = float(progress) if isinstance(progress, (int, float)) and not isinstance(progress, bool) else 0.0
+            owed += cost(item) * max(0.0, 1.0 - done)
+    return factory_reserve(view) + owed
+
+
 def recovering(view: View) -> bool:
     """Fewer harvesters than refineries once the war factory is up: income
     first — no depot, kennel, dome or extra production until the trucks are
@@ -1016,9 +1032,11 @@ def _ahead(view: View, money: float) -> bool:
 
 
 def barracks_target(view: View) -> int:
-    """1 barracks until the opening is done (service depot up: pros add the
-    2nd around 4:00-4:20, after it); then 2, and more by game time."""
-    if not view.has_building(C.SERVICE_DEPOT):
+    """1 barracks until the opening and its follow-up stand (service depot
+    and the third refinery: pros add the 2nd around 4:00-4:20, after them);
+    then 2, and more by game time."""
+    refineries = sum(1 for b in view.buildings if b.type == C.REFINERY and not b.wreck)
+    if not view.has_building(C.SERVICE_DEPOT) or refineries < C.BUILD_ORDER.count(C.REFINERY) + C.FOLLOW_UP.count(C.REFINERY):
         return 1
     want = 2
     for at, n in C.BARRACKS_SCHEDULE:

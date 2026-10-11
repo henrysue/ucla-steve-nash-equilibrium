@@ -200,8 +200,10 @@ def addendum(records) -> str:
     a = done[-1]["analysis"]
     items = lambda k: "; ".join(a.get(k) or []) or "unclear"  # noqa: E731
     return (
-        f"AGAINST THIS OPPONENT (our analysis after {len(done)} past game(s) with them — an addendum to the "
-        "plan above, not a replacement; this game's scouting wins where they differ):\n"
+        f"AGAINST THIS OPPONENT (a hypothesis from our analysis of {len(done)} past game(s) with them — an "
+        "addendum to the plan above, not a replacement. Confirm it with this game's scouting and drop it the "
+        "moment a sighting contradicts it; until confirmed, a read from it alone is worth confidence 0.5 at "
+        "most):\n"
         f"- Summary: {a.get('summary') or 'unclear'}\n"
         f"- Playstyle: {a.get('playstyle') or 'unclear'}. Opening: {a.get('opening') or 'unclear'}\n"
         f"- Worked for them: {items('worked_for_them')}. Failed for them: {items('failed_for_them')}\n"

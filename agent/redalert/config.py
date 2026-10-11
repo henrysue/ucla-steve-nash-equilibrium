@@ -27,7 +27,8 @@ ROCKET = "e3"
 # tanks). Pro replays: heavy/medium tanks in every game, light tanks never.
 TANK_PREFERENCE = ("3tnk", "2tnk", "4tnk", "1tnk")
 MAIN_BATTLE_TANKS = ("3tnk", "2tnk", "4tnk")
-TANK_VALUE_SHARE = 0.45            # pros keep 45-55% of combat value in tanks: below this, tanks come first
+TANK_VALUE_SHARE = 0.5             # pros keep 45-55% of combat value in tanks: below this, tanks come first
+ENEMY_MIX_SECONDS = 180.0          # their army's make-up: the unit types our scouts saw this recently
 HARVESTER = ("harv",)
 SIEGE_UNITS = ("v2rl", "arty")     # Soviet V2 / Allied artillery: outrange defenses
 SCOUT_VEHICLES = ("jeep", "ftrk")
@@ -60,7 +61,7 @@ BUILD_ORDER = (
 )
 # Then, unless outgunned (units first): the third refinery and the service
 # depot (tanks and the expansion MCV).
-FOLLOW_UP = (REFINERY, SERVICE_DEPOT)
+FOLLOW_UP = (SERVICE_DEPOT, REFINERY)   # the depot first: it unlocks the main battle tanks (and the MCV)
 WAR_FACTORY_REBUILD_AFTER_SECONDS = 180.0   # past the opening, a lost (or missing) war factory is rebuilt first...
 OPTIONAL_BUILDINGS = ("dome", "fix", "kenn", "silo")   # ...cancelling any of these ahead of it in the Building queue
 POWER_MARGIN = 25                  # build power when provided - drained falls below this
@@ -458,6 +459,7 @@ ADVICE_TTL_SECONDS = 20.0          # game seconds
 ADVISOR_MEMORY_READS = 4           # its last this many changes of read go back to it with each call (advisor.memory)
 ADVISOR_ACT_CONFIDENCE = 0.6       # its "aggressive" read puts turrets up only this sure
 ADVISOR_FAST_CONFIDENCE = 0.8      # this sure, with evidence: its change takes effect without a second answer
+ADVISOR_NO_EVIDENCE_CONFIDENCE = 0.5   # an answer with no evidence from this game is at most this sure
 SQUAD_LEAD_INTERVAL_SECONDS = 4.0
 SQUAD_LEAD_TIMEOUT_SECONDS = 6.0
 SQUAD_LEAD_MAX_CALLS = 300         # per squad

@@ -238,7 +238,7 @@ def _production_orders(view: View, mode: Mode, *, sparring=None, threat: bool = 
     # into the army.
     # A lost war factory's rebuild keeps its money even then: it is where
     # the tanks (and harvesters) come from.
-    reserve = (buildplan.factory_reserve(view) if (threat or mode in DEFENSIVE)
+    reserve = (buildplan.threat_reserve(view) if (threat or mode in DEFENSIVE)
                else buildplan.build_reserve(view, units_first=units_first))
     spare = funds(view) - reserve
     unit_cost = lambda item: view.unit_costs.get(item, C.DEFAULT_UNIT_COST)  # noqa: E731
@@ -278,7 +278,7 @@ def _production_orders(view: View, mode: Mode, *, sparring=None, threat: bool = 
         ratio = C.RIFLE_TO_ROCKET if funds(view) >= C.ROCKET_RATIO_CREDIT_SWITCH else C.RIFLE_TO_ROCKET_EARLY
         # The counter: more rockets as their army turns to armor (a rifleman
         # does 125/s to a tank, a rocket soldier 2500/s).
-        theirs = strength.enemy_kinds(view)
+        theirs = list(view.enemy_mix) or strength.enemy_kinds(view)   # the last few minutes' sightings
         if len(theirs) >= C.MATCHUP_MIN_UNITS:
             ratio = min(ratio, strength.rifles_per_rocket(theirs))
         if view.queued_count(rifle) < depth:
