@@ -235,7 +235,7 @@ def test_build_leaves_busy_units_alone():
 def test_build_stages_idle_units_at_the_choke():
     idle = [{**u, "idle": True} for u in _ARMY]
     o = executor._army_orders(_view(buildings=BASE, units=idle), Mode.BUILD)
-    assert o == [{"cmd": "attack_move", "units": [30, 31], "to": [11, 11]}]
+    assert o == [{"cmd": "attack_move", "units": [30, 31], "to": [13, 13]}]
 
 
 def test_units_already_staged_are_not_reordered():
@@ -575,9 +575,9 @@ def test_retreat_ends_in_an_attack_when_strong_again():
 
 def test_retreat_attack_moves_back_to_the_staging_point():
     far = [{"id": 30, "type": "1tnk", "x": 40, "y": 40, "hp": 100},
-           {"id": 31, "type": "1tnk", "x": 11, "y": 12, "hp": 100}]
+           {"id": 31, "type": "1tnk", "x": 13, "y": 14, "hp": 100}]
     o = executor._army_orders(_view(buildings=BASE, units=far), Mode.RETREAT)
-    assert o == [{"cmd": "attack_move", "units": [30], "to": [11, 11]}]   # shot at, it shoots back
+    assert o == [{"cmd": "attack_move", "units": [30], "to": [13, 13]}]   # shot at, it shoots back
 
 
 @pytest.mark.usefixtures("visible_only")
@@ -592,7 +592,7 @@ def test_the_agent_retreats_after_its_attack_goes_bad():
                                      military={"army_value": 3100, "visible_enemy_value": 8000}), CTX)   # clearly outmatched
     assert agent._mode is Mode.RETREAT
     # they fight back on the way out, to the massing point in front of the base
-    assert {"cmd": "attack_move", "units": [30, 31, 32], "to": [11, 11]} in dec.action["orders"]
+    assert {"cmd": "attack_move", "units": [30, 31, 32], "to": [13, 13]} in dec.action["orders"]
 
 
 # -- rules from https://api.altruagent-game.com/skill/redalert ---------------
@@ -1279,16 +1279,16 @@ def test_six_riflemen_are_not_an_army_to_attack_with():
 
 
 def test_staging_is_on_our_side_and_stays_up_front():
-    assert scout.choke_cell(_view()) == (11, 11)                # 10 cells in front of [4,4] toward [40,40]
-    near = [{"id": 50, "type": "1tnk", "x": 12, "y": 11, "hp": 100}]
-    assert scout.choke_cell(_view(visible_enemies=near)) == (11, 11)  # enemies there: the army defends up front
+    assert scout.choke_cell(_view()) == (13, 13)                # a quarter of the way (12.7 cells) in front of [4,4] toward [40,40]
+    near = [{"id": 50, "type": "1tnk", "x": 14, "y": 13, "hp": 100}]
+    assert scout.choke_cell(_view(visible_enemies=near)) == (13, 13)  # enemies there: the army defends up front
 
 
 def test_the_advisor_does_not_pick_the_massing_point():
     adv = ra_advisor.parse_advice({**_ANSWER, "stage_at": [22, 22], "formation": "clump"}, _view(), 100.0)
     units = [{"id": 30, "type": "e1", "x": 5, "y": 5, "hp": 100, "idle": True}]
     o = executor._army_orders(_view(buildings=BASE, units=units), Mode.BUILD, advice=adv)
-    assert o[0]["to"] == [11, 11]                               # the rules' massing point, not the advisor's
+    assert o[0]["to"] == [13, 13]                               # the rules' massing point, not the advisor's
 
 
 def test_flank_waypoint_is_off_to_the_side_and_passable():
@@ -1738,7 +1738,7 @@ def test_a_withdrawal_attack_moves_every_unit():
     units = [{"id": 30, "type": "1tnk", "x": 38, "y": 38, "hp": 100}, {"id": 31, "type": "1tnk", "x": 30, "y": 30, "hp": 100}]
     enemy = [{"id": 90, "type": "3tnk", "x": 40, "y": 39, "hp": 100}]
     o = executor._army_orders(_view(buildings=BASE, units=units, visible_enemies=enemy), Mode.RETREAT)
-    assert o == [{"cmd": "attack_move", "units": [30, 31], "to": [11, 11]}]   # no plain moves under fire
+    assert o == [{"cmd": "attack_move", "units": [30, 31], "to": [13, 13]}]   # no plain moves under fire
 
 
 # -- rule-based micro and Haiku squad leads -------------------------------------------
@@ -2349,7 +2349,7 @@ def test_an_early_push_is_spotted_and_we_hold_at_home():
                        units=[{"id": 30 + i, "type": "e1", "x": 15, "y": 15, "hp": 100} for i in range(10)]), LIVE_CONFIG)
     assert scout.early_push_warning(v)                                      # 1600 seen vs 1000 ours
     assert brain.choose_mode(v, cheese_since=None, prev_mode=Mode.BUILD) is Mode.BUILD
-    assert scout.choke_cell(v) == (11, 11)                                  # mass up front (it falls back to its turret only when outnumbered)
+    assert scout.choke_cell(v) == (13, 13)                                  # mass up front (it falls back to its turret only when outnumbered)
     late = dataclasses.replace(v, game_seconds=400.0)
     assert not scout.early_push_warning(late)                               # only early
 
@@ -4004,7 +4004,7 @@ def test_the_match_log_records_where_the_army_stands():
     units = [{"id": 30 + i, "type": "e1", "x": 10, "y": 12, "hp": 100} for i in range(4)]
     v = _view(_t=300.0, buildings=BASE, units=units + _harvs(2), visible_enemies=[{"id": 900, "type": "dog", "x": 30, "y": 30}])
     pos = agent._positions(v)
-    assert pos["army_centre"] == [10, 12] and pos["massing"] == [11, 11]
+    assert pos["army_centre"] == [10, 12] and pos["massing"] == [13, 13]
     assert len(pos["units"]) == 4 and pos["units"][0][3] == "army"
     assert pos["harvesters"] and pos["enemies"] == [["dog", 30, 30]]
 

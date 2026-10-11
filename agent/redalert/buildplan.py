@@ -634,6 +634,10 @@ def legal_spots(view: View, item: str, near=None, skip_types=()) -> list[tuple[i
         if b.type == C.CONSTRUCTION_YARD and b.cell is not None and not b.wreck:
             dx, dy = centre_offset(b.type)
             yards.append((b.cell[0] + dx, b.cell[1] + dy))
+    if near is not None and yards:
+        # Growing one base: inside ITS yard's radius, not the main base's
+        # (anchors near the expansion can reach back toward home).
+        yards = [min(yards, key=lambda y: dist2(y, near))]
     r2 = C.BUILD_RADIUS_CELLS ** 2
 
     def in_radius(s):

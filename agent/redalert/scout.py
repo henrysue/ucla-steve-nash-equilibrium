@@ -147,7 +147,10 @@ def _massing_point(view: View) -> tuple[int, int] | None:
     toward = _enemy_side(view)
     if base is None or toward is None:
         return None
-    stage = _forward(view, base, toward, C.STAGE_FORWARD_CELLS, base)
+    # Farther out on a big map (a share of the way to the enemy): the army
+    # meets attacks sooner and leaves room for buildings (Shadowfiend II).
+    forward = max(C.STAGE_FORWARD_CELLS, C.STAGE_SHARE * dist2(base, toward) ** 0.5)
+    stage = _forward(view, base, toward, forward, base)
     return _clear_stage(view, stage, toward)
 
 

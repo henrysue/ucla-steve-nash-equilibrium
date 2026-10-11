@@ -143,6 +143,11 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
   scout moved them for 90 s); the army fights what comes near and falls back
   to its turret only when outnumbered. Concave slots move off cliffs, trees
   and our buildings.
+- **Mass farther out on big maps**: the massing point is 10 cells in front of
+  the base or a quarter of the way to the enemy, whichever is farther (still
+  capped at 30%): Shadowfiend II 17 cells, Trapped ~14, Sidestep ~13. The army
+  meets attacks sooner and the base has room to grow. Buildings for an
+  expansion stay inside that expansion's yard radius.
 - **An honest estimate** (f581756e: 3900 attacked "1040", really 2400-3700 in a
   defended base): no "smaller economy" discount (it halved the estimate for
   refineries we hadn't seen; a rusher spends everything on army anyway); a
