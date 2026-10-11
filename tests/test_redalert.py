@@ -5345,3 +5345,25 @@ def test_the_rocket_ratio_follows_the_last_minutes_of_sightings():
     assert sorted(mix) == ["2tnk"] * 4 + ["e1"] * 4                            # all of it, though none in sight now
     assert intel.recent_mix(_view(_t=600.0), 180.0) == ()                      # forgotten after three minutes
     assert strength.rifles_per_rocket(list(mix)) < C.RIFLE_TO_ROCKET           # armor: more rockets
+
+
+def test_a_scout_back_from_round_their_base_looks_at_their_army():
+    from agent.redalert.scouting import ScoutCorps
+    corps = ScoutCorps()
+    corps.roles = {"left": 30}
+    corps._circling = {"left"}
+    corps._route = {"left": [(30, 40)]}
+    here = [{"id": 30, "type": "e1", "x": 30, "y": 40, "hp": 100, "idle": True}]   # at its last circuit point
+    v = _view(_t=120.0, units=here)
+    spot = scout.enemy_staging(v)
+    o = corps.orders(v)
+    assert "left" in corps._army_check and corps._legs[30][0] == tuple(spot)    # on to their army
+    assert o and o[0]["units"] == [30]
+    assert corps.army_looked_at is None
+    there = [{"id": 30, "type": "e1", "x": spot[0], "y": spot[1], "hp": 100, "idle": True}]
+    corps.orders(_view(_t=140.0, units=there))
+    assert corps.army_looked_at == 140.0 and "left" not in corps._army_check   # looked: back to its post
+    corps._army_check.add("left")
+    seen = [{"id": 900, "type": "e1", "x": 31, "y": 41, "hp": 100}]           # their fighters in sight on the way
+    corps.orders(_view(_t=150.0, units=here, visible_enemies=seen))
+    assert corps.army_looked_at == 150.0

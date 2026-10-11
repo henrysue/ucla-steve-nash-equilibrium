@@ -42,6 +42,7 @@ class ScoutCorps:
         self.look: tuple[int, int] | None = None     # where their army masses, before a blind attack
         self._peek_at: dict[str, float] = {}          # role -> when its last look at their exit ended
         self._peeking: set = set()                    # roles out on a look right now
+        self._army_check: set = set()                 # roles that, round their base, now look at their army
         self.base_seen_at: float | None = None
         self.army_looked_at: float | None = None      # when a scout last looked where their army masses (look)
         self._sent: dict[int, tuple[int, int]] = {}  # unit id -> waypoint last ordered
@@ -142,6 +143,11 @@ class ScoutCorps:
             if role in self._circling:
                 out += self._circuit_orders(view, role, u)
                 continue
+            if role in self._army_check:
+                moves = self._army_look(view, role, u)
+                if moves is not None:
+                    out += moves
+                    continue
             if search:
                 continue                             # sweeping (above)
             if self.look is not None and not look_done:
@@ -417,10 +423,41 @@ class ScoutCorps:
             if not arrived:
                 return moves
             route.pop(0)                             # there (or as near as it gets): the next waypoint
-        self._circling.discard(role)                 # round the back: info gathered, back to its post
+        self._circling.discard(role)                 # round the back: info gathered...
         self.base_seen_at = view.game_seconds
+        self._army_check.add(role)                   # ...and, still alive, a look at their army
+        moves = self._army_look(view, role, u)
+        if moves is not None:
+            return moves
         post = self.post(view, role)
         return self._go(view, u, post)[0] if post else []
+
+    def _army_look(self, view: View, role: str, u) -> list[dict] | None:
+        """A scout back from round their base looks where their army masses
+        (scout.enemy_staging: the mouth of the choke on their side): the
+        army's size and make-up, which a lap of the base, kept clear of their
+        front, doesn't see (cb4bfc36 attacked on such a lap into riflemen
+        massed at Yuriko's exit). Done once it is there, or sees their
+        fighters, or gets as near as it can: the look counts (the attack's
+        blind check) when it saw them or stood there. None when done."""
+        from .scout import enemy_staging
+
+        spot = enemy_staging(view)
+        r2 = (C.SCOUT_FLEE_CELLS + 2) ** 2
+        saw = any(a.cell is not None and not a.wreck and a.type not in C.HARVESTER and dist2(a.cell, u.cell) <= r2
+                  for a in view.enemy_units)
+        if spot is None:
+            self._army_check.discard(role)
+            return None
+        if saw or dist2(u.cell, spot) <= 36:
+            self._army_check.discard(role)
+            self.base_seen_at = self.army_looked_at = view.game_seconds
+            return None
+        moves, arrived = self._go(view, u, spot)
+        if arrived:                                  # as near as it gets, and nothing there to see
+            self._army_check.discard(role)
+            return None
+        return moves
 
     @staticmethod
     def _claim(view: View, taken: set) -> int | None:

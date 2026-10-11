@@ -28,7 +28,7 @@ Its calls, each inside the game plan and its limits:
 - ``plan`` / ``reasoning``: its read and why, for our log and console.
 
 Where the army masses, how it is formed and how it attacks are the rules'
-Every field may be null: the rules decide.
+calls. Every field may be null: the rules decide.
 
 Real time rules everything here:
 

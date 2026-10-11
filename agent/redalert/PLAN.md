@@ -100,7 +100,11 @@ a turtle about one per turret (3–6) before any attack.
 
 ### 3. Information
 
-- **0–3 min**: two scouts round the back of their base: their opening.
+- **0–3 min**: two scouts round the back of their base: their opening. A
+  scout still alive after a circuit (these, and every later base check) goes
+  on to look where their army masses (the mouth of their choke) before it
+  returns to its post: their army's size and make-up, and a fresh look for
+  the attack's blind check.
 - **Routes**: every scout trip is walked in attack-move legs of 8 steps round
   the chokes, the front of their base (15 cells, 70° either side of their way
   out) and 8 cells round every turret we know; circuits start at the side of
