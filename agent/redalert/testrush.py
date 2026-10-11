@@ -18,7 +18,7 @@ scouting, early-push warning and defenses get tested:
 
 Self-play is detected with marker files: each seat writes
 ``<tmp>/redalert_selfplay/<session>-seat<k>`` and looks for the other seat's.
-Environment: ``RA_TEST_RUSH=0`` turns it off; ``RA_TEST_RUSH_SEAT`` picks the
+Environment: off unless ``RA_TEST_RUSH=1``; ``RA_TEST_RUSH_SEAT`` picks the
 rushing seat. Remove this module and its few call sites (grep "testrush")
 to retire it.
 """
@@ -61,7 +61,7 @@ class SelfPlayRusher:
         08560d9b and 89356b51 never rushed although RA_TEST_RUSH=1)."""
         if self._settled:
             return self._active
-        if os.environ.get("RA_TEST_RUSH", "1").strip() == "0":
+        if os.environ.get("RA_TEST_RUSH", "0").strip() != "1":   # off unless asked for
             self._settled = True
             return False
         if getattr(context, "tournament_id", None) is not None:

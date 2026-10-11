@@ -2923,6 +2923,14 @@ def test_the_rusher_reads_the_seat_from_the_observation_when_the_context_has_non
     assert seat1.active(_ctx(None, session="spar-9"), "Multi1")
 
 
+def test_the_rusher_is_off_unless_asked_for(monkeypatch, tmp_path):
+    monkeypatch.delenv("RA_TEST_RUSH", raising=False)
+    monkeypatch.setattr(testrush, "_MARKER_DIR", tmp_path)
+    a, b = testrush.SelfPlayRusher(), testrush.SelfPlayRusher()
+    a.active(_ctx(0, session="spar-8"))
+    assert not b.active(_ctx(1, session="spar-8"))                       # self-play, but not asked for
+
+
 def test_the_rusher_can_be_turned_off_or_moved(monkeypatch, tmp_path):
     monkeypatch.setattr(testrush, "_MARKER_DIR", tmp_path)
     monkeypatch.setenv("RA_TEST_RUSH", "0")

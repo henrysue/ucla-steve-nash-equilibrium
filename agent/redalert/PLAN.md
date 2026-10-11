@@ -229,5 +229,5 @@ cell from the base are silently moved next to the construction yard.
 - `testrush.py`: in a self-play test match (no tournament id, both seats on this machine), seat 1 rushes —
   a rush build (2 refineries, 3 barracks, war factory), units without pause (infantry 3 deep, tanks 2),
   no expansion or turrets; it masses a ball and launches at 2500 (or 1500 by 3:30), pushes until the army
-  is below 40% of its launch value, then re-masses — to test our scouting, early-push warning and defenses. `RA_TEST_RUSH=0` turns it off, `RA_TEST_RUSH_SEAT`
+  is below 40% of its launch value, then re-masses — to test our scouting, early-push warning and defenses. Off unless `RA_TEST_RUSH=1`, `RA_TEST_RUSH_SEAT`
   picks the seat. Remove the module and every line marked "testrush" (agent.py, executor.py, tests).
