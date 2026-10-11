@@ -384,7 +384,8 @@ class Expansion:
         even = abs(view.kills_cost - view.deaths_cost) <= C.EXPAND_EVEN_TRADE_BAND
         if wish == "wait" and not self._push(view.game_seconds) and not getattr(self, "_ore_running_out", False)                 and not even:
             return False   # broke and trading even: income beats the advisor's caution
-        earliest = C.EXPAND_EARLIEST_SECONDS if wish == "now" else C.EXPAND_AFTER_SECONDS
+        # A turtle doesn't come out: take the ground early and out-scale it.
+        earliest = C.EXPAND_EARLIEST_SECONDS if (wish == "now" or view.enemy_turtling) else C.EXPAND_AFTER_SECONDS
         return (
             view.game_seconds >= earliest
             and len(view.units_of(C.HARVESTER)) >= C.EXPAND_MIN_HARVESTERS

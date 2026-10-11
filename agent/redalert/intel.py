@@ -21,6 +21,7 @@ class EnemyIntel:
     def __init__(self) -> None:
         self._rush = False
         self._economy = False
+        self._push_at: float | None = None   # their fighters last seen pushing near our base
 
     @staticmethod
     def buildings(view: View) -> Counter:
@@ -30,6 +31,7 @@ class EnemyIntel:
         return Counter(seen.values())
 
     def update(self, view: View) -> None:
+        self._track_pushes(view)
         c = self.buildings(view)
         if sum(c.values()) < C.INTEL_MIN_BUILDINGS:
             return
@@ -57,6 +59,31 @@ class EnemyIntel:
             return False
         c = self.buildings(view)
         return sum(c.values()) >= C.INTEL_MIN_BUILDINGS and c.get(C.REFINERY, 0) <= 1
+
+    def _track_pushes(self, view: View) -> None:
+        from .scout import our_yards
+
+        yards = list(our_yards(view)) or ([view.base_center] if view.base_center else [])
+        r2 = C.PUSH_NEAR_BASE_CELLS ** 2
+        near = [a for a in view.enemy_units if a.cell is not None and not a.wreck and a.type not in C.HARVESTER
+                and any((a.cell[0] - y[0]) ** 2 + (a.cell[1] - y[1]) ** 2 <= r2 for y in yards)]
+        cost = lambda k: view.unit_costs.get(k) or C.KNOWN_COSTS.get(k, C.DEFAULT_UNIT_COST)  # noqa: E731
+        if sum(cost(a.type) for a in near) >= C.PUSH_SEEN_VALUE:
+            self._push_at = view.game_seconds
+
+    def turtling(self, view: View) -> bool:
+        """They turtle: ``TURTLE_READ_DEFENSES`` ground turrets known, past
+        ``TURTLE_READ_SECONDS``, no push near our base for
+        ``TURTLE_QUIET_SECONDS`` and no rush read. Answer: the dome, siege
+        units (they outrange turrets), more expansions, and no attack before
+        the siege is there (match efefdca8 attacked a turtle's ring twice)."""
+        if view.game_seconds < C.TURTLE_READ_SECONDS or self._rush:
+            return False
+        if self._push_at is not None and view.game_seconds - self._push_at < C.TURTLE_QUIET_SECONDS:
+            return False
+        ids = {(a.id if a.id is not None else a.cell) for a in list(view.known_enemy_buildings) + list(view.enemy_buildings)
+               if a.type in C.GROUND_DEFENSE_TYPES and not a.wreck}
+        return len(ids) >= C.TURTLE_READ_DEFENSES
 
     def opening(self) -> str | None:
         return "rush" if self._rush else "economy" if self._economy else None

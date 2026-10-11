@@ -107,6 +107,16 @@ SIEGE_MIN_ENEMY_DEFENSES = 1       # siege units only once we know of enemy defe
 SIEGE_MAX = 4
 SIEGE_TARGET_RADIUS_CELLS = 10     # siege units fire on known defenses this close first
 TURTLE_DEFENSES = 2                # this many known enemy defenses: lean on tanks over infantry
+# The turtle read (intel.EnemyIntel.turtling): this many ground turrets known,
+# past TURTLE_READ_SECONDS, and no push of theirs near our base for
+# TURTLE_QUIET_SECONDS (a rusher builds pillboxes too, but keeps coming).
+TURTLE_READ_DEFENSES = 4
+TURTLE_READ_SECONDS = 150.0
+TURTLE_QUIET_SECONDS = 300.0
+PUSH_NEAR_BASE_CELLS = 20          # enemy fighters worth PUSH_SEEN_VALUE this close to a yard of ours = a push
+PUSH_SEEN_VALUE = 1000
+SIEGE_MAX_TURTLE = 6               # against a turtle: about one siege unit per turret, up to this...
+SIEGE_ATTACK_MIN = 3               # ...and no attack before this many (unless overwhelming)
 GROUND_DEFENSE_TYPES = ("pbox", "hbox", "gun", "ftur", "tsla")   # turrets that shoot ground units
 DEFENSE_CLUSTER_CELLS = 12         # turrets this close to the attack target defend it
 DEFENSE_VALUE_WEIGHT = 1.5         # ...and count as this x their price in their army when we weigh an attack

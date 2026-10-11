@@ -260,7 +260,14 @@ def _production_orders(view: View, mode: Mode, *, sparring=None, threat: bool = 
     # tanks lag (and a main battle tank is offered), the tank queue runs full
     # and infantry wait unless there is money for both (52a77fb1: riflemen
     # and light tanks against a medium-tank army).
-    lag = tanks_lag(view, tank) and has_factory and not short_harvesters
+    # Against a turtle, siege units first (about one per turret): they share
+    # the vehicle queue with tanks, so tanks wait while the siege is short.
+    siege = C.resolve(C.SIEGE_UNITS, view.available)
+    siege_want = (min(C.SIEGE_MAX_TURTLE, max(C.SIEGE_ATTACK_MIN, len(enemy_defenses(view))))
+                  if view.enemy_turtling else 0)
+    siege_first = (bool(siege) and has_factory and not short_harvesters
+                   and len(view.units_of(C.SIEGE_UNITS)) + view.queued_count(siege or "") < siege_want)
+    lag = tanks_lag(view, tank) and has_factory and not short_harvesters and not siege_first
     hold_infantry = (lag and not threat and mode not in DEFENSIVE
                      and spare < unit_cost(tank) + unit_cost(rifle or "e1"))
     if has_barracks and rifle and spare >= unit_cost(rifle) and not hold_infantry:
@@ -275,12 +282,14 @@ def _production_orders(view: View, mode: Mode, *, sparring=None, threat: bool = 
         if not broke and rocket and _should_add_rocket(view, ratio) and view.queued_count(rocket) < 1 \
                 and spare >= unit_cost(rifle) + unit_cost(rocket):
             out.append(orders.train(rocket, count=1))
-    if has_factory and tank and not short_harvesters and (lag or (not broke and spare >= unit_cost(tank))):
+    if siege_first:
+        if view.queued_count(siege) == 0:
+            out.append(orders.train(siege, count=1))
+    elif has_factory and tank and not short_harvesters and (lag or (not broke and spare >= unit_cost(tank))):
         if view.queued_count(tank) < min(C.MAX_QUEUE_DEPTH, (2 if rich or lag else 1) + (1 if turtle else 0)):
             out.append(orders.train(tank, count=1))
     # Siege units (V2 / artillery) once defenses are known: they outrange them.
-    siege = C.resolve(C.SIEGE_UNITS, view.available)
-    if (siege and has_factory and not short_harvesters and not broke and spare >= unit_cost(siege)
+    if (siege and not siege_first and has_factory and not short_harvesters and not broke and spare >= unit_cost(siege)
             and len(enemy_defenses(view)) >= C.SIEGE_MIN_ENEMY_DEFENSES
             and len(view.units_of(C.SIEGE_UNITS)) + view.queued_count(siege) < C.SIEGE_MAX
             and view.queued_count(siege) == 0):

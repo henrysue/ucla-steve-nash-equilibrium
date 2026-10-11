@@ -3424,7 +3424,7 @@ def test_the_advisor_sees_what_the_rules_see():
     for key in ("mode", "confirming_attack", "massing_point", "our_unit_value", "enemy_unit_value_known",
                 "enemy_turrets_known", "raid_squad", "scouts", "intel"):
         assert key in seen, key
-    assert set(seen["intel"]) == {"enemy_opening", "threat_alarm", "their_base_seen_at"}
+    assert set(seen["intel"]) == {"enemy_opening", "enemy_turtling", "threat_alarm", "their_base_seen_at"}
 
 
 # -- placement keeps off the trucks' roads and away from units (a2952a6d) -------------------------
@@ -4543,3 +4543,46 @@ def test_a_raid_target_that_cost_us_is_left_alone():
     first._released_at = -1e9
     corps.update(dataclasses.replace(v, game_seconds=600.0), Mode.BUILD, scout_id=None)
     assert all(t is None or (ra._cell_of(v, t) or t) != aim for t in corps.targets(v))
+
+
+# -- reading a turtle: the dome, siege units, no attack before the siege -----------------------------
+
+
+_RING = [{"id": 80 + i, "type": "ftur", "x": 36 + i, "y": 37, "hp": 100} for i in range(5)]
+
+
+def test_a_turtle_is_read_from_turrets_and_quiet_and_a_rusher_is_not():
+    from agent.redalert.intel import EnemyIntel
+    intel = EnemyIntel()
+    v = _view(_t=400.0, buildings=BASE, visible_enemy_buildings=_RING)
+    intel.update(v)
+    assert intel.turtling(v)
+    rusher = EnemyIntel()
+    push = [{"id": 900 + i, "type": "e1", "x": 8, "y": 8, "hp": 100} for i in range(12)]
+    rusher.update(_view(_t=300.0, buildings=BASE, visible_enemies=push, visible_enemy_buildings=_RING))
+    assert not rusher.turtling(_view(_t=400.0, buildings=BASE, visible_enemy_buildings=_RING))   # it pushed 100 s ago
+    assert not EnemyIntel().turtling(_view(_t=400.0, buildings=BASE, visible_enemy_buildings=_RING[:3]))
+
+
+def test_against_a_turtle_the_dome_comes_early_and_siege_comes_first():
+    blds = BASE + [{"id": 12, "type": "weap", "x": 4, "y": 8}, {"id": 13, "type": "proc", "x": 9, "y": 9},
+                   {"id": 14, "type": "fix", "x": 1, "y": 12}, {"id": 15, "type": "powr", "x": 1, "y": 1}]
+    harv = [{"id": 40 + i, "type": "harv", "x": 14, "y": 14, "hp": 100} for i in range(4)]
+    v = _view(_t=300.0, buildings=blds, units=harv, economy={"cash": 3000},
+              available_production=["dome", "e1", "e3", "3tnk", "v2rl", "harv"])
+    assert not any(o.get("item") == "dome" for o in buildplan.next_build_orders(v))       # 5:00: not yet...
+    turtle = dataclasses.replace(v, enemy_turtling=True)
+    assert buildplan.next_build_orders(turtle) == [{"cmd": "build", "item": "dome"}]      # ...but against a turtle
+    o = executor._production_orders(dataclasses.replace(turtle, enemy_buildings=read(_raw(visible_enemy_buildings=_RING)).enemy_buildings), Mode.BUILD)
+    assert any(x.get("item") == "v2rl" for x in o) and not any(x.get("item") == "3tnk" for x in o)
+
+
+@pytest.mark.usefixtures("visible_only")
+def test_no_attack_into_a_turtle_before_the_siege():
+    tanks = [{"id": 30 + i, "type": "3tnk", "x": 10, "y": 10, "hp": 100} for i in range(6)]
+    v = dataclasses.replace(_view(_t=600.0, buildings=BASE + [{"id": 12, "type": "weap", "x": 4, "y": 8}], units=tanks,
+                                  military={"army_value": 9000, "visible_enemy_value": 4500}), enemy_turtling=True)
+    assert brain.choose_mode(v, cheese_since=None) is Mode.BUILD                          # 2x, but no siege yet
+    siege = tanks + [{"id": 60 + i, "type": "v2rl", "x": 10, "y": 10, "hp": 100} for i in range(3)]
+    sv = dataclasses.replace(v, units=read(_raw(units=siege)).units)
+    assert brain.choose_mode(sv, cheese_since=None) is Mode.ALL_IN

@@ -135,6 +135,7 @@ class RedAlertAgent:
         self._commander.track_threat(view)
 
         self._intel.update(view)
+        view = dataclasses.replace(view, enemy_turtling=self._intel.turtling(view))
         self._patrol.update(view, taken={*self._raid.unit_ids, *self._garrison.unit_ids})
         threat = self._patrol.alarm(view) or self._intel.rushing(view)
         # The opening is the standard build order's: the advisor is consulted
@@ -448,6 +449,7 @@ class RedAlertAgent:
                                "drawing_their_army": self._raid.distracting(view)},
                 "scouts": dict(self._patrol.roles),
                 "intel": {"enemy_opening": self._intel.opening(),
+                          "enemy_turtling": view.enemy_turtling,
                           "threat_alarm": self._patrol.alarm(view) or self._intel.rushing(view),
                           "their_base_seen_at": self._patrol.base_seen_at},
             })

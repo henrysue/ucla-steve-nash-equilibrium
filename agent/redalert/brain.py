@@ -101,6 +101,13 @@ def choose_mode(
     # attack already under way is left to the retreat rule.
     if can_attack and prev_mode not in AGGRESSIVE and not behind_late and not can_break_defenses(view):
         can_attack = False
+    # A turtle waits for the siege: SIEGE_ATTACK_MIN siege units, or an army
+    # that overwhelms army and turrets together (efefdca8: two attacks into
+    # the ring, 8200 and 8650 lost) — not even when behind at the end.
+    if (can_attack and prev_mode not in AGGRESSIVE and view.enemy_turtling
+            and len(view.units_of(C.SIEGE_UNITS)) < C.SIEGE_ATTACK_MIN
+            and view.army_value < C.MODEL_HOLD_MAX_EDGE * (enemy_estimate(view) + defenses_at_target(view))):
+        can_attack = False
 
     # Retreat: losing the fight we started -> pull back before we feed the
     # enemy kills_cost; hold the retreat until regrouped (or strong again).

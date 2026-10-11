@@ -94,6 +94,9 @@ YOUR READ:
   are spent and their economy is behind ours, punish them (a rusher on one refinery can't rebuild).
   "macro": many refineries or harvesters, fast expansions, few units, no pressure. The engine sends \
   a bigger raid party round the flank to their harvesters and expansions.
+  "turtle": many turrets (intel.enemy_turtling, enemy_turrets_known 4+), few units seen, no pushes. \
+  Not "macro": raids die on the turrets. The engine builds the dome and siege units (they outrange \
+  turrets), out-expands it, and attacks only with the siege or an overwhelming army.
   "standard": a normal build and army: the engine plays its plan. "unknown": not enough seen yet.
   Change it only on new evidence.
 - balance: where our money should go, from our bank (cash + ore), harvesters, refineries, \
@@ -134,7 +137,7 @@ Use only cells inside map.bounds and ids you are shown. Be decisive and brief.\
 
 _CELL = {"type": ["array", "null"], "items": {"type": "integer"}}
 STEADY_FIELDS = ("posture", "enemy_style", "balance", "expand", "attack_route")
-STYLES = ("aggressive", "macro", "standard", "unknown")
+STYLES = ("aggressive", "macro", "turtle", "standard", "unknown")
 BALANCES = ("more_army", "more_economy", "balanced")
 MISTAKES = ("idle_units", "exposed_harvesters", "bank_piling", "stuck_units", "losing_fight", "other")
 ADVICE_SCHEMA = {

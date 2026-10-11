@@ -176,6 +176,12 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
   at a time for two minutes). Expansion refineries avoid predicted ore; one that
   comes up elsewhere is asked for again at once,
   its spot skipped. Behind on army: no new refinery or MCV unless home runs dry.
+- **Reading a turtle** (intel.turtling): 4+ ground turrets known after 2:30
+  and no push of theirs near our base for 5 minutes (a rusher's early
+  pillboxes don't count while it keeps coming). Then: the dome at once, siege
+  units first in the vehicle queue (about one per turret, 3-6), expansions as
+  early as allowed, and no attack before 3 siege units unless the army
+  overwhelms army and turrets together (2.5x). The advisor has a "turtle" read.
 - **Against a turtle** (efefdca8, our agent vs the rules-only turtler: lost
   39k to 92k): the 7:05 attack (13150 into "10440", 700 actually seen) wasn't
   caught as blind because the check used the peak, whose rebuild term adds our

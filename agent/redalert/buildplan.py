@@ -108,7 +108,9 @@ def next_build_orders(view: View, expansion_ore: tuple[int, int] | None = None,
 
     # Interrupt 2d: radar dome for the end game (unlocks siege units).
     from .brain import outgunned
-    if (view.game_seconds >= C.DOME_AFTER_SECONDS and money >= C.DOME_ADD_FUNDS and not outgunned(view) and not units_first
+    # Against a turtle at once: the dome unlocks the siege units that outrange turrets.
+    if ((view.game_seconds >= C.DOME_AFTER_SECONDS or view.enemy_turtling)
+            and money >= C.DOME_ADD_FUNDS and not outgunned(view) and not units_first
             and not recovering(view)
             and view.has_building(C.SERVICE_DEPOT) and not _count_built_and_queued(view, (C.RADAR_DOME,))):
         dome = _available(view, C.RADAR_DOME)
