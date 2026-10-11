@@ -123,8 +123,11 @@ class RedAlertAgent:
                               if view.game_seconds - t < C.FAILED_SPOT_SECONDS}
         if self._failed_cells:
             view = dataclasses.replace(view, failed_cells=frozenset(self._failed_cells))
+        seen_at = self._patrol.base_seen_at
         view = dataclasses.replace(view, enemy_army_peak=self._enemy_peak(view),
-                                   ore_running_dry=self._harvest.running_dry(view))
+                                   ore_running_dry=self._harvest.running_dry(view),
+                                   enemy_base_scouted=(seen_at is not None
+                                                       and view.game_seconds - seen_at <= C.SCOUT_FRESH_SECONDS))
 
         # Track the threat window (sets/expires defensively).
         self._commander.track_threat(view)

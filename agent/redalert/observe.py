@@ -157,6 +157,8 @@ class View:
     # The fields our harvesters work have less than EXPAND_LEAD_SECONDS of ore
     # left (harvest.HarvestManager's forecast): expand, no more harvesters.
     ore_running_dry: bool = False
+    # Our scouts finished a round of their base within SCOUT_FRESH_SECONDS.
+    enemy_base_scouted: bool = False
 
     # -- derived, cheap helpers ----------------------------------------------
 

@@ -4028,3 +4028,13 @@ def test_a_roaming_picket_checks_remote_fields_and_the_raid_goes_there_first():
     assert o and tuple(o[0]["to"]) in sites                                   # off to a remote field, not its post
     from agent.redalert import raid as ra_raid
     assert ra_raid._target(v, []) in sites                                     # the raid: remote fields first
+
+
+def test_a_fresh_look_at_a_weak_enemy_starts_an_attack():
+    weak = _view(_t=300.0, buildings=BASE, military={"army_value": 4000, "visible_enemy_value": 900})
+    assert brain.choose_mode(weak, cheese_since=None) is Mode.BUILD                    # the prior: about our size
+    looked = dataclasses.replace(weak, enemy_base_scouted=True)
+    assert brain.enemy_estimate(looked) == 900
+    assert brain.choose_mode(looked, cheese_since=None) is Mode.ALL_IN                 # we looked: they are weak
+    strong = dataclasses.replace(looked, enemy_army_value=3000.0)
+    assert brain.choose_mode(strong, cheese_since=None) is Mode.BUILD                  # 4000 vs 3000 seen: not weak

@@ -151,8 +151,14 @@ def enemy_estimate(view: View) -> float:
     army adjusted by the trades (their losses are our kills). Match 08560d9b
     attacked with 3900 "against 1400"; they had 5000-6000, and showed 4000
     fifteen seconds before."""
+    look = max(view.enemy_army_value, view.enemy_army_peak, 0.0)
+    if view.enemy_base_scouted and view.army_value >= C.WEAK_ENEMY_EDGE * look:
+        # A fresh look at their base shows them substantially weaker: trust
+        # it, not the "about as big as us" prior (then the normal attack rules
+        # decide: a real army, no recent retreat, turrets we can break).
+        return look
     prior = C.ENEMY_PRIOR_SHARE * (view.army_value + view.deaths_cost - view.kills_cost)
-    return max(view.enemy_army_value, view.enemy_army_peak, prior, 0.0)
+    return max(look, prior)
 
 
 def _army_edge(view: View) -> float:
