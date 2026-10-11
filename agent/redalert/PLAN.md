@@ -88,6 +88,12 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
   the last sighting; modes dwell 40 s; the advisor's posture and read change
   only when two answers agree. With no trigger: build a 3000+ army, hold the
   massing point and pickets, then push and stay committed until the retreat rule.
+- **Finishing and the estimate** (b90e492f): "beaten" needs a 5000 lead (a 600
+  lead sent 18 units in at 4:05); finishing waits out the retreat cooldown
+  unless hunting; each past sighting of their army counts what they could have
+  rebuilt since (as much as we built, scaled by refineries), so a good defense
+  doesn't make them look empty. Overwhelming: split across up to 4 bases, one
+  per 10 units. An outgunned expansion is called off, not retried every view.
 - **The hunt** (c4caa45e: a barracks survived a 100-unit hunt): up to 8
   groups of 6+, every cell where we once knew an enemy building is a search
   point, and a point counts as checked within 5 cells (about sight).

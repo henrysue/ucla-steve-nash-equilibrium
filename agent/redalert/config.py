@@ -190,7 +190,9 @@ ADVICE_TARGET_SUPPORT_CELLS = 10   # the advisor's army target counts only with 
 SELL_FOR_INCOME_SECONDS = 20.0     # broke with no harvester: sell a spare building this often
 HUNT_GROUPS = 8                    # the hunt sweeps up to this many search points at once...
 HUNT_GROUP_MIN_UNITS = 6           # ...each group at least this many units
-SPLIT_MIN_UNITS = 8                # overwhelming: split the army between the 2 nearest enemy clusters
+SPLIT_MIN_UNITS = 8                # overwhelming: split the army between the nearest enemy clusters...
+SPLIT_UNITS_PER_CLUSTER = 10       # ...one per this many units...
+SPLIT_MAX_CLUSTERS = 4             # ...up to this many (b90e492f razed four expansions two at a time)
 ENEMY_CLUSTER_CELLS = 10           # enemy buildings this close together are one cluster
 
 # -- retreating ------------------------------------------------------------------------------------

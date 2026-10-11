@@ -226,11 +226,15 @@ class Expansion:
         if self.state in ("scouting", "training") and C.MCV in view.available and not view.units_of(C.MCV):
             # Checked again when it trains, not just when the expansion began
             # (08560d9b: the gates passed at 2:30, the MCV trained at 4:22 with 3 fighters).
-            if view.queued_count(C.MCV):
-                if outgunned(view):
-                    return out + [orders.cancel(C.MCV)]   # units first: the money comes back
-            elif (not outgunned(view) and len(view.combat_units) >= C.EXPAND_MIN_FIGHTERS
-                  and our_unit_value(view) >= C.EXPAND_MCV_ARMY_VALUE):
+            if outgunned(view):
+                # Outgunned while preparing: the expansion is called off (MCV
+                # cancelled, the money back, the cooldown); a new one must pass
+                # every gate again. Kept alive, it queued and cancelled its MCV
+                # each time the balance tipped (b90e492f: 2.5 minutes of it).
+                self._abort(view.game_seconds)
+                return out + ([orders.cancel(C.MCV)] if view.queued_count(C.MCV) else [])
+            if (not view.queued_count(C.MCV) and len(view.combat_units) >= C.EXPAND_MIN_FIGHTERS
+                    and our_unit_value(view) >= C.EXPAND_MCV_ARMY_VALUE):
                 return out + [orders.train(C.MCV, count=1)]
         return out + self._mcv_orders(view)
 

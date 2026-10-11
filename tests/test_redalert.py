@@ -3864,3 +3864,51 @@ def test_running_out_of_ore_overrides_the_advisors_wait():
     assert not e._gates(v, Mode.BUILD, wait)                                 # "wait": no expansion...
     e._ore_running_out = True
     assert e._gates(v, Mode.BUILD, wait)                                     # ...unless the ore runs out
+
+
+# -- match b90e492f: an early "finish", a slow raze, an MCV in and out of the queue ---------------
+
+
+def test_finishing_takes_a_real_lead_not_six_hundred():
+    early = _view(_t=245.0, buildings=BASE, military={"army_value": 2200, "kills_cost": 1300, "deaths_cost": 700})
+    assert not brain.beaten(early)
+    late = _view(_t=1164.0, buildings=BASE, military={"army_value": 13600, "kills_cost": 54300, "deaths_cost": 35200})
+    assert brain.beaten(late)
+
+
+@pytest.mark.usefixtures("visible_only")
+def test_an_overwhelming_army_splits_across_up_to_four_bases():
+    units = [{"id": 100 + i, "type": "3tnk", "x": 30, "y": 25, "hp": 100} for i in range(40)]
+    blds = [{"id": 80 + i, "type": "proc", "x": x, "y": y, "hp": 100}
+            for i, (x, y) in enumerate(((40, 40), (40, 10), (10, 40), (44, 24), (20, 46)))]
+    v = _view(buildings=BASE, units=units, visible_enemy_buildings=blds,
+              military={"army_value": 40000, "visible_enemy_value": 1000})
+    o = executor._army_orders(v, Mode.ALL_IN)
+    assert len(o) == 4                                                        # 40 units: four bases at once
+
+
+def test_an_outgunned_expansion_is_called_off_not_retried():
+    e = Expansion()
+    e.update(_exp_view(), Mode.BUILD)
+    assert e.state == "scouting"
+    rifles = [{"id": 100 + i, "type": "e1", "x": 6, "y": 6, "hp": 100} for i in range(10)]
+    queued = [{"item": "mcv", "queue": "vehicle", "ready": False}]
+    tanks = [{"id": 900 + i, "type": "3tnk", "x": 30, "y": 30} for i in range(12)]
+    assert e.orders(_exp_view(t=600.0, units=rifles, production=queued, enemies=tanks)) == [{"cmd": "cancel", "item": "mcv"}]
+    assert e.state == "idle"                                                  # called off...
+    assert e.orders(_exp_view(t=601.0, units=rifles)) == []                   # ...so no MCV straight back in
+
+
+def test_the_estimate_counts_what_they_rebuilt_since_we_saw_them():
+    agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
+    agent._enemy_peak(_view(_t=555.0, military={"visible_enemy_value": 1200, "kills_cost": 11300,
+                                                 "army_value": 1600, "deaths_cost": 9900}))
+    peak = agent._enemy_peak(_view(_t=601.0, military={"visible_enemy_value": 0, "kills_cost": 11900,
+                                                        "army_value": 2300, "deaths_cost": 9900}))
+    assert peak == 1200 - 600 + 700                                           # seen, less kills, plus a rebuild like ours
+
+
+def test_no_finishing_straight_after_a_retreat():
+    v = _view(_t=1164.0, _r=600.0, buildings=BASE, military={"army_value": 13600, "kills_cost": 54300, "deaths_cost": 35200})
+    assert brain.choose_mode(v, cheese_since=None, prev_mode=Mode.BUILD, retreated_at=1130.0) is not Mode.ALL_IN
+    assert brain.choose_mode(v, cheese_since=None, prev_mode=Mode.BUILD, retreated_at=1000.0) is Mode.ALL_IN

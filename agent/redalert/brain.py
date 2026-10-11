@@ -65,7 +65,10 @@ def choose_mode(
     # for the win. No protect-lead, no model hold (matches 0561274e and
     # 654f1b2e went to the time limit this way, the latter 59k to 26k with
     # the enemy down to a 400 army and no harvesters).
-    if (hunting or _dominant(view) or beaten(view)) and _has_real_army(view) \
+    # (not straight back in after a retreat, unless hunting their last buildings:
+    # b90e492f went again 51 s after one)
+    just_retreated = retreated_at is not None and view.game_seconds - retreated_at < C.RETREAT_COOLDOWN_SECONDS
+    if (hunting or ((_dominant(view) or beaten(view)) and not just_retreated)) and _has_real_army(view) \
             and view.army_value >= C.MODEL_HOLD_MAX_EDGE * enemy_estimate(view):
         return Mode.ALL_IN
 
@@ -280,8 +283,9 @@ def must_attack(view: View) -> bool:
 
 def beaten(view: View) -> bool:
     """Nothing left that can fight us: overwhelming (``_overwhelming``) and
-    ahead on trades. Then finish them, and a flank is safe."""
-    return _overwhelming(view) and view.kills_cost > view.deaths_cost
+    ``FINISH_MIN_LEAD`` up on trades. Then finish them, and a flank is safe.
+    (A lead of 600 at 4:05 sent 18 units in "to finish": match b90e492f.)"""
+    return _overwhelming(view) and view.kills_cost - view.deaths_cost >= C.FINISH_MIN_LEAD
 
 
 def _overwhelming(view: View) -> bool:

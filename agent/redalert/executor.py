@@ -654,8 +654,9 @@ def _attack_points(view: View, units: list[int], target) -> list[tuple[int, int]
         for b in list(view.enemy_buildings) + list(view.known_enemy_buildings):
             if b.cell is not None and not b.wreck and all(dist2(b.cell, c) > C.ENEMY_CLUSTER_CELLS ** 2 for c in clusters):
                 clusters.append(b.cell)
+        k = min(len(clusters), C.SPLIT_MAX_CLUSTERS, max(2, len(units) // C.SPLIT_UNITS_PER_CLUSTER))
         if len(clusters) >= 2:
-            return sorted(clusters, key=lambda c: dist2(c, view.base_center))[:2]
+            return sorted(clusters, key=lambda c: dist2(c, view.base_center))[:k]
     if len(units) < C.ATTACK_GROUP_MIN_UNITS:
         return [tuple(target)]
     cells = [u.cell for u in view.combat_units if u.id in set(units) and u.cell is not None]

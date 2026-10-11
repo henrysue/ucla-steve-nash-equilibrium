@@ -62,7 +62,7 @@ class RedAlertAgent:
         self._commander = Commander()   # the army's one decision each view (commander.py)
         self._opening_done = False      # the standard build order stands (buildplan.opening_done)
         self._failed_cells: dict = {}   # cell -> game time the engine moved a building off it
-        self._enemy_seen: list = []     # (game s, enemy army seen, our kills then): brain.enemy_estimate
+        self._enemy_seen: list = []     # (game s, enemy army seen, our kills, our army, our losses then): brain.enemy_estimate
         # The batch play_action answers next; refused order key -> blocked
         # until (clock); army (cmd, destination) -> (last sent, unit ids).
         self._last_sent: list[dict] = []
@@ -503,11 +503,20 @@ class RedAlertAgent:
 
     def _enemy_peak(self, view) -> float:
         """The most enemy army seen in the last ``ENEMY_PEAK_SECONDS``, less
-        what we have killed since each sighting."""
+        what we have killed since each sighting, plus what they could have
+        built since: as much as we built (our army's growth plus our losses),
+        scaled by their refineries against ours. Without the rebuild, a good
+        defense drove the estimate to nothing and sent 13 units "to finish"
+        an enemy that had rebuilt 25 (match b90e492f, 10:01)."""
+        from .brain import _economy_ratio
+
         t = view.game_seconds
-        self._enemy_seen.append((t, view.enemy_army_value, view.kills_cost))
+        self._enemy_seen.append((t, view.enemy_army_value, view.kills_cost, view.army_value, view.deaths_cost))
         self._enemy_seen = [r for r in self._enemy_seen if t - r[0] <= C.ENEMY_PEAK_SECONDS]
-        return max(0.0, max(seen - (view.kills_cost - kills) for _, seen, kills in self._enemy_seen))
+        ratio = _economy_ratio(view)
+        return max(0.0, max(seen - (view.kills_cost - kills)
+                            + ratio * max(0.0, (view.army_value - army) + (view.deaths_cost - lost))
+                            for _, seen, kills, army, lost in self._enemy_seen))
 
     def _audit_placements(self, view) -> None:
         """Log where each placed building came up against where it was asked
