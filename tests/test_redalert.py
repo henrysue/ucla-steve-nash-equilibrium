@@ -4637,10 +4637,15 @@ def test_the_army_sets_up_across_a_push_our_scouts_see_coming():
     push = [{"id": 900 + i, "type": "e1", "x": 4 + i % 3, "y": 30 + i // 3, "hp": 100} for i in range(16)]   # coming down the west side
     v = _view(_t=500.0, buildings=BASE, units=army, visible_enemies=push)
     point, facing, group = scout.incoming_push(v)
-    assert point[1] > 13 and point[0] < 13                                    # toward them, not the usual front
+    assert point[1] > 4                                                       # on the side they come from
     o = executor._army_orders(v, Mode.BUILD)
     tos = [tuple(x["to"]) for x in o]
     assert tos and all(((x - point[0]) ** 2 + (y - point[1]) ** 2) <= 7 ** 2 for x, y in tos)
+    scout._INTERCEPT.update(at=None, facing=None, group=[], seen=-1e9)
+    towered = _view(_t=500.0, buildings=BASE + [{"id": 70, "type": "pbox", "x": 6, "y": 12}], units=army,
+                    visible_enemies=push)
+    tp, _, _ = scout.incoming_push(towered)
+    assert (tp[0] - 6) ** 2 + (tp[1] - 12) ** 2 <= 16 and tp[1] < 12          # just behind the pillbox
     later = _view(_t=510.0, buildings=BASE, units=army)                       # out of sight 10 s: held
     assert scout.incoming_push(later) is not None
     assert scout.incoming_push(_view(_t=540.0, buildings=BASE, units=army)) is None
@@ -4742,3 +4747,45 @@ def test_a_lost_order_is_sent_again():
     assert agent._unit_dest
     agent._forget_lost_orders({"last_orders": {"results": [{"index": 0, "cmd": "attack_move", "status": "lost"}]}})
     assert not agent._unit_dest
+
+
+# -- the batch rate, the damage scan, hitting back ------------------------------------------------------
+
+
+def test_orders_that_do_not_fit_a_batch_go_first_in_the_next():
+    many = [ra_orders.attack_move([100 + i], [10, 10 + i]) for i in range(25)]
+    take, rest = ra_orders.split(many)
+    assert len(take) == 20 and len(rest) == 5
+    legs = [ra_orders.attack_move([1], [5, 5]) for _ in range(20)] + [
+        ra_orders.attack_move([2], [6, 6]), ra_orders.attack_move([2], [9, 9], queued=True)]
+    take, rest = ra_orders.split(legs)
+    assert rest == legs[20:]                                                  # a queued leg waits with its first
+    agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 100.0)
+    agent._outbox = [(99.5, ra_orders.attack_move([300], [20, 20]))]
+    units = [{"id": 300, "type": "e1", "x": 5, "y": 5, "hp": 100}]
+    dec = agent.choose_action(_state(_t=200.0, buildings=BASE, units=units), CTX)
+    assert {"cmd": "attack_move", "units": [300], "to": [20, 20]} in dec.action["orders"] or \
+        any(300 in (o.get("units") or []) for o in dec.action["orders"])      # carried, or superseded by a newer one
+
+
+def test_the_damage_scan_reads_events_and_what_vanished():
+    from agent.redalert.agent import DamageScan
+    scan = DamageScan()
+    units = [{"id": 30, "type": "harv", "x": 20, "y": 20, "hp": 100}, {"id": 31, "type": "e1", "x": 8, "y": 8, "hp": 100}]
+    assert scan.update(_view(_t=100.0, buildings=BASE, units=units)) == []
+    hit = _view(_t=101.0, buildings=BASE, units=units, events=[{"seq": 5, "tick": 2500, "kind": "under_attack", "id": 30}])
+    assert scan.update(hit) == [(20, 20)]
+    gone = _view(_t=102.0, buildings=BASE, units=units[1:])                  # the harvester died, no event seen
+    assert (20, 20) in scan.update(gone)
+    assert scan.update(_view(_t=120.0, buildings=BASE, units=units[1:])) == []   # stale after a few seconds
+
+
+def test_idle_units_near_an_attacked_spot_hit_back():
+    idle = [{"id": 100 + i, "type": "e1", "x": 15, "y": 15, "hp": 100, "idle": True} for i in range(5)]
+    busy = [{"id": 200, "type": "e1", "x": 15, "y": 15, "hp": 100, "idle": False}]
+    far = [{"id": 300, "type": "e1", "x": 40, "y": 5, "hp": 100, "idle": True}]
+    foe = [{"id": 900, "type": "e1", "x": 21, "y": 19, "hp": 100}]
+    v = _view(_t=300.0, buildings=BASE, units=idle + busy + far, visible_enemies=foe)
+    o, used = executor.retaliate_orders(v, [(20, 20)])
+    assert o == [{"cmd": "attack_move", "units": [100, 101, 102, 103, 104], "to": [21, 19]}]
+    assert used == {100, 101, 102, 103, 104}

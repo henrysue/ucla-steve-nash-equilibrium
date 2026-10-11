@@ -29,6 +29,7 @@ def plan(
     probe: tuple[int, int] | None = None,
     warning: bool = False,
     fan: bool = False,
+    attacked: list | None = None,
 ) -> list[dict]:
     """All orders for this view, concatenated in priority order (pre-cap).
 
@@ -77,6 +78,11 @@ def plan(
     out += list(raid_orders)
     response, responders = home_response(view, mode, scout_id, frozenset(raid_ids) | clearing_ids)
     out += response
+    # Hit back: idle fighters near a spot of ours attacked or lost moments ago.
+    hit_back, hitters = retaliate_orders(view, attacked or [], scout_id,
+                                         frozenset(raid_ids) | clearing_ids | responders)
+    out += hit_back
+    responders = responders | hitters
     # The massing point stays at the main choke (an MCV on the road gets the
     # outpost, not the army); it edges forward while an attack is confirmed.
     stage = probe
@@ -578,10 +584,9 @@ def _stage_forward(
         incoming = scout.incoming_push(view)
         if incoming is not None:
             point, facing, group = incoming
-            if strength.edge([u.type for u in fighters], [a.type for a in group]) >= C.INTERCEPT_MIN_EDGE:
-                stage = point
-                if len(fighters) >= 3:
-                    return guard_orders + _concave_orders(view, fighters, stage, facing)
+            stage = point                  # our turret line (else building line) facing them
+            if len(fighters) >= 3:
+                return guard_orders + _concave_orders(view, fighters, stage, facing)
     # Massing (and holding at home) is always a concave facing the enemy's
     # approach: every unit can fire into the middle where they arrive.
     if len(fighters) >= 3:
@@ -610,6 +615,31 @@ def _enemies_near(view: View, cells) -> list:
     r2 = C.STAGE_ENGAGE_CELLS ** 2
     return [a for a in view.enemy_units if a.cell is not None and not a.wreck and a.type not in C.HARVESTER
             and any(dist2(a.cell, c) <= r2 for c in cells if c is not None)]
+
+
+def retaliate_orders(view: View, attacked, scout_id=None, reserved=frozenset()) -> tuple[list[dict], set]:
+    """Every idle fighter within ``RETALIATE_RADIUS_CELLS`` of a spot of ours
+    attacked or lost in the last ``RETALIATE_SECONDS`` (agent.DamageScan)
+    attack-moves there — at the nearest enemy we see by it, if any. One order
+    per spot (spots within 6 cells merged)."""
+    spots: list[tuple[int, int]] = []
+    for c in attacked:
+        if all(dist2(c, s) > 36 for s in spots):
+            spots.append(tuple(c))
+    out, used = [], set()
+    r2 = C.RETALIATE_RADIUS_CELLS ** 2
+    idle = [u for u in view.combat_units if u.idle and u.id is not None and u.cell is not None
+            and u.id != scout_id and u.id not in reserved]
+    for spot in spots:
+        near = [u.id for u in idle if u.id not in used and dist2(u.cell, spot) <= r2]
+        if not near:
+            continue
+        foes = [a.cell for a in view.enemy_units if a.cell is not None and not a.wreck
+                and a.type not in C.HARVESTER and dist2(a.cell, spot) <= 64]
+        target = min(foes, key=lambda c: dist2(c, spot)) if foes else spot
+        out.append(orders.attack_move(near[:orders.MAX_UNITS_PER_ORDER], list(target)))
+        used.update(near[:orders.MAX_UNITS_PER_ORDER])
+    return out, used
 
 
 def _home_turret(view: View, enemies) -> tuple[int, int] | None:

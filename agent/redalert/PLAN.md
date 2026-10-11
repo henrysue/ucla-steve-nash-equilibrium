@@ -176,6 +176,17 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
   at a time for two minutes). Expansion refineries avoid predicted ore; one that
   comes up elsewhere is asked for again at once,
   its spot skipped. Behind on army: no new refinery or MCV unless home runs dry.
+- **Every order gets sent** (skill/redalert: 20 orders a batch, a batch every
+  0.2 s): what doesn't fit a batch goes first in the next one (dropped if a
+  newer order covers the same units, or after 1.5 s); a queued leg goes only
+  with its first.
+- **Hit back** (skill/redalert events): `under_attack`, `unit_lost` and
+  `building_lost` events, plus anything of ours that vanished since the last
+  view (events scroll out in a fight), mark spots we are being hit; for 6 s
+  every idle fighter within 12 cells attack-moves there (at the nearest enemy
+  seen by it).
+- **Pushes are met at our line**: a push seen coming is met just behind our
+  turret nearest it, else just in front of our building nearest it.
 - **The guide's commands** (skill/redalert): the outpost uses the engine's
   `guard` order — it follows the MCV on its way, then stays with the
   expansion's yard (attacking threats near it first); an order the server

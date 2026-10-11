@@ -215,6 +215,9 @@ ENGAGE_MIN_EDGE = 1.25             # by strength (strength.edge) under this, a p
 MATCHUP_MIN_UNITS = 5              # both sides need this many known units before the mix counts (strength.matchup)
 MATCHUP_LIMITS = (0.6, 1.5)        # the mix moves the army edge at most this much
 ARMOR_HEAVY_SHARE = 0.6            # their hit points this armored: one rocket soldier per rifleman
+OUTBOX_MAX_AGE_SECONDS = 1.5       # orders that didn't fit a batch go first in the next one, while this fresh
+RETALIATE_SECONDS = 6.0            # a spot of ours attacked (event) or lost this recently...
+RETALIATE_RADIUS_CELLS = 12        # ...draws every idle fighter this close to it
 GUARD_RADIUS_CELLS = 8             # enemy fighters this close to the massing army: every idle unit goes at them
                                    # in one order, and walks back to its slot after
 UNSEEN_LEAD_MIN = 2000             # nothing of their army seen counts as nothing left only this far ahead on trades

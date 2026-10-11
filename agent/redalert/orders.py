@@ -163,6 +163,29 @@ def set_stance(unit_ids: list[int], stance: str) -> dict:
     return {"cmd": "set_stance", "units": list(unit_ids), "stance": stance}
 
 
+def split(orders: list[dict]) -> tuple[list[dict], list[dict]]:
+    """(this batch, the rest): valid orders in priority order up to
+    ``MAX_ORDERS_PER_BATCH`` and ``MAX_ENGINE_COMMANDS``; what doesn't fit is
+    returned for the next batch (the server takes one every 0.2 s), not
+    dropped. A queued leg goes only with the leg before it."""
+    take, rest, commands = [], [], 0
+    prev_taken = True
+    for order in orders:
+        if not order_ok(order):
+            continue
+        cost = engine_commands(order)
+        fits = len(take) < MAX_ORDERS_PER_BATCH and commands + cost <= MAX_ENGINE_COMMANDS
+        if order.get("queued") and not prev_taken:
+            fits = False
+        if fits:
+            take.append(order)
+            commands += cost
+        else:
+            rest.append(order)
+        prev_taken = fits
+    return take, rest
+
+
 def batch(orders: list[dict]) -> dict:
     """Validate, de-dupe-cap, and wrap orders into a sendable move.
 

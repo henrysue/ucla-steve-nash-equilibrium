@@ -68,6 +68,8 @@ class RedAlertAgent:
         # The batch play_action answers next; refused order key -> blocked
         # until (clock); army (cmd, destination) -> (last sent, unit ids).
         self._last_sent: list[dict] = []
+        self._outbox: list[tuple[float, dict]] = []   # orders that didn't fit the last batch
+        self._damage = DamageScan()                    # under_attack / unit_lost: where we are hit
         self._blocked: dict[str, float] = {}
         self._army_sent: dict[str, tuple[float, frozenset]] = {}
         self._unit_dest: dict[int, tuple[float, str, tuple]] = {}   # unit -> (time, cmd, destination) last sent
@@ -114,6 +116,7 @@ class RedAlertAgent:
         if not view.ok:
             return WAIT
         self._forget_lost_orders(raw)
+        attacked = self._damage.update(view)
 
         # Remember enemies through the fog: the brain weighs the enemy army we
         # remember, and the army can target buildings we saw earlier.
@@ -195,6 +198,7 @@ class RedAlertAgent:
             "map_ore_cells": len(view.ore_cells), "enemy_ore_field": enemy_ore_field(view),
             "raid_target": self._raid.target(view),
             "raid_squads": self._raid.active, "raid_targets": self._raid.targets(view),
+            "attacked_spots": [list(c) for c in attacked[:6]], "outbox": len(self._outbox),
             "flank_via": self._flank_via,
             "expansion": self._expansion.state, "expansion_site": self._expansion.site,
             "expansions_done": self._expansion.sites, "garrison": len(self._garrison.unit_ids),
@@ -250,6 +254,7 @@ class RedAlertAgent:
             probe=self._probe_point(view),
             warning=self._intel.suspect(view),
             fan=hunting,
+            attacked=attacked,
         ) + self._unstick.orders(view) + executor.stance_orders(
             view, self._mode, set(self._garrison.unit_ids), getattr(advice, "army_stance", None))
         now = self._clock()
@@ -259,9 +264,18 @@ class RedAlertAgent:
             and not self._army_repeat(o, now) and not self._production_pending(o, now)
         ]
 
-        move = orders.batch(batch_orders)
-        if move is None:
+        # What didn't fit the last batch goes first now (unless a newer order
+        # covers the same units or is the same order): the tail of the plan —
+        # the army's orders — no longer falls off every batch.
+        keys = {_order_key(o) for o in batch_orders}
+        busy = {u for o in batch_orders for u in (o.get("units") or ())}
+        carried = [o for at, o in self._outbox if now - at <= C.OUTBOX_MAX_AGE_SECONDS
+                   and _order_key(o) not in keys and not set(o.get("units") or ()) & busy]
+        take, rest = orders.split(carried + batch_orders)
+        self._outbox = [(now, o) for o in rest]
+        if not take:
             return WAIT  # nothing to do right now
+        move = {"type": "orders", "orders": take}
 
         self._last_sent = move["orders"]
         self._note_placements(view, self._last_sent)
@@ -720,3 +734,41 @@ def _seat_number(your_seat, seat_position) -> int | None:
     if digits:
         return int(digits)
     return seat_position if isinstance(seat_position, int) else None
+
+
+class DamageScan:
+    """Where we are being hit: ``under_attack`` events (the attacked actor's
+    cell), ``unit_lost`` / ``building_lost`` events, and anything of ours that
+    vanished since the last view (events scroll out in a busy fight —
+    skill/redalert: compare with the previous view). Spots from the last
+    ``RETALIATE_SECONDS``."""
+
+    def __init__(self) -> None:
+        self._seq = -1
+        self._last: dict[int, tuple[tuple[int, int], str]] = {}
+        self.recent: list[tuple[float, tuple[int, int], str]] = []
+
+    def update(self, view) -> list[tuple[int, int]]:
+        t = view.game_seconds
+        cur = {a.id: (a.cell, a.type) for a in list(view.units) + list(view.buildings)
+               if a.id is not None and a.cell is not None and not a.wreck}
+        for ev in view.events or []:
+            seq = ev.get("seq")
+            if not isinstance(seq, int) or seq <= self._seq:
+                continue
+            self._seq = seq
+            kind = str(ev.get("kind") or "")
+            if kind not in ("under_attack", "unit_lost", "building_lost"):
+                continue
+            aid = ev.get("id", ev.get("actor_id"))
+            cell = (cur.get(aid) or self._last.get(aid) or (None, None))[0]
+            if cell is None and isinstance(ev.get("x"), int) and isinstance(ev.get("y"), int):
+                cell = (ev["x"], ev["y"])
+            if cell is not None:
+                self.recent.append((t, cell, kind))
+        for aid, (cell, kind) in self._last.items():
+            if aid not in cur and kind != C.MCV:      # an MCV that deployed just turned into a yard
+                self.recent.append((t, cell, "vanished"))
+        self._last = cur
+        self.recent = [r for r in self.recent if t - r[0] <= C.RETALIATE_SECONDS]
+        return [c for _, c, _ in self.recent]

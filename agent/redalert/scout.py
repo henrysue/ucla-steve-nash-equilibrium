@@ -452,13 +452,38 @@ def watch_point(view: View, yard) -> tuple[int, int] | None:
 _INTERCEPT: dict = {"at": None, "facing": None, "group": [], "seen": -1e9}
 
 
+def _defensive_line(view: View, yard, threat) -> tuple[int, int] | None:
+    """Where the army meets a push on the base round ``yard``: 2 cells behind
+    our turret nearest ``threat``, else 2 cells in front of our building
+    nearest it, else part of the way out from the yard toward it."""
+    r2 = C.BUILD_RADIUS_CELLS ** 2
+
+    def step(frm, to, cells):
+        dx, dy = to[0] - frm[0], to[1] - frm[1]
+        d = (dx * dx + dy * dy) ** 0.5 or 1.0
+        return round(frm[0] + dx / d * cells), round(frm[1] + dy / d * cells)
+
+    mine = [b for b in view.buildings if b.cell is not None and not b.wreck and dist2(b.cell, yard) <= r2]
+    towers = [b.cell for b in mine if b.type in C.DEFENSES]
+    if towers:
+        tower = min(towers, key=lambda c: dist2(c, threat))
+        return step(tower, yard, 2)
+    if mine:
+        front = min((b.cell for b in mine), key=lambda c: dist2(c, threat))
+        return step(front, threat, 2)
+    # nothing built there yet: part of the way out from the yard toward them
+    d = dist2(yard, threat) ** 0.5
+    return step(yard, threat, min(0.5 * d, C.STAGE_FORWARD_CELLS)) if d > 0 else None
+
+
 def incoming_push(view: View):
-    """(intercept point, facing, the enemy group) for an enemy army worth
-    ``INTERCEPT_MIN_VALUE`` seen (or remembered) in our half and not yet at
-    our army: the point on the way from the yard it heads for toward it,
-    half the way or the massing distance, whichever is shorter. Held
-    ``INTERCEPT_HOLD_SECONDS`` after the last sighting so the army doesn't
-    swing back and forth. None when nothing is coming."""
+    """(set-up point, facing, the enemy group) for an enemy army worth
+    ``INTERCEPT_MIN_VALUE`` seen (or remembered) in our half: at the base it
+    heads for, just behind our turret nearest them (the turrets fire first),
+    else just in front of our building nearest them (buildings, new units
+    and repairs at our back). Held ``INTERCEPT_HOLD_SECONDS`` after the last
+    sighting so the army doesn't swing back and forth. None when nothing is
+    coming."""
     from .observe import enemy_spawn_guess
 
     base, enemy = view.base_center, enemy_spawn_guess(view)
@@ -480,10 +505,8 @@ def incoming_push(view: View):
         cx = sum(a.cell[0] for a in group) / len(group)
         cy = sum(a.cell[1] for a in group) / len(group)
         target = min(yards, key=lambda y: dist2(y, (cx, cy)))
-        d = dist2(target, (cx, cy)) ** 0.5
-        step = min(0.5 * d, max(C.STAGE_FORWARD_CELLS, C.STAGE_SHARE * dist2(base, enemy) ** 0.5))
-        if d > 0:
-            point = (round(target[0] + (cx - target[0]) / d * step), round(target[1] + (cy - target[1]) / d * step))
+        point = _defensive_line(view, target, (cx, cy))
+        if point is not None:
             facing = (round(cx), round(cy))
             _INTERCEPT.update(at=_clear_stage(view, _open_cell(view, point), facing), facing=facing,
                               group=group, seen=t)
