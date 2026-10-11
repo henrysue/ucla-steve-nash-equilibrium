@@ -38,7 +38,7 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
 | `harvest.py` | Harvesters steered to fields that still have ore |
 | `micro.py` / `movement.py` | Focus fire, pull back damaged units; unstick units |
 | `orders.py` | Order builders and shape checks |
-| `testrush.py` | TEST ONLY: the self-play sparring rusher (remove before the tournament) |
+| `sparring.py` | TEST ONLY: self-play sparring archetypes — rusher, turtler, macro (never in a tournament) |
 
 ## Strategy
 
@@ -323,8 +323,13 @@ cell from the base are silently moved next to the construction yard.
 
 ## TEST ONLY — remove before the tournament
 
-- `testrush.py`: in a self-play test match (no tournament id, both seats on this machine), seat 1 rushes —
-  a rush build (2 refineries, 3 barracks, war factory), units without pause (infantry 3 deep, tanks 2),
-  no expansion or turrets; it masses a ball and launches at 2500 (or 1500 by 3:30), pushes until the army
-  is below 40% of its launch value, then re-masses — to test our scouting, early-push warning and defenses. Off unless `RA_TEST_RUSH=1`, `RA_TEST_RUSH_SEAT`
-  picks the seat. Remove the module and every line marked "testrush" (agent.py, executor.py, tests).
+- `sparring.py`: in a self-play test match one seat plays a fixed archetype, without the advisor:
+  - `RA_SPARRING=rusher`: one-refinery rush build, 3 barracks, units without pause, no expansion or
+    turrets unless attacked; launches a ball at 2500 (1500 by 3:30), pushes until under 40% of it.
+  - `RA_SPARRING=turtler`: our build plus a growing turret ring (2 at 2:30 up to 8 by 12:00), army at
+    home, no raids; attacks only from 15:00 with a 1.3 edge, or with an 18000 army.
+  - `RA_SPARRING=macro`: refineries early (2 at 0:45, 3 at 2:30 ... 6 at 7:00), first expansion as early
+    as allowed, a token army (1500) until 5:30, no raids; one big push at 12000 (or 13:00 with 1.15).
+  - Every archetype still defends the usual way. `RA_SPARRING_SEAT` picks the seat (default 1); the old
+    `RA_TEST_RUSH=1` means rusher. Three locks: the flag, no tournament id, and both seats of the session
+    seen on this machine (marker files). Remove the module and the lines marked "sparring" to retire it.

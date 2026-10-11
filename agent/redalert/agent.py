@@ -24,7 +24,7 @@ from altruagent import WAIT, DecisionContext, GameState, WithReasoning
 from altruagent.console import print_line
 
 from . import brain, buildplan, executor, micro, orders, scout, squadlead
-from . import testrush  # TEST ONLY (self-play sparring rusher): remove before the tournament
+from . import sparring  # TEST ONLY (self-play sparring archetypes; never in a tournament)
 from . import intel, scouting
 from .commander import Commander
 from .expand import Expansion
@@ -85,7 +85,7 @@ class RedAlertAgent:
         self._sold_at = float("-inf")
         self._kills_seen = (0.0, 0.0)               # (kills_cost, game time it last changed)
         self._ignore_advice_until = float("-inf")   # advisor's army target ignored until (stall breaker)
-        self._rusher = testrush.SelfPlayRusher()   # testrush: TEST ONLY
+        self._sparring = sparring.Sparring()       # sparring: TEST ONLY
         self._models_checked = False                # REDALERT_MODELS_OFF_SEAT applied yet
         self._clearing: dict = {}   # building item -> game time its spot was first found occupied
         self._harvest = HarvestManager()
@@ -139,13 +139,19 @@ class RedAlertAgent:
         # The opening is the standard build order's: the advisor is consulted
         # once it stands, or sooner if a rush is read or the base is attacked.
         self._opening_done = self._opening_done or buildplan.opening_done(view)
-        advice = (self._poll_advisor(view)
-                  if self._opening_done or threat or self._commander.cheese_since is not None else None)
+        # sparring (TEST ONLY): against ourselves in a test match, one seat
+        # plays a fixed archetype (rusher / turtler / macro), without the advisor.
+        spar = self._sparring.resolve(context, raw.get("your_seat"))
+        if spar is not None:
+            advice = spar.advice(view)
+        else:
+            advice = (self._poll_advisor(view)
+                      if self._opening_done or threat or self._commander.cheese_since is not None else None)
         hunting = self._hunter.hunting(view)
         self._break_stall(view)
-        # testrush (TEST ONLY): against ourselves in a test match, one seat rushes.
-        rushing = self._rusher.active(context, raw.get("your_seat"))
-        forced = self._rusher.mode(view, self._commander.cheese_since) if rushing else None
+        rushing = spar is not None and spar.skip_confirm
+        cheese = self._commander.cheese_since
+        forced = (lambda policy: spar.mode(view, cheese, policy)) if spar is not None else None
         # The army's one decision (commander.py).
         self._commander.decide(
             view, model_pref=_POSTURE.get(getattr(advice, "posture", None)), scout_id=self._patrol.unit_id,
@@ -160,7 +166,7 @@ class RedAlertAgent:
             self._flank_via = (None if self._mode is not Mode.ALL_IN or self._raid.distracting(view)
                                else self._pick_route(view, advice))
         self._update_flank(view)
-        if not rushing:   # testrush: the rusher never expands
+        if spar is None or spar.expands:   # sparring: the rusher never expands
             # Expand again once the worked fields are forecast to run dry (not
             # only once harvesters idle on an empty one).
             self._expansion.update(view, self._mode, advice, ore_running_out=view.ore_running_dry)
@@ -168,8 +174,9 @@ class RedAlertAgent:
             self._patrol.visit = self._expansion.scout_target
         self._game_seconds = view.game_seconds
 
-        self._raid.update(view, self._mode, self._patrol.unit_id, advice,
-                          taken={*self._patrol.unit_ids, *self._garrison.unit_ids})
+        if spar is None or spar.raids:     # sparring: the archetypes don't raid
+            self._raid.update(view, self._mode, self._patrol.unit_id, advice,
+                              taken={*self._patrol.unit_ids, *self._garrison.unit_ids})
         self._garrison.update(view, self._mode, self._expansion,
                               {*self._patrol.unit_ids, *self._raid.unit_ids})
         self._matchlog.observe(raw, view, self._mode, context, extra={
@@ -197,7 +204,7 @@ class RedAlertAgent:
             "home_depleted": self._harvest.home_depleted(view),
             "early_push_warning": scout.early_push_warning(view),
             "hunting": hunting,
-            "test_rusher": rushing,   # testrush
+            "sparring": spar.name if spar is not None else None,   # sparring: TEST ONLY
             "models": "on" if (self._advisor is not None or self._leads) else "off",
             "active_base": self._active_base(view),
             "harvester_acts": dict(Counter(h.act for h in view.units_of(C.HARVESTER) if h.act)),
@@ -233,7 +240,7 @@ class RedAlertAgent:
             depleted=frozenset(self._harvest.depleted()),
             home=self._active_base(view),
             clearing=self._clearing,
-            rusher=rushing,   # testrush
+            sparring=spar,   # sparring: TEST ONLY
             threat=threat,
             probe=self._probe_point(view),
             warning=self._intel.suspect(view),

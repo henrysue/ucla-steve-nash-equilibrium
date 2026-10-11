@@ -2905,9 +2905,9 @@ def test_units_stepping_aside_are_left_out_of_army_orders():
     assert first and not set(first) & set(later), (first, later)            # nobody walks them back
 
 
-# -- TEST ONLY: the self-play sparring rusher (agent/redalert/testrush.py; remove with it) -----------
+# -- TEST ONLY: the self-play sparring archetypes (agent/redalert/sparring.py; remove with it) --------
 
-from agent.redalert import testrush  # noqa: E402
+from agent.redalert import sparring  # noqa: E402
 
 
 def _ctx(seat, tournament=None, session="spar-1"):
@@ -2915,51 +2915,51 @@ def _ctx(seat, tournament=None, session="spar-1"):
                            agent_id="me", seat_position=seat)
 
 
-def test_the_rusher_wakes_only_against_ourselves_in_a_test_match(monkeypatch, tmp_path):
-    monkeypatch.setenv("RA_TEST_RUSH", "1")
-    monkeypatch.setattr(testrush, "_MARKER_DIR", tmp_path)
-    seat0, seat1 = testrush.SelfPlayRusher(), testrush.SelfPlayRusher()
-    assert not seat1.active(_ctx(1))                       # alone so far: not known to be self-play
-    assert not seat0.active(_ctx(0))                       # seat 0 sees seat 1: self-play, but it defends
-    assert seat1.active(_ctx(1))                           # seat 1 sees seat 0: it rushes
-    other = testrush.SelfPlayRusher()
-    assert not other.active(_ctx(1, tournament="t-1", session="spar-1"))   # never in a tournament game
+def _pair(monkeypatch, tmp_path, name, seat=None):
+    monkeypatch.setenv("RA_SPARRING", name)
+    if seat is None:
+        monkeypatch.delenv("RA_SPARRING_SEAT", raising=False)
+    else:
+        monkeypatch.setenv("RA_SPARRING_SEAT", str(seat))
+    monkeypatch.setattr(sparring, "_MARKER_DIR", tmp_path)
+    return sparring.Sparring(), sparring.Sparring()
 
 
-def test_the_rusher_reads_the_seat_from_the_observation_when_the_context_has_none(monkeypatch, tmp_path):
-    monkeypatch.setenv("RA_TEST_RUSH", "1")
-    monkeypatch.delenv("RA_TEST_RUSH_SEAT", raising=False)
-    monkeypatch.setattr(testrush, "_MARKER_DIR", tmp_path)
-    seat0, seat1 = testrush.SelfPlayRusher(), testrush.SelfPlayRusher()
-    assert not seat1.active(_ctx(None, session="spar-9"), "Multi1")
-    assert not seat0.active(_ctx(None, session="spar-9"), "Multi0")
-    assert seat1.active(_ctx(None, session="spar-9"), "Multi1")
+@pytest.mark.parametrize("name", sparring.ARCHETYPES)
+def test_an_archetype_wakes_only_against_ourselves_in_a_test_match(monkeypatch, tmp_path, name):
+    seat0, seat1 = _pair(monkeypatch, tmp_path, name)
+    assert seat1.resolve(_ctx(1)) is None                  # alone so far: not known to be self-play
+    assert seat0.resolve(_ctx(0)) is None                  # seat 0 sees seat 1: self-play, but plays our plan
+    assert seat1.resolve(_ctx(1)).name == name             # seat 1 sees seat 0: the archetype
+    other = sparring.Sparring()
+    assert other.resolve(_ctx(1, tournament="t-1", session="spar-1")) is None   # never in a tournament game
 
 
-def test_the_rusher_is_off_unless_asked_for(monkeypatch, tmp_path):
+def test_sparring_is_off_unless_asked_for(monkeypatch, tmp_path):
+    a, b = _pair(monkeypatch, tmp_path, "")
     monkeypatch.delenv("RA_TEST_RUSH", raising=False)
-    monkeypatch.setattr(testrush, "_MARKER_DIR", tmp_path)
-    a, b = testrush.SelfPlayRusher(), testrush.SelfPlayRusher()
-    a.active(_ctx(0, session="spar-8"))
-    assert not b.active(_ctx(1, session="spar-8"))                       # self-play, but not asked for
+    a.resolve(_ctx(0, session="spar-8"))
+    assert b.resolve(_ctx(1, session="spar-8")) is None                  # self-play, but not asked for
+    c, d = _pair(monkeypatch, tmp_path, "tournament-mode")               # an unknown name: off
+    c.resolve(_ctx(0, session="spar-7"))
+    assert d.resolve(_ctx(1, session="spar-7")) is None
 
 
-def test_the_rusher_can_be_turned_off_or_moved(monkeypatch, tmp_path):
-    monkeypatch.setattr(testrush, "_MARKER_DIR", tmp_path)
-    monkeypatch.setenv("RA_TEST_RUSH", "0")
-    a, b = testrush.SelfPlayRusher(), testrush.SelfPlayRusher()
-    a.active(_ctx(0, session="spar-2")); assert not b.active(_ctx(1, session="spar-2"))
-    monkeypatch.setenv("RA_TEST_RUSH", "1")
-    monkeypatch.setenv("RA_TEST_RUSH_SEAT", "0")
-    c, d = testrush.SelfPlayRusher(), testrush.SelfPlayRusher()
-    d.active(_ctx(1, session="spar-3"))
-    assert c.active(_ctx(0, session="spar-3"))
+def test_sparring_seat_from_the_observation_and_the_old_rush_switch(monkeypatch, tmp_path):
+    seat0, seat1 = _pair(monkeypatch, tmp_path, "")
+    monkeypatch.setenv("RA_TEST_RUSH", "1")                              # the old switch: the rusher
+    assert seat1.resolve(_ctx(None, session="spar-9"), "Multi1") is None
+    assert seat0.resolve(_ctx(None, session="spar-9"), "Multi0") is None
+    assert seat1.resolve(_ctx(None, session="spar-9"), "Multi1").name == "rusher"
+    c, d = _pair(monkeypatch, tmp_path, "turtler", seat=0)               # moved to seat 0
+    d.resolve(_ctx(1, session="spar-3"))
+    assert c.resolve(_ctx(0, session="spar-3")).name == "turtler"
 
 
 def test_the_rusher_masses_a_ball_then_pushes_until_it_is_spent():
     rifles = [{"id": 30 + i, "type": "e1", "x": 10, "y": 10, "hp": 100} for i in range(12)]
     v = _view(_t=130.0, buildings=BASE, units=rifles, military={"army_value": 1200})
-    r = testrush.SelfPlayRusher()
+    r = sparring.Rusher()
     assert r.mode(v, None) is Mode.BUILD                                       # 1200: still massing
     assert r.mode(dataclasses.replace(v, army_value=2600), None) is Mode.ALL_IN   # the ball launches
     assert r.mode(dataclasses.replace(v, army_value=1300), None) is Mode.ALL_IN   # pushing: 43% of 2600 left
@@ -2974,11 +2974,53 @@ def test_the_rusher_produces_without_pause_and_builds_barracks():
     rifles = [{"id": 30 + i, "type": "e1", "x": 10, "y": 10, "hp": 100} for i in range(12)]
     q2 = [{"item": "e1", "queue": "Infantry", "ready": False}] * 2
     v = _view(_t=130.0, buildings=BASE, units=rifles, production=q2)
-    assert any(x.get("item") == "e1" for x in executor._production_orders(v, Mode.BUILD, rusher=True))   # 3 deep
+    r = sparring.Rusher()
+    assert any(x.get("item") == "e1" for x in executor._production_orders(v, Mode.BUILD, sparring=r))   # 3 deep
     assert not any(x.get("item") == "e1" for x in executor._production_orders(v, Mode.BUILD))            # ours: capped
     blds = BASE + [{"id": 13, "type": "proc", "x": 9, "y": 9}, {"id": 14, "type": "powr", "x": 1, "y": 1}]
-    o = buildplan.next_build_orders(_view(buildings=blds, economy={"cash": 2000}), rusher=True)
+    o = buildplan.next_build_orders(_view(buildings=blds, economy={"cash": 2000}), sparring=r)
     assert o == [{"cmd": "build", "item": "tent"}]                             # a second barracks right away
+    assert r.defense(v, under_attack=False) == [] and r.defense(v, under_attack=True) is None
+
+
+@pytest.mark.usefixtures("visible_only")
+def test_the_turtler_builds_a_turret_ring_and_pushes_only_late():
+    t = sparring.Turtler()
+    blds = BASE + [{"id": 12, "type": "weap", "x": 4, "y": 8}, {"id": 13, "type": "proc", "x": 9, "y": 9}]
+    v = _view(_t=400.0, buildings=blds, economy={"cash": 2000}, available_production=["pbox"],
+              military={"army_value": 9000, "visible_enemy_value": 2000})
+    assert t.defense(v, under_attack=False) == [{"cmd": "build", "item": "pbox"}]   # 4 turrets wanted by 5:30
+    ring = blds + [{"id": 60 + i, "type": "pbox", "x": 14 + i, "y": 14} for i in range(4)]
+    assert t.defense(dataclasses.replace(v, buildings=read(_raw(buildings=ring)).buildings), False) is None
+    assert t.mode(v, None, Mode.ALL_IN) is Mode.BUILD                          # 4.5x their army at 6:40: still home
+    assert t.mode(v, None, Mode.DEFEND_BASE) is Mode.DEFEND_BASE               # it defends the usual way
+    late = dataclasses.replace(v, game_seconds=910.0)
+    assert t.mode(late, None, Mode.BUILD) is Mode.ALL_IN                       # 15:00 with an edge: out
+    assert t.mode(dataclasses.replace(late, army_value=6000), None, Mode.BUILD) is Mode.ALL_IN   # still 2/3 left
+    assert t.mode(dataclasses.replace(late, army_value=4000), None, Mode.BUILD) is Mode.BUILD    # spent: home
+
+
+def test_the_macro_archetype_takes_refineries_early_and_keeps_a_token_army():
+    m = sparring.Macro()
+    ore = tuple((12 + i, 12 + j) for i in range(8) for j in range(6))
+    blds = BASE + [{"id": 13, "type": "proc", "x": 9, "y": 9}, {"id": 14, "type": "powr", "x": 1, "y": 1}]
+    v = dataclasses.replace(_view(_t=160.0, buildings=blds, economy={"cash": 3000}), ore_cells=ore)
+    assert m.build(v) == [{"cmd": "build", "item": "proc"}]                    # 3 refineries wanted by 2:30
+    army = [{"id": 30 + i, "type": "e1", "x": 10, "y": 10, "hp": 100} for i in range(20)]
+    big = _view(_t=200.0, buildings=blds, units=army)
+    assert m.production(big, Mode.BUILD) == []                                 # a token army only
+    assert m.production(big, Mode.DEFEND_BASE) is None                         # unless defending
+    assert m.production(dataclasses.replace(big, game_seconds=400.0), Mode.BUILD) is None
+    assert m.advice(v).expand == "now"
+    assert m.mode(_view(_t=500.0, buildings=blds, military={"army_value": 13000}), None, Mode.BUILD) is Mode.ALL_IN
+
+
+def test_the_commander_takes_a_forced_mode_from_the_policy():
+    c = Commander()
+    c.mode = Mode.BUILD
+    v = _view(_t=500.0, buildings=BASE, military={"army_value": 500, "visible_enemy_value": 9000})
+    assert c.decide(v, forced=lambda policy: None) is not Mode.ALL_IN         # None keeps the policy's mode
+    assert c.decide(v, forced=lambda policy: Mode.BUILD) is Mode.BUILD
 
 
 # -- c2fec761: legal growth spots, no stall on stale targets, memory follows a moving yard, home responders
@@ -3269,7 +3311,7 @@ def test_a_confirmation_made_during_the_anti_flip_window_starts_the_attack_when_
 
 
 def test_the_test_rusher_opens_with_one_refinery():
-    assert testrush.RUSH_BUILD_ORDER.count("proc") == 1
+    assert sparring.RUSH_BUILD_ORDER.count("proc") == 1
 
 
 # -- simplification step 2: the commander owns the decision -------------------------------------

@@ -24,7 +24,7 @@ def plan(
     depleted: frozenset = frozenset(),
     home: tuple[int, int] | None = None,
     clearing: dict | None = None,
-    rusher: bool = False,   # testrush (TEST ONLY): no opening infantry cap
+    sparring=None,   # sparring (TEST ONLY): an archetype's build, turrets and production
     threat: bool = False,
     probe: tuple[int, int] | None = None,
     warning: bool = False,
@@ -55,20 +55,23 @@ def plan(
     # (the army code would walk them straight back).
     clearing_ids = {i for o in placed if o.get("cmd") in ("move", "attack_move") for i in o.get("units") or ()}
     out += placed
-    out += buildplan.next_build_orders(view, exp_ore, depleted, rusher=rusher,   # advance the build order / power
+    out += buildplan.next_build_orders(view, exp_ore, depleted, sparring=sparring,   # advance the build order / power
                                        units_first=getattr(advice, "balance", None) == "more_army")
     out += expansion.orders(view) if expansion is not None else []
     # warning (intel.suspect: one refinery seen early) only adds the warning turret.
     under_attack = mode in (Mode.DEFEND_RUSH, Mode.DEFEND_BASE) or scout.early_push_warning(view) or threat or warning
     # The advisor reads an aggressive enemy: turrets up on the approach (we win on macro).
     under_attack = under_attack or getattr(advice, "enemy_style", None) == "aggressive"
-    if not rusher or under_attack:   # testrush: the rusher builds turrets only when attacked
+    spar_def = sparring.defense(view, under_attack) if sparring is not None else None
+    if spar_def is not None:   # sparring: the rusher's none, the turtler's ring
+        out += spar_def
+    else:
         out += buildplan.defense_orders(view, under_attack=under_attack,
                                         expansion_site=exp_def if expansion is not None else None, home=home,
                                         attacked=mode in (Mode.DEFEND_RUSH, Mode.DEFEND_BASE))
     out += _economy_orders(view, harvest_orders)
     out += _rally_orders(view)
-    out += _production_orders(view, mode, rusher=rusher, threat=threat)
+    out += _production_orders(view, mode, sparring=sparring, threat=threat)
     out += list(scout_orders)
     out += list(raid_orders)
     response, responders = home_response(view, mode, scout_id, frozenset(raid_ids) | clearing_ids)
@@ -178,7 +181,7 @@ def funds(view: View) -> float:
     return view.cash + view.ore
 
 
-def _production_orders(view: View, mode: Mode, *, rusher: bool = False, threat: bool = False) -> list[dict]:
+def _production_orders(view: View, mode: Mode, *, sparring=None, threat: bool = False) -> list[dict]:
     """Train units: harvesters first (unblocked if stuck behind tanks), then
     the scout vehicle, then an infantry-heavy army with tank support. Broke:
     one queue, one deep. DEFEND_RUSH: rifle spam. Every mode keeps training
@@ -216,9 +219,10 @@ def _production_orders(view: View, mode: Mode, *, rusher: bool = False, threat: 
         if blocker is not None:
             out.insert(0, orders.cancel(blocker))
 
-    if rusher:   # testrush (TEST ONLY): units without pause, never held for the economy
-        from . import testrush
-        return out + testrush.rush_production(view)
+    if sparring is not None:   # sparring (TEST ONLY): the rusher's nonstop units, the macro's token army
+        own = sparring.production(view, mode)
+        if own is not None:
+            return out + own
 
     # No infantry cap: units spend what the economy doesn't need. The build
     # order (and buildings, harvesters, an MCV in production) is pre-funded —

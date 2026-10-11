@@ -28,7 +28,7 @@ dozen match logs.
 - [ ] Step 7: models-off A/B (needs games), then keep or remove.
 - [ ] Step 8: constants, the match log, the remaining per-view caches.
 - [ ] Step 9: test cleanup (list the obsolete tests, then delete them).
-- [ ] Step 10: remove `testrush` before the tournament.
+- [ ] Step 10: remove `sparring` (was `testrush`) before the tournament.
 
 ## Where we are
 
@@ -245,8 +245,8 @@ of these lines, and is it the only one doing so?
 
 ### Test-only code
 
-`testrush.py` and its 15 marked lines stay for now: it's our sparring
-partner. Remove it before the tournament (grep `testrush`). The rush read
+`sparring.py` (was `testrush.py`) and its marked lines stay for now: our sparring
+archetypes. Remove it before the tournament (grep `sparring`). The rush read
 fix (correction 5) may change its build.
 
 ## Tests: cleanup plan
@@ -306,7 +306,7 @@ early warning, kills/losses and the result.
    optimizations).
 9. **Remaining test cleanup:** finish moving tests and delete superseded
    ones.
-10. **Before the tournament:** remove `testrush`.
+10. **Before the tournament:** remove `sparring` (was `testrush`).
 
 ## Decisions needed
 

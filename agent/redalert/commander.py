@@ -6,7 +6,7 @@ Everything that decides the army's mode lives here, in this order:
    HOLD (an early warning or a rush read), FINISH (razed or dominated),
    RETREAT (our attack is losing), ATTACK (we clearly outweigh them and can
    break their turrets) or MASS (BUILD), plus the opening.
-2. A forced mode (the test rusher only; testrush.py).
+2. A forced mode (the sparring archetypes only; sparring.py).
 3. The MCV escort: no attack while an expansion MCV is on the road, unless
    we must attack.
 4. Look before committing: while trades are about even
@@ -74,8 +74,8 @@ class Commander:
             alarm=alarm, distraction=distraction,
             attack_seconds=view.game_seconds - self.mode_since if prev is Mode.ALL_IN else None,
         )
-        if forced is not None:                     # testrush (TEST ONLY)
-            mode = forced
+        if forced is not None:                     # sparring (TEST ONLY): a mode, or a function of the policy's
+            mode = (forced(mode) or mode) if callable(forced) else forced
         if escorting and mode is Mode.ALL_IN and prev is not Mode.ALL_IN and not brain.must_attack(view) and not hunting:
             mode = Mode.BUILD                      # defend the haul: no new attack (one under way goes on)
         mode = self._confirm(view, prev, mode, skip=rushing or hunting or brain._catching_up(view))

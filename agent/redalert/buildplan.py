@@ -32,7 +32,7 @@ def _count_built_and_queued(view: View, type_ids) -> int:
 
 
 def next_build_orders(view: View, expansion_ore: tuple[int, int] | None = None,
-                      depleted: frozenset = frozenset(), rusher: bool = False,
+                      depleted: frozenset = frozenset(), sparring=None,
                       units_first: bool = False) -> list[dict]:
     """Zero or one production order that advances the build order this view.
 
@@ -66,9 +66,10 @@ def next_build_orders(view: View, expansion_ore: tuple[int, int] | None = None,
             return [orders.cancel(blocker)]
         # If power is queued/placing, fall through — don't stall other logic.
 
-    if rusher:   # testrush (TEST ONLY): the sparring rusher's own build
-        from . import testrush
-        return testrush.rush_build(view)
+    if sparring is not None:   # sparring (TEST ONLY): the rusher's build, the macro's extra refineries
+        own = sparring.build(view, depleted)
+        if own is not None:
+            return own
 
     # Interrupt 2a: a new expansion yard without a refinery -> one by its ore.
     if expansion_ore is not None:
