@@ -3948,3 +3948,14 @@ def test_the_hunt_covers_the_map_with_a_grid_and_stays_on_once_the_base_falls():
     assert h.hunting(_view(_t=950.0, visible_enemy_buildings=base[:2], military=lead))   # razed: hunt
     assert h.hunting(_view(_t=980.0, visible_enemy_buildings=base[:5], military=lead))   # a few rebuilt: still
     assert not h.hunting(_view(_t=990.0, visible_enemy_buildings=base, military=lead))   # a real base: attack it
+
+
+def test_console_lines_and_the_reasoning_say_which_seat_they_come_from():
+    console = []
+    agent = RedAlertAgent(log=console.append, clock=lambda: 0.0)
+    raw = _raw(_t=100.0, buildings=BASE)
+    raw["your_seat"] = "Multi1"
+    dec = agent.choose_action(GameState.from_mcp_state(raw), CTX)
+    agent._log("[redalert] advisor t=100s hold: test")
+    assert console[-1].startswith("[redalert seat 1] advisor t=100s")
+    assert dec.reasoning_summary.startswith("seat 1 | ")

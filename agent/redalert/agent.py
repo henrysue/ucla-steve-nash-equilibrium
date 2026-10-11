@@ -57,7 +57,9 @@ class RedAlertAgent:
         squad_lead_factory: Callable[..., Any] | None = None,
         log_dir: str | None = None,
     ) -> None:
-        self._log = log
+        self._raw_log = log
+        self._seat: int | None = None   # our seat (from your_seat "Multi1"): every console line says which seat it is
+        self._log = self._tagged
         self._clock = clock
         self._commander = Commander()   # the army's one decision each view (commander.py)
         self._opening_done = False      # the standard build order stands (buildplan.opening_done)
@@ -87,16 +89,16 @@ class RedAlertAgent:
         self._clearing: dict = {}   # building item -> game time its spot was first found occupied
         self._harvest = HarvestManager()
         # Per-match review log (off unless a log directory is configured).
-        self._matchlog = MatchLog(log, directory=log_dir)
+        self._matchlog = MatchLog(self._log, directory=log_dir)
         self._game_seconds: float | None = None
         # Flank route for the current attack (executor.choose_flank).
         self._flank_via: tuple[int, int] | None = None
         # The model advisor (None: rules only). Built after the match log so
         # each piece of advice is logged as it arrives.
-        self._advisor = advisor_factory(log, on_advice=self._on_advice) if advisor_factory else None
+        self._advisor = advisor_factory(self._log, on_advice=self._on_advice) if advisor_factory else None
         self._last_plan: tuple[str, str] | None = None
         # Haiku squad leads for the raid squad and the garrison ({} = rules only).
-        self._leads = squad_lead_factory(log, on_directive=self._matchlog.squad) if squad_lead_factory else {}
+        self._leads = squad_lead_factory(self._log, on_directive=self._matchlog.squad) if squad_lead_factory else {}
 
     # -- the hot path ---------------------------------------------------------
 
@@ -105,6 +107,8 @@ class RedAlertAgent:
         if not isinstance(raw, dict) or not isinstance(raw.get("observation"), dict):
             return WAIT  # nothing to look at yet
 
+        if self._seat is None:
+            self._seat = _seat_number(raw.get("your_seat"), getattr(context, "seat_position", None))
         view = read(raw, getattr(context, "game_config", None))
         if not view.ok:
             return WAIT
@@ -560,8 +564,17 @@ class RedAlertAgent:
         sent_at, units = last
         return now - sent_at < C.ARMY_REISSUE_SECONDS and set(order.get("units") or ()) <= units
 
+    def _tagged(self, line: str) -> None:
+        """Console lines say which seat they come from ("[redalert seat 1] ..."):
+        both seats print to the same terminals in self-play. The platform
+        gives no colour, only the seat."""
+        if self._seat is not None and line.startswith("[redalert]"):
+            line = f"[redalert seat {self._seat}]" + line[len("[redalert]"):]
+        self._raw_log(line)
+
     def _reason(self, view) -> str:
-        return f"{self._mode} | army {int(view.army_value)} vs {int(view.enemy_army_value)} | t={int(view.game_seconds)}s"
+        seat = f"seat {self._seat} | " if self._seat is not None else ""
+        return f"{seat}{self._mode} | army {int(view.army_value)} vs {int(view.enemy_army_value)} | t={int(view.game_seconds)}s"
 
 
 _POSTURE = {"attack": Mode.ALL_IN, "hold": Mode.BUILD}
@@ -590,3 +603,11 @@ def _order_key(order: dict) -> str:
     if isinstance(body.get("units"), list):
         body["units"] = sorted(body["units"], key=str)
     return json.dumps(body, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _seat_number(your_seat, seat_position) -> int | None:
+    """0 / 1 from the state's ``your_seat`` ("Multi0"), else the context's seat."""
+    digits = "".join(ch for ch in str(your_seat or "") if ch.isdigit())
+    if digits:
+        return int(digits)
+    return seat_position if isinstance(seat_position, int) else None
