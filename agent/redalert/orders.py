@@ -36,6 +36,7 @@ _FIELDS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
     "stop": (frozenset({"units"}), frozenset()),
     "harvest": (frozenset({"units"}), frozenset({"to", "queued"})),
     "set_stance": (frozenset({"units", "stance"}), frozenset()),
+    "guard": (frozenset({"units", "target"}), frozenset({"queued"})),
     "rally": (frozenset({"building", "to"}), frozenset()),
 }
 
@@ -135,6 +136,12 @@ def move(unit_ids: list[int], to) -> dict:
 
 def attack(unit_ids: list[int], target: int) -> dict:
     return {"cmd": "attack", "units": list(unit_ids), "target": target}
+
+
+def guard(unit_ids: list[int], target: int) -> dict:
+    """Follow and protect one of our own actors (a unit or a building): the
+    guards fight whatever comes at it (skill/redalert: ``guard``)."""
+    return {"cmd": "guard", "units": list(unit_ids), "target": target}
 
 
 def harvest(unit_ids: list[int], to=None) -> dict:

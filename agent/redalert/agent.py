@@ -113,6 +113,7 @@ class RedAlertAgent:
         view = read(raw, getattr(context, "game_config", None))
         if not view.ok:
             return WAIT
+        self._forget_lost_orders(raw)
 
         # Remember enemies through the fog: the brain weighs the enemy army we
         # remember, and the army can target buildings we saw earlier.
@@ -355,6 +356,20 @@ class RedAlertAgent:
         elif lead is not None:
             lead.poll(view, [], "")
         return self._raid.orders(view)
+
+    def _forget_lost_orders(self, raw: dict) -> None:
+        """An order the server reports ``lost`` (or ``rejected``) never reached
+        the units: forget what we think we sent, so the plan sends it again
+        next view (skill/redalert: "resend lost orders"; the 20 s no-repeat
+        memory would have held it back)."""
+        last = raw.get("last_orders")
+        results = last.get("results") if isinstance(last, dict) else None
+        if not isinstance(results, list):
+            return
+        if any(isinstance(r, dict) and r.get("status") in ("lost", "rejected")
+               and r.get("cmd") in ("move", "attack_move", "attack", "guard") for r in results):
+            self._unit_dest.clear()
+            self._army_sent.clear()
 
     def _garrison_orders(self, view) -> list[dict]:
         """The garrison's orders: its Haiku lead's call when fresh, usable and

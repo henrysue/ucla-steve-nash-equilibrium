@@ -4710,3 +4710,35 @@ def test_the_advisor_may_set_the_waiting_army_stance():
         {"cmd": "set_stance", "units": [30, 31, 32], "stance": "attack_anything"}]
     assert executor.stance_orders(v, Mode.BUILD, set(), "auto") == []          # auto: the rule (defend)
     assert ra_adv.parse_advice({"army_stance": "berserk"}, v, 500.0).army_stance == "auto"
+
+
+# -- the guide's commands: guard, lost orders ---------------------------------------------------------
+
+
+def test_the_outpost_guards_the_mcv_then_the_expansion_yard():
+    from agent.redalert.guard import Garrison
+    g = Garrison()
+    g.unit_ids = [50, 51]
+    e = Expansion()
+    e.state, e.site, e.mcv_id = "moving", (24, 20), 70
+    e._site_forward = True
+    units = [{"id": 50, "type": "e1", "x": 12, "y": 12, "hp": 100}, {"id": 51, "type": "e1", "x": 12, "y": 13, "hp": 100},
+             {"id": 70, "type": "mcv", "x": 16, "y": 16, "hp": 100}]
+    v = _view(_t=400.0, buildings=BASE, units=units)
+    assert g.orders(v, e) == [{"cmd": "guard", "units": [50, 51], "target": 70}]
+    assert g.orders(v, e) == []                                               # told once
+    e.state, e.mcv_id = "idle", None
+    e.done = [{"site": (24, 20), "ore": (27, 22), "asked_at": None}]
+    yard = BASE + [{"id": 80, "type": "fact", "x": 23, "y": 19}]
+    assert g.orders(_view(_t=500.0, buildings=yard, units=units[:2]), e) == [
+        {"cmd": "guard", "units": [50, 51], "target": 80}]                     # then the yard
+    assert ra_orders.order_ok({"cmd": "guard", "units": [50], "target": 80})
+
+
+def test_a_lost_order_is_sent_again():
+    agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 100.0)
+    agent._unit_dest = {30: (95.0, "attack_move", (40, 40))}
+    agent._forget_lost_orders({"last_orders": {"results": [{"index": 0, "cmd": "attack_move", "status": "ok"}]}})
+    assert agent._unit_dest
+    agent._forget_lost_orders({"last_orders": {"results": [{"index": 0, "cmd": "attack_move", "status": "lost"}]}})
+    assert not agent._unit_dest

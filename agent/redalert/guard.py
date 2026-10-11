@@ -47,6 +47,7 @@ class Garrison:
 
     def __init__(self) -> None:
         self.unit_ids: list[int] = []
+        self._guarding: dict[int, int] = {}    # unit -> the actor it was told to guard
 
     def update(self, view: View, mode: Mode, expansion, taken: set) -> None:
         alive = {u.id for u in view.combat_units}
@@ -71,6 +72,20 @@ class Garrison:
                     return
                 if u.type == kind and u.id not in self.unit_ids:
                     self.unit_ids.append(u.id)
+
+    @staticmethod
+    def _ward(view: View, expansion) -> int | None:
+        """What the outpost guards: the MCV on its way to a forward site, else
+        our construction yard at the forward expansion; None without one."""
+        if getattr(expansion, "escorting", False) and getattr(expansion, "mcv_id", None) is not None:
+            if any(u.id == expansion.mcv_id for u in view.units):
+                return expansion.mcv_id
+        site = forward_site(view, expansion)
+        if site is None:
+            return None
+        yards = [b for b in view.buildings if b.type == C.CONSTRUCTION_YARD and b.cell is not None and not b.wreck
+                 and b.id is not None and dist2(b.cell, site) <= C.GARRISON_LEASH_CELLS ** 2]
+        return min(yards, key=lambda b: dist2(b.cell, site)).id if yards else None
 
     def _army_fighting(self, view: View) -> bool:
         from .executor import fight_near
@@ -110,7 +125,16 @@ class Garrison:
         leash2 = C.GARRISON_LEASH_CELLS ** 2
         threats = [a.cell for a in enemy_threat_near_base(view) if a.cell is not None and dist2(a.cell, post) <= leash2]
         if threats:
+            self._guarding.clear()           # off to fight: guard again after
             return [orders.attack_move(list(self.unit_ids), list(min(threats, key=lambda c: dist2(c, post))))]
+        # With the engine's guard order: follow the MCV on its way, then stay
+        # with the expansion's construction yard and fight what comes at it.
+        ward = self._ward(view, expansion)
+        if ward is not None:
+            fresh = [i for i in self.unit_ids if self._guarding.get(i) != ward]
+            for i in fresh:
+                self._guarding[i] = ward
+            return [orders.guard(fresh, ward)] if fresh else []
         r2 = 3 ** 2
         away = [u.id for u in view.combat_units if u.id in ids and u.idle and dist2(u.cell, post) > r2]
         return [orders.attack_move(away, list(post))] if away else []

@@ -176,6 +176,12 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
   at a time for two minutes). Expansion refineries avoid predicted ore; one that
   comes up elsewhere is asked for again at once,
   its spot skipped. Behind on army: no new refinery or MCV unless home runs dry.
+- **The guide's commands** (skill/redalert): the outpost uses the engine's
+  `guard` order — it follows the MCV on its way, then stays with the
+  expansion's yard (attacking threats near it first); an order the server
+  reports `lost` or `rejected` clears our no-repeat memory so the plan sends it
+  again. Not used on purpose: `power_toggle` (a powered-down dome or depot may
+  stop unlocking siege units and tanks; we build power instead).
 - **Decisive play, no guess** (3bd6e450): the enemy estimate is only what we
   know — the most we see or remember, or saw lately less half our kills since;
   no "about as big as us" prior, no rebuild guess. Trading clearly up (1500+
