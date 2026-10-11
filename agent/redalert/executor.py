@@ -553,9 +553,9 @@ def respond(view: View, mode: Mode, scout_id: int | None, reserved: frozenset, h
     if not idle:
         return [], set()
     if getattr(advice, "guard", "on") == "off":
-        stage = scout.choke_cell(view)
-        if stage is not None:
-            idle = [u for u in idle if dist2(u.cell, stage) > C.STAGING_RADIUS_CELLS ** 2 * 4]
+        held = scout.concave_point(view)   # the concave's units stay put
+        if held is not None:
+            idle = [u for u in idle if dist2(u.cell, held[0]) > C.STAGING_RADIUS_CELLS ** 2 * 4]
     army_fight: set = set()
     if mode not in AGGRESSIVE:
         army_fight = {a.id for a in army_contact(view, _fighters(view, scout_id, reserved), mode in DEFENSIVE)}
@@ -596,9 +596,10 @@ def _army_home(view: View, mode: Mode, scout_id: int | None = None, reserved: fr
        where turrets, buildings and new units fight with us (52a77fb1 met a
        push 5 cells in front of its pillboxes and lost 6400 to 2200).
     2. A push seen coming (scout.incoming_push): ready at that line, facing it.
-    3. Otherwise the concave at the massing point (``stage_override``: the
-       point it edges to while an attack call is confirmed) — at the main
-       line while defending the base (a defend mode).
+    3. Otherwise the concave: at the mouth of the choke on their road in
+       when there is one (scout.concave_point), else at the massing point
+       (``stage_override``: the point it edges to while an attack call is
+       confirmed) — at the main line while defending the base (a defend mode).
 
     The rules own staging (match a2952a6d: the advisor massed the army toward
     our own ore and faced it at our base)."""
@@ -623,8 +624,10 @@ def _army_home(view: View, mode: Mode, scout_id: int | None = None, reserved: fr
     if defending:
         line = scout.home_line(view)
         return _form(view, fighters, line, enemy_spawn_guess(view), everyone=True) if line is not None else []
-    stage = stage_override or scout.choke_cell(view)
-    return _form(view, fighters, stage, enemy_spawn_guess(view)) if stage is not None else []
+    if stage_override is not None:
+        return _form(view, fighters, stage_override, enemy_spawn_guess(view))
+    held = scout.concave_point(view)       # at the choke's mouth when there is one
+    return _form(view, fighters, held[0], held[1]) if held is not None else []
 
 
 def _form(view: View, fighters, point, facing, everyone: bool = False) -> list[dict]:

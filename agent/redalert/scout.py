@@ -163,15 +163,86 @@ def _massing_point(view: View) -> tuple[int, int] | None:
     return _clear_stage(view, stage, toward)
 
 
-def _clear_stage(view: View, stage, toward) -> tuple[int, int]:
-    """``stage`` if no building of ours or impassable ground lies within
-    ``STAGE_CLEAR_CELLS`` of it, else the nearest such cell (within
-    ``STAGE_MOVE_SEARCH_CELLS``, ties toward the enemy): the army needs room
-    to stand, and units on a building spot get it moved home (159f4f11)."""
+_CHOKE: dict = {}
+
+
+def choke_stage(view: View):
+    """(massing point, facing) for a concave that abuses the choke on the
+    enemy's walking path to our base: the narrowest passage
+    (``CHOKE_STAGE_MAX_WIDTH`` across or less) between ``STAGE_FORWARD_CELLS``
+    from the base and ``CHOKE_STAGE_MAX_FRACTION`` of the way to them. The
+    concave's kill point (``FORMATION_FOCUS_AHEAD`` in front of the massing
+    point) sits where the way opens up on our side of it, so every unit in
+    the arc fires into the mouth while they come through a few at a time
+    (Sidestep's middle gap, Trapped's island passage: the concave used to
+    stand 7-9 cells short of them, and they spread out before contact).
+    Facing the choke itself. None without such a choke (the distance rule
+    then places it). From the terrain alone: cached per map and spawns."""
+    from .observe import enemy_spawn_guess
+    from .terrain import passage_width, walk_path
+
+    base, enemy = view.base_center, enemy_spawn_guess(view)
+    if base is None or enemy is None or not view.blocked_cells:
+        return None
+    key = (id(view.blocked_cells), tuple(base), tuple(enemy))
+    hit = _CHOKE.get(key)
+    if hit is not None and hit[0] is view.blocked_cells:
+        return hit[1]
+    result = None
+    path = walk_path(view, tuple(enemy), tuple(base))           # from them to us
+    lo2, hi2 = C.STAGE_FORWARD_CELLS ** 2, C.CHOKE_STAGE_MAX_FRACTION ** 2 * dist2(base, enemy)
+    widths = {i: passage_width(view, c) for i, c in enumerate(path) if lo2 <= dist2(c, base) <= hi2}
+    narrow = [(w, -i) for i, w in widths.items() if w <= C.CHOKE_STAGE_MAX_WIDTH]
+    if narrow:
+        width, back = min(narrow)                                # the narrowest; on a tie the one nearest us
+        i = -back
+        mouth = i
+        while (mouth + 1 < len(path) and mouth - i < C.CHOKE_MOUTH_MAX_STEPS
+               and passage_width(view, path[mouth]) <= width + 2):
+            mouth += 1
+        # The massing point FORMATION_FOCUS_AHEAD behind the mouth, in line
+        # with the choke: the concave's kill point lands on the mouth.
+        (cx, cy), (mx, my) = path[i], path[mouth]
+        d = ((mx - cx) ** 2 + (my - cy) ** 2) ** 0.5 or 1.0
+        stage = _open_cell(view, (mx + (mx - cx) / d * C.FORMATION_FOCUS_AHEAD,
+                                  my + (my - cy) / d * C.FORMATION_FOCUS_AHEAD))
+        result = (stage, path[i])
+    if len(_CHOKE) > 16:
+        _CHOKE.clear()
+    _CHOKE[key] = (view.blocked_cells, result)
+    return result
+
+
+_CONCAVE: list = [None, None]   # [view, (point, facing)]: computed once per view
+
+
+def concave_point(view: View):
+    """(point, facing) where the waiting army forms its concave: at the mouth
+    of the choke on their road in, facing it (:func:`choke_stage`), else at
+    the massing point facing their side. Only the concave moves: rally
+    points, the attack probe and everything else keep the massing point."""
+    if _CONCAVE[0] is view:
+        return _CONCAVE[1]
+    held = choke_stage(view)
+    if held is not None:
+        out = (_clear_stage(view, held[0], held[1], terrain=False), held[1])
+    else:
+        stage = choke_cell(view)
+        out = (stage, _enemy_side(view)) if stage is not None else None
+    _CONCAVE[0], _CONCAVE[1] = view, out
+    return out
+
+
+def _clear_stage(view: View, stage, toward, terrain: bool = True) -> tuple[int, int]:
+    """``stage`` if no building of ours (or, with ``terrain``, impassable
+    ground) lies within ``STAGE_CLEAR_CELLS`` of it, else the nearest such
+    cell (within ``STAGE_MOVE_SEARCH_CELLS``, ties toward the enemy): the
+    army needs room to stand, and units on a building spot get it moved home
+    (159f4f11). At a choke the cliffs are the point: only buildings count."""
     from .buildplan import _rect
 
     r = C.STAGE_CLEAR_CELLS
-    taken = set(view.blocked_cells)
+    taken = set(view.blocked_cells) if terrain else set()
     for b in view.buildings:
         if b.cell is not None and not b.wreck:
             x0, y0, x1, y1 = _rect(b.type, b.cell)
@@ -184,8 +255,8 @@ def _clear_stage(view: View, stage, toward) -> tuple[int, int]:
             bx, by, bw, bh = view.bounds
             if not (bx <= c[0] < bx + bw and by <= c[1] < by + bh):
                 return False
-        return not any((c[0] + dx, c[1] + dy) in taken
-                       for dx in range(-r, r + 1) for dy in range(-r, r + 1) if dx * dx + dy * dy <= r * r)
+        return c not in view.blocked_cells and not any(
+            (c[0] + dx, c[1] + dy) in taken for dx in range(-r, r + 1) for dy in range(-r, r + 1) if dx * dx + dy * dy <= r * r)
 
     if clear(stage):
         return stage

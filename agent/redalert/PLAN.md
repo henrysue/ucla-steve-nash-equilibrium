@@ -129,8 +129,11 @@ An attack goes on until the retreat rule ends it. No mass/attack flip within
   - **The army at home**: a fight in contact with it or the main base → it
     attacks when the odds are 1.25+, else holds the main base's turret line
     (`scout.home_line`: just behind our turret nearest them). A push seen in
-    our half → it gets ready at that line facing it. Otherwise the concave at
-    the main choke.
+    our half → it gets ready at that line facing it. Otherwise the concave
+    holds the choke on their road in (a passage 7 cells or narrower, 10+ cells
+    out and under 45% of the way to them): its kill point on the choke's mouth
+    on our side, so the whole arc fires on them as they come through; with no
+    such choke, at the massing point. Rally points stay at the massing point.
   - **Everything else** — a small group, a poke at the concave, a raid on the
     trucks, a spot we were hit at with no attacker in sight
     (`under_attack`/`unit_lost` events, vanished units) → the idle units

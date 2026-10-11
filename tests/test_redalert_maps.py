@@ -182,3 +182,24 @@ def test_chokes_are_found_from_the_terrain_on_real_maps(path):
     assert found and min(w for _, w in found) <= C.CHOKE_MAX_WIDTH         # the middle passages
     for cell, _ in found:
         assert cell not in view.blocked_cells
+
+
+@pytest.mark.parametrize("path", FIXTURES, ids=[p.stem for p in FIXTURES])
+def test_the_concave_holds_the_mouth_of_the_choke_on_real_maps(path):
+    from agent.redalert import executor
+
+    fx = _load(path)
+    view = _view(fx, fx["states"][1], path.stem)
+    base = tuple(fx["base_center"])
+    choke = scout.choke_stage(view)[1]
+    assert terrain.passage_width(view, choke) <= C.CHOKE_STAGE_MAX_WIDTH         # Sidestep's gap, Trapped's passage
+    point, facing = scout.concave_point(view)
+    assert facing == choke
+    d = lambda a, b: ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5              # noqa: E731
+    assert d(point, choke) < d(scout.choke_cell(view), choke) - 3                   # up at the choke, not back
+    ux, uy = (choke[0] - point[0]) / d(point, choke), (choke[1] - point[1]) / d(point, choke)
+    kill = (point[0] + ux * C.FORMATION_FOCUS_AHEAD, point[1] + uy * C.FORMATION_FOCUS_AHEAD)
+    assert d(kill, choke) <= 3                                                    # the kill point at its mouth
+    assert d(point, base) < d(choke, base)                                        # on our side of it
+    slots = executor.concave_slots(view, point, facing, 20)
+    assert len(slots) >= 15 and not any(s in view.blocked_cells for s in slots)
