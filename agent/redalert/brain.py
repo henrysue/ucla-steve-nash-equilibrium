@@ -173,6 +173,16 @@ def enemy_estimate(view: View) -> float:
     return max(look, prior)
 
 
+def behind_on_army(view: View) -> bool:
+    """Past the opening, their army (:func:`enemy_estimate`) is
+    ``BEHIND_ARMY_RATIO`` x ours or more: units come before economy and tech.
+    Match 52a77fb1 banked 1200-3800 for 4 minutes, held for an MCV, a second
+    war factory and refineries, while the estimate was 2-3x our army."""
+    if view.game_seconds < C.BEHIND_AFTER_SECONDS:
+        return False
+    return enemy_estimate(view) >= C.BEHIND_ARMY_RATIO * max(view.army_value, 1.0)
+
+
 def blind_estimate(view: View) -> bool:
     """The estimate is mostly our guess: the "about as big as us" prior is
     over ``BLIND_PRIOR_RATIO`` x what we saw of them lately, and no fresh look

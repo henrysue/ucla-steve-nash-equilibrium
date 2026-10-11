@@ -4323,3 +4323,30 @@ def test_a_lost_war_factory_keeps_its_money_even_while_defending():
     o = executor._production_orders(v, Mode.DEFEND_BASE)
     assert not any(x.get("cmd") == "train" and x.get("item") == "e1" for x in o)   # no rifle eats it
     assert buildplan.factory_reserve(_view(_t=600.0, buildings=BASE + [{"id": 12, "type": "weap", "x": 4, "y": 8}])) == 0
+
+
+# -- match 52a77fb1: a 1200-3800 bank held for an MCV and tech while 2-3x behind on army -------------
+
+
+def _banked(t, enemy, balance_units=False, **kw):
+    blds = BASE + [{"id": 12, "type": "weap", "x": 4, "y": 8}, {"id": 13, "type": "proc", "x": 9, "y": 9},
+                   {"id": 14, "type": "powr", "x": 1, "y": 1}, {"id": 15, "type": "fix", "x": 1, "y": 12}]
+    harv = [{"id": 40 + i, "type": "harv", "x": 14, "y": 14, "hp": 100} for i in range(5)]
+    army = [{"id": 60 + i, "type": "1tnk", "x": 12, "y": 12, "hp": 100} for i in range(6)]
+    q = [{"item": "mcv", "queue": "Vehicle", "ready": False, "progress": 0.1},
+         {"item": "proc", "queue": "Building", "ready": False, "progress": 0.1}]
+    return _view(_t=t, buildings=blds, units=harv + army, production=q, economy={"cash": 0, "ore": 3000},
+                 military={"army_value": 10500, "visible_enemy_value": enemy}, **kw)   # 5000 net of harvesters
+
+
+@pytest.mark.usefixtures("visible_only")
+def test_behind_on_army_the_bank_goes_into_units():
+    behind = _banked(420.0, enemy=10000)
+    assert brain.behind_on_army(behind)
+    assert buildplan.build_reserve(behind) < 500                               # the MCV and refinery wait
+    assert any(o.get("cmd") == "train" and o.get("item") in ("e1", "e3") for o in executor._production_orders(behind, Mode.BUILD))
+    even = _banked(420.0, enemy=4000)
+    assert not brain.behind_on_army(even)
+    assert buildplan.build_reserve(even) >= 3000                               # even: the economy keeps its money
+    assert buildplan.build_reserve(even, units_first=True) < 500               # the advisor's "more_army" too
+    assert not brain.behind_on_army(_banked(120.0, enemy=10000))               # the opening: its own plan

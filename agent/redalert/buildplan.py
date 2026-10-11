@@ -213,30 +213,35 @@ def opening_done(view: View) -> bool:
     return True
 
 
-def build_reserve(view: View) -> float:
+def build_reserve(view: View, units_first: bool = False) -> float:
     """Money the economy still needs, which units mustn't spend: what is left
     to pay on buildings, harvesters and an MCV in production, plus the next
     build-order step not started yet. The pros' build order runs on time
     because its money is set aside; the rest goes into units (no infantry
-    cap)."""
-    from .brain import outgunned
+    cap). Behind on army (:func:`brain.behind_on_army`, or ``units_first``:
+    the advisor's "more_army"): only power, production buildings and
+    harvesters keep their money — not an MCV, refinery or tech."""
+    from .brain import behind_on_army, outgunned
 
     cost = lambda item: view.unit_costs.get(item) or C.KNOWN_COSTS.get(item, C.DEFAULT_UNIT_COST)  # noqa: E731
     owed = 0.0
-    short = outgunned(view)
+    behind = (units_first and view.game_seconds >= C.BEHIND_AFTER_SECONDS) or behind_on_army(view)
+    short = outgunned(view) or behind
     for p in view.production:
         item = str(p.get("item") or "").lower()
         if p.get("ready") or not item:
             continue
         if item == C.MCV and short:
             continue                   # outgunned: units before the MCV (it is cancelled)
+        if behind and item not in C.PRODUCTION_ITEMS and item not in C.HARVESTER:
+            continue                   # behind: units before refineries, the depot, the dome
         if _is_building(view, item) or item in C.HARVESTER or item == C.MCV:
             progress = p.get("progress")
             done = float(progress) if isinstance(progress, (int, float)) and not isinstance(progress, bool) else 0.0
             owed += cost(item) * max(0.0, 1.0 - done)
     nxt = 0.0
     seen: dict = {}
-    for step in _build_order(view):
+    for step in (() if behind else _build_order(view)):
         seen[_ids(step)] = want = seen.get(_ids(step), 0) + 1
         if _count_built_and_queued(view, _ids(step)) >= want:
             continue

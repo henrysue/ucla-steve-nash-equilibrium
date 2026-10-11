@@ -71,7 +71,8 @@ def plan(
                                         attacked=mode in (Mode.DEFEND_RUSH, Mode.DEFEND_BASE))
     out += _economy_orders(view, harvest_orders)
     out += _rally_orders(view)
-    out += _production_orders(view, mode, sparring=sparring, threat=threat)
+    out += _production_orders(view, mode, sparring=sparring, threat=threat,
+                              units_first=getattr(advice, "balance", None) == "more_army")
     out += list(scout_orders)
     out += list(raid_orders)
     response, responders = home_response(view, mode, scout_id, frozenset(raid_ids) | clearing_ids)
@@ -181,7 +182,8 @@ def funds(view: View) -> float:
     return view.cash + view.ore
 
 
-def _production_orders(view: View, mode: Mode, *, sparring=None, threat: bool = False) -> list[dict]:
+def _production_orders(view: View, mode: Mode, *, sparring=None, threat: bool = False,
+                       units_first: bool = False) -> list[dict]:
     """Train units: harvesters first (unblocked if stuck behind tanks), then
     the scout vehicle, then an infantry-heavy army with tank support. Broke:
     one queue, one deep. DEFEND_RUSH: rifle spam. Every mode keeps training
@@ -230,7 +232,8 @@ def _production_orders(view: View, mode: Mode, *, sparring=None, threat: bool = 
     # into the army.
     # A lost war factory's rebuild keeps its money even then: it is where
     # the tanks (and harvesters) come from.
-    reserve = buildplan.factory_reserve(view) if (threat or mode in DEFENSIVE) else buildplan.build_reserve(view)
+    reserve = (buildplan.factory_reserve(view) if (threat or mode in DEFENSIVE)
+               else buildplan.build_reserve(view, units_first=units_first))
     spare = funds(view) - reserve
     unit_cost = lambda item: view.unit_costs.get(item, C.DEFAULT_UNIT_COST)  # noqa: E731
 
