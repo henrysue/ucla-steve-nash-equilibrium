@@ -3886,11 +3886,13 @@ def test_outnumbered_the_army_falls_back_to_its_turret():
     rush = [{"id": 900 + i, "type": "e1", "x": 16, "y": 16, "hp": 100} for i in range(20)]
     blds = BASE + [{"id": 30, "type": "ftur", "x": 7, "y": 8}]
     o = executor._army_orders(_view(_t=150.0, buildings=blds, units=army, visible_enemies=rush), Mode.BUILD)
-    assert o == [{"cmd": "attack_move", "units": [100 + i for i in range(6)], "to": [7, 8]}]
-    even = [{"id": 900 + i, "type": "e1", "x": 16, "y": 16, "hp": 100} for i in range(16)]
+    (back,) = o
+    assert back["units"] == [100 + i for i in range(6)]
+    assert (back["to"][0] - 7) ** 2 + (back["to"][1] - 8) ** 2 <= 9       # just behind the turret
+    fewer = [{"id": 900 + i, "type": "e1", "x": 16, "y": 16, "hp": 100} for i in range(16)]
     o2 = executor._army_orders(_view(_t=150.0, buildings=blds, units=army * 1 + [
-        {"id": 110 + i, "type": "e1", "x": 11, "y": 11, "hp": 100} for i in range(10)], visible_enemies=even), Mode.BUILD)
-    assert o2[0]["to"] == [16, 16]                                       # the odds are fine: fight them
+        {"id": 110 + i, "type": "e1", "x": 11, "y": 11, "hp": 100} for i in range(20)], visible_enemies=fewer), Mode.BUILD)
+    assert o2[0]["to"] == [16, 16]                                       # clearly stronger: fight them
 
 
 def test_trucks_come_back_before_the_depot_and_the_kennel():
@@ -4456,3 +4458,49 @@ def test_tanks_come_first_while_they_lag_the_mix():
     assert not executor.tanks_lag(mixed, "2tnk")                              # 2550 of 4550: mixed
     assert any(x.get("item") == "e1" for x in executor._production_orders(mixed, Mode.BUILD))
     assert any(x.get("item") == "e1" for x in executor._production_orders(v, Mode.DEFEND_BASE))   # defending: everything
+
+
+# -- match 52a77fb1: unit strength, the turret line, and orders that reach every unit ---------------
+
+
+def test_strength_counts_armor_not_just_price():
+    from agent.redalert import strength
+    ours = ["e1"] * 16 + ["1tnk"] * 3 + ["e3"] * 3                              # 5000 by price
+    theirs = ["e1"] * 5 + ["e3"] * 3 + ["2tnk"] * 3                             # 3950 by price
+    assert strength.edge(ours, theirs) < 1.15                                 # by strength: about even
+    rockets = ["e1"] * 8 + ["e3"] * 8 + ["2tnk"] * 3
+    assert strength.edge(rockets, theirs) > strength.edge(ours, theirs)       # rockets answer their tanks
+    assert strength.rifles_per_rocket(["2tnk"] * 4 + ["e1"] * 4) == 1         # an armored enemy: 1:1
+    assert strength.rifles_per_rocket(["e1"] * 10) == C.RIFLE_TO_ROCKET       # infantry: the usual 3:1
+
+
+def test_an_even_strength_push_is_met_at_the_turret_line():
+    army = [{"id": 100 + i, "type": "e1", "x": 13, "y": 13, "hp": 100} for i in range(16)]
+    army += [{"id": 200 + i, "type": "1tnk", "x": 13, "y": 13, "hp": 100} for i in range(3)]
+    push = [{"id": 900 + i, "type": "2tnk", "x": 17, "y": 17, "hp": 100} for i in range(3)]
+    push += [{"id": 950 + i, "type": "e1", "x": 17, "y": 17, "hp": 100} for i in range(6)]
+    blds = BASE + [{"id": 70, "type": "pbox", "x": 9, "y": 9}]
+    o = executor._army_orders(_view(_t=420.0, buildings=blds, units=army, visible_enemies=push), Mode.BUILD)
+    assert len(o) == 1 and (o[0]["to"][0] - 9) ** 2 + (o[0]["to"][1] - 9) ** 2 <= 9   # behind the pillbox
+    no_tower = executor._army_orders(_view(_t=420.0, buildings=BASE, units=army, visible_enemies=push), Mode.BUILD)
+    assert no_tower[0]["to"] == [17, 17]                                       # no turret: fight where they are
+
+
+def test_formation_orders_fit_the_batch_and_nobody_is_left_at_the_door():
+    near = [{"id": 100 + i, "type": "e1", "x": 4 + i % 4, "y": 20 + i // 4, "hp": 100, "idle": True} for i in range(12)]
+    door = [{"id": 200 + i, "type": "e1", "x": 30 + i, "y": 4, "hp": 100, "idle": True} for i in range(10)]
+    o = executor._army_orders(_view(_t=300.0, buildings=BASE, units=near + door), Mode.BUILD)
+    assert len(o) <= 1 + C.CONCAVE_ORDERS_PER_VIEW
+    walking = {i for x in o for i in x["units"]}
+    assert all(u["id"] in walking for u in door)                              # every far unit has an order
+    assert len(o[0]["units"]) > 1                                             # the group order comes first
+
+
+def test_the_mix_moves_the_army_edge():
+    rifles = [{"id": 100 + i, "type": "e1", "x": 13, "y": 13, "hp": 100} for i in range(20)]
+    tanks = [{"id": 900 + i, "type": "2tnk", "x": 40, "y": 40, "hp": 100} for i in range(6)]
+    v = _view(_t=500.0, buildings=BASE, units=rifles, visible_enemies=tanks)
+    rockets = [dict(u, type="e3") for u in rifles]
+    answer = brain.mix_factor(_view(_t=500.0, buildings=BASE, units=rockets, visible_enemies=tanks))
+    assert answer > 1.0 and answer > brain.mix_factor(v)                      # rockets are the answer to tanks
+    assert brain.mix_factor(_view(_t=500.0, buildings=BASE, units=rifles[:3], visible_enemies=tanks)) == 1.0  # too few to judge

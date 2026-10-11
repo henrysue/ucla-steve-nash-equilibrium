@@ -46,6 +46,9 @@ DEFAULT_UNIT_COST = 300            # when the rules give no cost
 KNOWN_COSTS = {                    # the skill guide's prices, when the rules give none
     "powr": 300, "tent": 500, "barr": 500, "proc": 1400, "weap": 2000, "fix": 1200, "dome": 1000,
     "harv": 1100, "mcv": 2500, "kenn": 200, "e1": 100, "e3": 300, "dog": 200,
+    # units (OpenRA mods/ra/rules): the strength model and fights price them too
+    "e2": 150, "e4": 300, "1tnk": 700, "2tnk": 850, "3tnk": 1150, "4tnk": 2000, "jeep": 500, "apc": 850,
+    "ftrk": 600, "arty": 850, "v2rl": 900,
 }
 
 # -- opening: the pros' double refinery into the war factory (a repeated id = one more of it) --
@@ -194,6 +197,11 @@ STAGE_MAX_FRACTION = 0.40          # the advisor's stage point must be on our si
 STAGE_DANGER_RADIUS_CELLS = 10
 STAGE_ENGAGE_CELLS = 12            # enemies worth more than a small raid this close to the massing army: it fights them...
 ENGAGE_MIN_RATIO = 0.8             # ...if worth at least this share of them; outnumbered, it falls back into the base
+ENGAGE_MIN_EDGE = 1.25             # by strength (strength.edge) under this, a push is met at our turret line, not in front of it
+MATCHUP_MIN_UNITS = 5              # both sides need this many known units before the mix counts (strength.matchup)
+MATCHUP_LIMITS = (0.6, 1.5)        # the mix moves the army edge at most this much
+ARMOR_HEAVY_SHARE = 0.6            # their hit points this armored: one rocket soldier per rifleman
+CONCAVE_ORDERS_PER_VIEW = 6        # formation slot orders per view (the batch holds 20; the rest walk to the centre)
 STAGING_RADIUS_CELLS = 4           # idle units already this close to the stage are left alone
 STAGE_CLEAR_CELLS = 3              # no building this close to the massing point: the army stands there...
 STAGE_MOVE_SEARCH_CELLS = 6        # ...and if one is (or the ground is blocked), the point moves this far at most

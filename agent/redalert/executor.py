@@ -7,7 +7,7 @@ orders. No model call; the batch is capped by ``orders.batch``.
 
 from __future__ import annotations
 
-from . import buildplan, orders, scout
+from . import buildplan, orders, scout, strength
 from . import config as C
 from .modes import AGGRESSIVE, DEFENSIVE, Mode
 from .observe import View, dist2, enemy_spawn_guess
@@ -265,6 +265,11 @@ def _production_orders(view: View, mode: Mode, *, sparring=None, threat: bool = 
                      and spare < unit_cost(tank) + unit_cost(rifle or "e1"))
     if has_barracks and rifle and spare >= unit_cost(rifle) and not hold_infantry:
         ratio = C.RIFLE_TO_ROCKET if funds(view) >= C.ROCKET_RATIO_CREDIT_SWITCH else C.RIFLE_TO_ROCKET_EARLY
+        # The counter: more rockets as their army turns to armor (a rifleman
+        # does 125/s to a tank, a rocket soldier 2500/s).
+        theirs = _enemy_kinds(view)
+        if len(theirs) >= C.MATCHUP_MIN_UNITS:
+            ratio = min(ratio, strength.rifles_per_rocket(theirs))
         if view.queued_count(rifle) < depth:
             out.append(orders.train(rifle, count=1))
         if not broke and rocket and _should_add_rocket(view, ratio) and view.queued_count(rocket) < 1 \
@@ -302,6 +307,14 @@ def ahead_in_queue(view: View, queue: str, item: str) -> str | None:
     if waiting and waiting[0] != item and item in waiting:
         return waiting[0]
     return None
+
+
+def _enemy_kinds(view: View) -> list[str]:
+    """The enemy fighters we see or remember, by type (no harvesters or MCVs)."""
+    skip = set(C.HARVESTER) | {C.MCV}
+    seen = {a.id: a.type for a in list(view.known_enemy_units) + list(view.enemy_units)
+            if a.id is not None and not a.wreck and a.type not in skip}
+    return list(seen.values())
 
 
 def tanks_lag(view: View, tank: str | None) -> bool:
@@ -515,13 +528,17 @@ def _stage_forward(
     target = fight_near(view, cells)
     if fighters and target is not None:
         ids = [u.id for u in fighters][:orders.MAX_UNITS_PER_ORDER]
+        near = _enemies_near(view, cells)
         ours = sum(view.unit_costs.get(u.type, C.KNOWN_COSTS.get(u.type, C.DEFAULT_UNIT_COST)) for u in fighters)
-        if ours < C.ENGAGE_MIN_RATIO * _value(view, _enemies_near(view, cells)) and view.base_center is not None:
-            # Outnumbered: back to our turret nearest them (else the base
-            # centre), where the turrets, buildings and new units fight with
-            # us (match 6b457914 charged 22 rushers with 9 units in front of
-            # the base and lost 1300 to 300).
-            return [orders.attack_move(ids, list(_fallback_point(view, _enemies_near(view, cells))))]
+        # By strength, not price (riflemen barely scratch tanks): short of a
+        # clear edge, meet the push at our turret line, where the turrets,
+        # buildings and new units fight with us (52a77fb1 met 3 medium tanks
+        # and 7 infantry 5 cells in front of its pillboxes and lost 6400 to
+        # 2200; 6b457914 charged 22 rushers with 9 units and lost 1300 to 300).
+        firm = strength.edge([u.type for u in fighters], [a.type for a in near])
+        outnumbered = ours < C.ENGAGE_MIN_RATIO * _value(view, near)
+        if view.base_center is not None and (outnumbered or (firm < C.ENGAGE_MIN_EDGE and _home_turret(view, near))):
+            return [orders.attack_move(ids, list(_fallback_point(view, near)))]
         return [orders.attack_move(ids, list(target))]
     # Massing (and holding at home) is always a concave facing the enemy's
     # approach: every unit can fire into the middle where they arrive.
@@ -553,18 +570,32 @@ def _enemies_near(view: View, cells) -> list:
             and any(dist2(a.cell, c) <= r2 for c in cells if c is not None)]
 
 
-def _fallback_point(view: View, enemies) -> tuple[int, int]:
-    """Where an outnumbered army stands: beside our turret nearest the
-    attackers (within the main base), else the base centre."""
+def _home_turret(view: View, enemies) -> tuple[int, int] | None:
+    """Our turret in the main base nearest the attackers, else None."""
     base = view.base_center
     r2 = C.DEFENSE_MAIN_RADIUS_CELLS ** 2
     towers = [b.cell for b in view.buildings if b.type in C.DEFENSES and b.cell is not None and not b.wreck
               and base is not None and dist2(b.cell, base) <= r2]
     cells = [a.cell for a in enemies if a.cell is not None]
     if not towers or not cells:
-        return base
+        return None
     mid = (sum(c[0] for c in cells) / len(cells), sum(c[1] for c in cells) / len(cells))
     return min(towers, key=lambda c: dist2(c, mid))
+
+
+def _fallback_point(view: View, enemies) -> tuple[int, int]:
+    """Where an outnumbered army stands: just behind our turret nearest the
+    attackers (the turret in front, within the main base), else the base centre."""
+    base = view.base_center
+    tower = _home_turret(view, enemies)
+    if tower is None:
+        return base
+    dx, dy = base[0] - tower[0], base[1] - tower[1]
+    length = (dx * dx + dy * dy) ** 0.5
+    if length < 1:
+        return tower
+    spot = (round(tower[0] + 2 * dx / length), round(tower[1] + 2 * dy / length))
+    return spot if spot not in view.blocked_cells else tower
 
 
 def _value(view: View, actors) -> float:
@@ -628,11 +659,20 @@ def _concave_orders(view: View, fighters, center, facing) -> list[dict]:
         in_line.sort(key=lambda u: along(u.cell))
         slots.sort(key=along)
     # attack_move, not move: a unit walking to its slot still fights what it meets.
-    out = [orders.attack_move([u.id], list(slot)) for u, slot in zip(in_line, slots) if dist2(u.cell, slot) > 2]
-    rest = [u.id for u in units[C.FORMATION_MAX_UNITS:] if u.idle and dist2(u.cell, center) > C.STAGING_RADIUS_CELLS ** 2]
-    if rest:
-        out.append(orders.attack_move(rest[:orders.MAX_UNITS_PER_ORDER], list(center)))
-    return out
+    # At most CONCAVE_ORDERS_PER_VIEW slot orders a view, the farthest first;
+    # everyone else far from the centre walks there in one order, sent FIRST
+    # (52a77fb1: one order per unit overflowed the 20-order batch, the
+    # walk-to-the-centre order came last and was cut every view, and new
+    # units stood at the barracks doors through a fight).
+    moves = sorted(((u, slot) for u, slot in zip(in_line, slots) if dist2(u.cell, slot) > 2),
+                   key=lambda p: -dist2(p[0].cell, p[1]))
+    sent = moves[:C.CONCAVE_ORDERS_PER_VIEW]
+    covered = {u.id for u, _ in sent}
+    r2 = C.STAGING_RADIUS_CELLS ** 2
+    rest = [u.id for u in units if u.id not in covered and dist2(u.cell, center) > r2
+            and (u.idle or u not in in_line)]
+    out = [orders.attack_move(rest[:orders.MAX_UNITS_PER_ORDER], list(center))] if rest else []
+    return out + [orders.attack_move([u.id], list(slot)) for u, slot in sent]
 
 
 def flank_waypoint(view: View, target, side: int) -> tuple[int, int] | None:

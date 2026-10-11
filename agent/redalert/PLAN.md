@@ -176,6 +176,20 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
   at a time for two minutes). Expansion refineries avoid predicted ore; one that
   comes up elsewhere is asked for again at once,
   its spot skipped. Behind on army: no new refinery or MCV unless home runs dry.
+- **Unit strength, not price** (strength.py, from the OpenRA weapon/armor tables):
+  hit points, armor class and damage per second against each class — a rifleman
+  does 1875/s to infantry but 125/s to a tank, a rocket soldier 2500/s to a tank.
+  `edge` (Lanchester-style) decides whether the army meets a push in front of
+  our turrets (edge 1.25+) or at the turret line, standing just behind the
+  turret; the army edge for attacks is scaled by the mix (0.6-1.5x, once 5+
+  units a side are known); riflemen per rocket drop from 3:1 to 1:1 as their
+  army turns to armor. 52a77fb1: 5000 vs ~4000 by price was about even by
+  strength, met 5 cells in front of the pillboxes with 13 of 22 units.
+- **Formation orders fit the batch** (52a77fb1): one order per unit overflowed
+  the 20-order batch, and the walk-to-the-centre order came last and was cut
+  every view — new units stood at the barracks doors through the fight. Now at
+  most 6 slot orders a view, and everyone else far from the centre walks there
+  in one order sent first.
 - **The pros' unit mix** (9 pro replays: rifle:rocket ~3.7:1, 45-55% of combat
   value in main battle tanks in every phase — heavy for Soviets, medium for
   Allies, light tanks never): we train the strongest tank offered (3tnk, 2tnk,

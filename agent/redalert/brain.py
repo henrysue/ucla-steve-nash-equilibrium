@@ -202,7 +202,17 @@ def _army_edge(view: View) -> float:
     theirs = enemy_estimate(view)
     if theirs <= 0:
         return float("inf") if ours > 0 else 0.0
-    return ours / theirs
+    return ours / theirs * mix_factor(view)
+
+
+def mix_factor(view: View) -> float:
+    """How much better or worse our unit mix fights theirs than the prices
+    say (strength.matchup: riflemen barely scratch tanks), from the enemy
+    units we see or remember; 1.0 until both sides are known well enough."""
+    from .executor import _enemy_kinds
+    from .strength import matchup
+
+    return matchup(view, [u.type for u in view.combat_units], _enemy_kinds(view))
 
 
 def _attack_threshold(view: View) -> float:
