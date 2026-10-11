@@ -103,6 +103,11 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
 - **The hunt** (c4caa45e: a barracks survived a 100-unit hunt): up to 8
   groups of 6+, every cell where we once knew an enemy building is a search
   point, and a point counts as checked within 5 cells (about sight).
+- **Steady orders** (906dbb32: the big push split and went back and forth): a
+  unit sent within 5 cells of the same spot in the last 20 s isn't re-sent
+  (unless it stands idle away from it: stuck); a queued leg keeps only the
+  units its first leg kept. Only reinforcements still at the massing point wait
+  for a group; nobody is sent back from a push.
 - **Cleaner fights** (5e840776: attacks retreated 6-30 s after contact and were
   chased; armies strung out, single file through Sidestep's 2-cell gap):
   squad leads off unless REDALERT_SQUAD_LEADS=on (80% of ~180 calls repeated

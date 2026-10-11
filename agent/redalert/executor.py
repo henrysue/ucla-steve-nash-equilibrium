@@ -381,7 +381,11 @@ def _gather_stragglers(view: View, units: list[int], target, stage) -> tuple[lis
     near_half = sorted(have, key=lambda i: dist2(cells[i], target))[:max(1, len(have) // 2)]
     front = (sum(cells[i][0] for i in near_half) / len(near_half), sum(cells[i][1] for i in near_half) / len(near_half))
     gap2 = C.REINFORCE_GAP_CELLS ** 2
-    behind = [i for i in have if dist2(cells[i], front) > gap2 and dist2(cells[i], stage) < dist2(cells[i], front)]
+    hold2 = C.REINFORCE_HOLD_CELLS ** 2
+    # Only units still at the massing point wait; one already on its way keeps
+    # going (match 906dbb32: infantry falling behind the tanks were sent back
+    # and forth between the push and the massing point).
+    behind = [i for i in have if dist2(cells[i], front) > gap2 and dist2(cells[i], stage) <= hold2]
     if not behind or len(behind) >= C.REINFORCE_GROUP_UNITS:
         return units, []                      # none behind, or enough to go as a group
     wait = [i for i in behind if dist2(cells[i], stage) > C.STAGING_RADIUS_CELLS ** 2]

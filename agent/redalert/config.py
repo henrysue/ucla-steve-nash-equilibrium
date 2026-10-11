@@ -210,6 +210,7 @@ RETREAT_ARMY_EDGE = 0.8            # retreat below this edge while attacking...
 RETREAT_EARLY_EDGE = 0.5           # ...but in the first MIN_ENGAGEMENT_SECONDS only below this (contact reveals their army)
 REINFORCE_GAP_CELLS = 14           # in an attack, units this far behind the front wait at the massing point...
 REINFORCE_GROUP_UNITS = 6          # ...until this many can go together (no trickling through a choke one by one)
+REINFORCE_HOLD_CELLS = 8           # only units still this close to the massing point wait: none is ever sent back
 ARMY_MIN_PASSAGE = 5               # a big army avoids passages narrower than this...
 DETOUR_MIN_UNITS = 12              # ...(this many units or more)...
 DETOUR_MAX_RATIO = 1.6             # ...when a route through wider ground is at most this much longer
@@ -398,6 +399,8 @@ SQUAD_LEAD_SIGHT_CELLS = 12
 
 # -- order hygiene ---------------------------------------------------------------------------------------
 ARMY_REISSUE_SECONDS = 3.0         # an unchanged army order isn't resent sooner
+UNIT_REISSUE_SECONDS = 20.0        # a unit sent somewhere this recently...
+ORDER_JITTER_CELLS = 5             # ...isn't re-sent to a spot this close to it (it would turn and lose its path)
 REFUSAL_BLOCK_SECONDS = 4.0        # a refused order waits this long before a retry
 PENDING_PRODUCTION_SECONDS = 1.5   # a build/train isn't resent before the state shows it
 

@@ -461,7 +461,9 @@ def test_an_unchanged_army_order_is_not_resent_every_view():
     now[0] = 0.2
     assert not army(agent.choose_action(state, CTX))
     now[0] = 5.0
-    assert army(agent.choose_action(state, CTX))
+    assert not army(agent.choose_action(state, CTX))                       # on their way: not re-sent (906dbb32)
+    now[0] = 25.0
+    assert army(agent.choose_action(state, CTX))                           # refreshed after UNIT_REISSUE_SECONDS
 
 
 # -- the per-match review log ------------------------------------------------
@@ -4067,11 +4069,11 @@ def test_no_retreat_on_first_contact_unless_clearly_outmatched():
 
 def test_stragglers_wait_at_the_massing_point_and_go_as_a_group():
     front = [{"id": 100 + i, "type": "1tnk", "x": 36, "y": 36, "hp": 100} for i in range(12)]
-    late = [{"id": 200 + i, "type": "e1", "x": 20, "y": 20, "hp": 100} for i in range(3)]
+    late = [{"id": 200 + i, "type": "e1", "x": 13, "y": 13, "hp": 100} for i in range(3)]   # fresh, at the massing point
     v = _view(_t=600.0, buildings=BASE, units=front + late, visible_enemy_buildings=[{"id": 90, "type": "fact", "x": 40, "y": 40}])
     o = executor._army_orders(v, Mode.ALL_IN)
-    assert {"cmd": "attack_move", "units": [200, 201, 202], "to": [11, 11]} in o  # three wait at the massing point
-    more = late + [{"id": 210 + i, "type": "e1", "x": 20, "y": 20, "hp": 100} for i in range(4)]
+    assert not any(set(x["units"]) & {200, 201, 202} and x["to"] != [11, 11] for x in o)   # three wait at the massing point
+    more = late + [{"id": 210 + i, "type": "e1", "x": 13, "y": 13, "hp": 100} for i in range(4)]
     o2 = executor._army_orders(_view(_t=600.0, buildings=BASE, units=front + more,
                                      visible_enemy_buildings=[{"id": 90, "type": "fact", "x": 40, "y": 40}]), Mode.ALL_IN)
     assert not any(x["to"] == [11, 11] for x in o2)                           # seven: they go together
@@ -4086,3 +4088,28 @@ def test_a_big_army_goes_round_a_choke():
     assert w is not None and w[0] < 12                                        # round by the wide opening
     open_v = dataclasses.replace(_view(), blocked_cells=frozenset())
     assert terrain.detour(open_v, (24, 10), (24, 40), 5, 1.6) is None         # no choke: straight on
+
+
+# -- match 906dbb32: the big push split and went back and forth --------------------------------------
+
+
+def test_units_on_their_way_are_not_reordered_to_a_nearby_spot():
+    agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 100.0)
+    units = [{"id": 30, "type": "1tnk", "x": 20, "y": 20, "hp": 100}, {"id": 31, "type": "1tnk", "x": 21, "y": 20, "hp": 100}]
+    v = _view(_t=500.0, units=units)
+    agent._unit_dest = {30: (95.0, "attack_move", (40, 40)), 31: (95.0, "attack_move", (40, 40))}
+    plan = [{"cmd": "attack_move", "units": [30, 31], "to": [42, 41]}]
+    assert agent._steady(plan, v, 100.0) == []                                  # 2 cells off: keep going
+    far = [{"cmd": "attack_move", "units": [30, 31], "to": [10, 40]}]
+    assert agent._steady(far, v, 100.0) == far                                  # a real change goes through
+    stuck = _view(_t=500.0, units=[dict(units[0], idle=True), units[1]])
+    assert agent._steady(plan, stuck, 100.0) == [{"cmd": "attack_move", "units": [30], "to": [42, 41]}]  # stuck: again
+    assert agent._steady(plan, v, 130.0) == plan                                # 30 s later: refreshed
+
+
+def test_no_unit_is_sent_back_from_a_push():
+    front = [{"id": 100 + i, "type": "1tnk", "x": 36, "y": 36, "hp": 100} for i in range(12)]
+    middle = [{"id": 200 + i, "type": "e1", "x": 22, "y": 22, "hp": 100} for i in range(3)]   # on the way, 15+ behind
+    v = _view(_t=600.0, buildings=BASE, units=front + middle, visible_enemy_buildings=[{"id": 90, "type": "fact", "x": 40, "y": 40}])
+    o = executor._army_orders(v, Mode.ALL_IN)
+    assert not any(x["to"] == [11, 11] for x in o)                             # they keep going, not back to massing

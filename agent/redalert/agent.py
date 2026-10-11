@@ -70,6 +70,7 @@ class RedAlertAgent:
         self._last_sent: list[dict] = []
         self._blocked: dict[str, float] = {}
         self._army_sent: dict[str, tuple[float, frozenset]] = {}
+        self._unit_dest: dict[int, tuple[float, str, tuple]] = {}   # unit -> (time, cmd, destination) last sent
         # build/train item -> when we last sent it (until production shows it).
         self._production_sent: dict[str, float] = {}
         self._patrol = scouting.ScoutCorps()
@@ -238,7 +239,7 @@ class RedAlertAgent:
             view, self._mode, set(self._garrison.unit_ids))
         now = self._clock()
         batch_orders = [
-            o for o in planned
+            o for o in self._steady(planned, view, now)
             if self._blocked.get(_order_key(o), 0.0) <= now
             and not self._army_repeat(o, now) and not self._production_pending(o, now)
         ]
@@ -252,6 +253,10 @@ class RedAlertAgent:
         for order in self._last_sent:
             if order.get("cmd") in _ARMY_CMDS:
                 self._army_sent[_army_key(order)] = (now, frozenset(order.get("units") or ()))
+                if order.get("cmd") in ("attack_move", "move") and not order.get("queued") \
+                        and isinstance(order.get("to"), list):
+                    for uid in order.get("units") or ():
+                        self._unit_dest[uid] = (now, order["cmd"], tuple(order["to"]))
             elif order.get("cmd") in _PRODUCTION_CMDS:
                 self._production_sent[_production_key(order)] = now
         return WithReasoning(move, self._reason(view))
@@ -564,6 +569,40 @@ class RedAlertAgent:
             return False
         sent_at = self._production_sent.get(_production_key(order))
         return sent_at is not None and now - sent_at < C.PENDING_PRODUCTION_SECONDS
+
+    def _steady(self, planned: list[dict], view, now: float) -> list[dict]:
+        """Drop units from a move or attack-move when they were sent within
+        ``ORDER_JITTER_CELLS`` of the same spot in the last
+        ``UNIT_REISSUE_SECONDS``: the attack points move with the army every
+        view, and each small re-order made units turn and swap groups (match
+        906dbb32: the big push split and went back and forth). A unit standing
+        idle away from its spot (stuck) is sent again. A queued leg keeps only
+        the units its first leg kept."""
+        units = {u.id: u for u in view.units if u.id is not None}
+        out, kept_last = [], None
+        r2 = C.ORDER_JITTER_CELLS ** 2
+        for o in planned:
+            cmd, to = o.get("cmd"), o.get("to")
+            if cmd not in ("attack_move", "move") or not isinstance(to, list):
+                out.append(o)
+                kept_last = None
+                continue
+            if o.get("queued"):
+                ids = [i for i in o.get("units") or () if kept_last is None or i in kept_last]
+            else:
+                ids = []
+                for i in o.get("units") or ():
+                    last = self._unit_dest.get(i)
+                    u = units.get(i)
+                    stuck = u is not None and u.idle and u.cell is not None and dist2(u.cell, tuple(to)) > 9
+                    if (last is not None and last[1] == cmd and now - last[0] < C.UNIT_REISSUE_SECONDS
+                            and dist2(last[2], tuple(to)) <= r2 and not stuck):
+                        continue
+                    ids.append(i)
+                kept_last = set(ids)
+            if ids:
+                out.append({**o, "units": ids})
+        return out
 
     def _army_repeat(self, order: dict, now: float) -> bool:
         """An army order with the same command and destination, sent recently,
