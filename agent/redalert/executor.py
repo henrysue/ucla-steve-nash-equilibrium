@@ -624,8 +624,8 @@ def _army_home(view: View, mode: Mode, scout_id: int | None = None, reserved: fr
     if defending:
         line = scout.home_line(view)
         return _form(view, fighters, line, enemy_spawn_guess(view), everyone=True) if line is not None else []
-    if stage_override is not None:
-        return _form(view, fighters, stage_override, enemy_spawn_guess(view))
+    if stage_override is not None:                 # edging forward to confirm an attack: everyone goes
+        return _form(view, fighters, stage_override, enemy_spawn_guess(view), everyone=True)
     held = scout.concave_point(view)       # at the choke's mouth when there is one
     return _form(view, fighters, held[0], held[1]) if held is not None else []
 
@@ -634,7 +634,7 @@ def _form(view: View, fighters, point, facing, everyone: bool = False) -> list[d
     """The concave at ``point`` facing ``facing``; a handful just walk there
     (the idle ones, or ``everyone`` when the army must be there now)."""
     if len(fighters) >= 3:
-        return _concave_orders(view, fighters, point, facing)
+        return _concave_orders(view, fighters, point, facing, everyone)
     r2 = C.STAGING_RADIUS_CELLS ** 2
     movers = [u.id for u in fighters if (everyone or u.idle) and dist2(u.cell, point) > r2]
     return [orders.attack_move(movers[:orders.MAX_UNITS_PER_ORDER], list(point))] if movers else []
@@ -670,18 +670,20 @@ def concave_slots(view: View, center, facing, n: int) -> list[tuple[int, int]]:
             taken.update(_cells(b.type, b.cell))
     import math
 
-    # Ranks on arcs round the kill point, each within rifle range of it.
+    # Ranks on arcs round the kill point, each within rifle range of it,
+    # filled from the middle outward at a fixed spacing: the first n slots
+    # never move when the army grows or shrinks (the layout used to spread
+    # over n, so every new unit shifted every slot and the line reshuffled).
     fx, fy = center[0] + ux * C.FORMATION_FOCUS_AHEAD, center[1] + uy * C.FORMATION_FOCUS_AHEAD
     span = math.radians(C.FORMATION_ARC_DEGREES)
     slots: list[tuple[int, int]] = []
-    left = n
     for radius in C.FORMATION_RANKS:
-        if left <= 0:
+        if len(slots) >= n:
             break
-        cap = max(1, int(2 * span * radius / C.FORMATION_SPACING_CELLS) + 1)
-        m = min(cap, left)
-        for i in range(m):
-            a = (i / (m - 1) - 0.5) * 2 * span if m > 1 else 0.0
+        step = C.FORMATION_SPACING_CELLS / radius            # radians between neighbours on this arc
+        half = int(span / step)
+        for k in [0] + [s * j for j in range(1, half + 1) for s in (1, -1)]:
+            a = k * step
             # from the kill point back toward us, turned by a
             dx_, dy_ = -ux * math.cos(a) + px * math.sin(a), -uy * math.cos(a) + py * math.sin(a)
             x, y = round(fx + dx_ * radius), round(fy + dy_ * radius)
@@ -691,8 +693,8 @@ def concave_slots(view: View, center, facing, n: int) -> list[tuple[int, int]]:
             x, y = _open_slot(view, (x, y), taken)
             if (x, y) not in slots:
                 slots.append((x, y))
-        left -= m
-    return slots[:n]
+    along = lambda c: px * (c[0] - center[0]) + py * (c[1] - center[1])  # noqa: E731
+    return sorted(slots[:n], key=along)                    # left to right along the line
 
 
 def _open_slot(view: View, cell, taken: set) -> tuple[int, int]:
@@ -705,35 +707,55 @@ def _open_slot(view: View, cell, taken: set) -> tuple[int, int]:
     return min(near, key=lambda c: dist2(c, cell)) if near else cell
 
 
-def _concave_orders(view: View, fighters, center, facing) -> list[dict]:
-    """Attack-move each unit to its concave slot (assigned in order along the line,
-    so paths don't cross); units already on their slot get no order. Units
-    beyond the slots gather just behind the line."""
-    units = [u for u in fighters if u.cell is not None]
+_SLOTS: dict = {"key": None, "of": {}}   # the concave's (centre, facing) and unit id -> its slot
+
+
+def _assign_slots(units, slots, key) -> dict:
+    """Each unit keeps its slot while the concave stays put and the slot
+    still exists; free slots go to the nearest unplaced units. (Re-sorting
+    every view by where units stood swapped them between slots 6 cells apart
+    as they walked: two riflemen got 250 orders in 160 s, back and forth.)"""
+    if _SLOTS["key"] != key:
+        _SLOTS.update(key=key, of={})
+    present = {u.id for u in units}
+    have = set(slots)
+    of = {uid: s for uid, s in _SLOTS["of"].items() if uid in present and s in have}
+    free = have - set(of.values())
+    for _, uid, s in sorted((dist2(u.cell, s), u.id, s) for u in units if u.id not in of for s in free):
+        if uid not in of and s in free:
+            of[uid] = s
+            free.discard(s)
+    _SLOTS["of"] = of
+    return of
+
+
+def _concave_orders(view: View, fighters, center, facing, everyone: bool = False) -> list[dict]:
+    """Attack-move each unit to its concave slot; a unit keeps its slot
+    (:func:`_assign_slots`), and only idle units get slot orders — one with
+    an order (walking to its slot, answering a poke, fighting) is left to
+    finish it — unless ``everyone`` must form here now (a fight, a push
+    coming, defending the base). Units beyond the slots gather just behind
+    the line."""
+    units =[u for u in fighters if u.cell is not None]
     if not units:
         return []
-    in_line = units[:C.FORMATION_MAX_UNITS]
-    slots = concave_slots(view, center, facing, len(in_line))
-    if facing is not None:
-        dx, dy = facing[0] - center[0], facing[1] - center[1]
-        along = lambda c: -dy * (c[0] - center[0]) + dx * (c[1] - center[1])  # noqa: E731
-        in_line.sort(key=lambda u: along(u.cell))
-        slots.sort(key=along)
+    slots = concave_slots(view, center, facing, min(len(units), C.FORMATION_MAX_UNITS))
+    of = _assign_slots(units, slots, (tuple(center), tuple(facing) if facing is not None else None))
     # attack_move, not move: a unit walking to its slot still fights what it meets.
     # At most CONCAVE_ORDERS_PER_VIEW slot orders a view, the farthest first;
     # everyone else far from the centre walks there in one order, sent FIRST
     # (52a77fb1: one order per unit overflowed the 20-order batch, the
     # walk-to-the-centre order came last and was cut every view, and new
     # units stood at the barracks doors through a fight).
-    # Idle units first (a walking one already has its order), farthest first.
-    moves = sorted(((u, slot) for u, slot in zip(in_line, slots) if dist2(u.cell, slot) > 2),
+    moves = sorted(((u, of[u.id]) for u in units
+                    if u.id in of and (everyone or u.idle) and dist2(u.cell, of[u.id]) > 2),
                    key=lambda p: (not p[0].idle, -dist2(p[0].cell, p[1])))
     sent = moves[:C.CONCAVE_ORDERS_PER_VIEW]
     r2 = C.STAGING_RADIUS_CELLS ** 2
     # Only units beyond the formation walk to the centre: an in-line unit
     # waits for its slot order (sending it to the centre and back to its
     # slot had the edges of the line wandering to and fro, 3bd6e450 12:00+).
-    line = {u.id for u, _ in zip(in_line, slots)}
+    line = set(of)
     rear = center
     if facing is not None:
         ddx, ddy = facing[0] - center[0], facing[1] - center[1]

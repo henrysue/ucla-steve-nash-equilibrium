@@ -441,20 +441,22 @@ def test_a_single_rejected_row_is_held_back():
 
 def test_an_unchanged_army_order_is_not_resent_every_view():
     now = [0.0]
-    units = [{"id": i, "type": "1tnk", "x": 5, "y": 5, "hp": 100} for i in range(30, 33)]
+    idle = [{"id": i, "type": "1tnk", "x": 5, "y": 5, "hp": 100, "idle": True} for i in range(30, 33)]
+    walking = [dict(u, idle=False) for u in idle]
     agent = RedAlertAgent(log=lambda *_: None, clock=lambda: now[0])
-    state = _state(_t=200.0, buildings=BASE, units=units, military={"army_value": 3000})
+    state = lambda units: _state(_t=200.0, buildings=BASE, units=units, military={"army_value": 2000})  # noqa: E731  (massing)
 
     def army(dec):
         return [o for o in getattr(dec, "action", {}).get("orders", []) if o["cmd"] == "attack_move"]
 
-    assert army(agent.choose_action(state, CTX))
+    assert army(agent.choose_action(state(idle), CTX))
     now[0] = 0.2
-    assert not army(agent.choose_action(state, CTX))
+    assert not army(agent.choose_action(state(idle), CTX))                 # just sent
     now[0] = 5.0
-    assert not army(agent.choose_action(state, CTX))                       # on their way: not re-sent (906dbb32)
+    assert not army(agent.choose_action(state(walking), CTX))              # on their way: not re-sent (906dbb32)
     now[0] = 25.0
-    assert army(agent.choose_action(state, CTX))                           # refreshed after UNIT_REISSUE_SECONDS
+    assert not army(agent.choose_action(state(walking), CTX))              # still walking: left to it
+    assert army(agent.choose_action(state(idle), CTX))                     # stopped short of their slots: sent again
 
 
 # -- the per-match review log ------------------------------------------------
@@ -4895,3 +4897,24 @@ def test_a_building_we_sold_is_not_a_loss_to_hit_back_at():
     scan.update(_view(_t=100.0, buildings=blds))
     scan.sold.add(40)
     assert scan.update(_view(_t=101.0, buildings=BASE)) == []
+
+
+def test_concave_slots_stick_and_a_new_unit_does_not_reshuffle_the_line():
+    v0 = _view(_t=300.0, buildings=BASE)
+    first = executor.concave_slots(v0, (20, 20), (40, 40), 12)
+    assert set(first) <= set(executor.concave_slots(v0, (20, 20), (40, 40), 13))   # growing adds a slot, moves none
+    army = [{"id": 100 + i, "type": "e1", "x": 8 + i % 4, "y": 8 + i // 4, "hp": 100, "idle": True} for i in range(12)]
+    o = executor._concave_orders(_view(_t=300.0, buildings=BASE, units=army),
+                                 [u for u in read(_raw(units=army)).combat_units], (20, 20), (40, 40))
+    assert o
+    slot = dict(executor._SLOTS["of"])                                         # each unit's slot
+    assert len(slot) == 12
+    walking = [dict(u, idle=False, x=u["x"] + 3, y=u["y"] + 3) for u in army]
+    v1 = _view(_t=301.0, buildings=BASE, units=walking)
+    assert executor._concave_orders(v1, v1.combat_units, (20, 20), (40, 40)) == []   # on their way: no new orders
+    there = [dict(u, idle=True, x=slot[u["id"]][0], y=slot[u["id"]][1]) for u in army]
+    there += [{"id": 200, "type": "e1", "x": 8, "y": 8, "hp": 100, "idle": True}]          # a new rifleman
+    v2 = _view(_t=302.0, buildings=BASE, units=there)
+    o2 = executor._concave_orders(v2, v2.combat_units, (20, 20), (40, 40))
+    assert o2 and all(x["units"] == [200] for x in o2)                             # only the newcomer moves
+    assert all(executor._SLOTS["of"][i] == s for i, s in slot.items())             # everyone kept their slot
