@@ -61,6 +61,9 @@ class HarvestManager:
         self._unworked_since: dict[tuple[int, int], float] = {}  # field -> harvesters near, none on its ore
         self._fields: dict[tuple[int, int], int] = {}
         self._t = 0.0
+        self._mined: dict[tuple[int, int], float] = {}   # field -> credits taken from it (estimated)
+        self._t_prev: float | None = None
+        self.runway_seconds: float | None = None         # ore left in the worked fields, in seconds of mining
 
     def depleted(self) -> set[tuple[int, int]]:
         """Fields currently believed mined out (as of the last view)."""
@@ -72,6 +75,36 @@ class HarvestManager:
             return False
         home = min(self._fields, key=lambda f: dist2(f, view.base_center))
         return home in self.depleted()
+
+    def running_dry(self, view: View) -> bool:
+        """The fields our harvesters work run out within
+        ``EXPAND_LEAD_SECONDS`` (the time an expansion and its refinery take),
+        or the home field is mined out already. Harvesters don't idle on a
+        drained field, they drive farther for ore — no harvester ever went
+        idle in match 8db23b32 while the income fell and the trucks piled up."""
+        return self.home_depleted(view) or (
+            self.runway_seconds is not None and self.runway_seconds < C.EXPAND_LEAD_SECONDS)
+
+    def _track_mining(self, view: View, load: dict, t: float) -> None:
+        """Add this view's mining to each field and forecast the runway: the
+        ore left in the worked fields over the rate they are mined at."""
+        from .terrain import field_cells
+
+        dt = 0.0 if self._t_prev is None else max(0.0, min(5.0, t - self._t_prev))
+        self._t_prev = t
+        r2 = C.EXPAND_CLUSTER_CELLS ** 2
+        merged: dict[tuple[int, int], int] = {}
+        for f, n in load.items():
+            k = next((k for k in list(self._mined) + list(merged) if dist2(k, f) <= r2), f)
+            merged[k] = merged.get(k, 0) + n
+        left = rate = 0.0
+        for k, n in merged.items():
+            self._mined[k] = self._mined.get(k, 0.0) + n * C.HARVEST_RATE * dt
+            if n:
+                cap = len(field_cells(view, k, C.EXPAND_CLUSTER_CELLS * 1.5)) * C.ORE_VALUE_PER_CELL
+                left += max(0.0, cap - self._mined[k])
+                rate += n * C.HARVEST_RATE
+        self.runway_seconds = left / rate if rate else None
 
     def fields(self, view: View) -> dict[tuple[int, int], int]:
         """{ore cell of each field: refineries serving it}, from our refineries."""
@@ -132,6 +165,7 @@ class HarvestManager:
             f = field_of(h.cell)
             if f is not None and h.id not in idle_now:
                 load[f] += 1
+        self._track_mining(view, load, t)
 
         def pick(cell):
             f = min(live, key=lambda f: (load[f] / fields[f], dist2(f, cell)))

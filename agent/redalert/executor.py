@@ -162,7 +162,12 @@ def harvester_target(view: View) -> int:
     refineries = max(1, sum(1 for b in view.buildings if b.type == C.REFINERY and not b.wreck))
     # Pros: trucks come with refineries; train an early pair (and replacements).
     want = refineries + C.EXTRA_HARVESTERS
-    return min(C.MAX_HARVESTERS, C.MAX_HARVESTERS_PER_REFINERY * refineries, want)
+    target = min(C.MAX_HARVESTERS, C.MAX_HARVESTERS_PER_REFINERY * refineries, want)
+    if view.ore_running_dry:
+        # The fields are running out: no more trucks (the money goes to the
+        # army) until the next expansion's refinery opens fresh ore.
+        target = min(target, len(view.units_of(C.HARVESTER)))
+    return target
 
 
 def funds(view: View) -> float:

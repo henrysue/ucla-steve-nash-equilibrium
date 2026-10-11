@@ -83,6 +83,17 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
   anything worth more than a small raid within 12 cells of it.
 - **Expansion MCV**: trained only with 8+ fighters and not outgunned;
   cancelled (money back) if outgunned while it trains.
+- **Steadier**: an alarm takes two lost scouts; a rush read holds until 4:00;
+  defending takes a 2000+ threat over 1.3x the home units and lasts 20 s past
+  the last sighting; modes dwell 40 s; the advisor's posture and read change
+  only when two answers agree. With no trigger: build a 3000+ army, hold the
+  massing point and pickets, then push and stay committed until the retreat rule.
+- **Ore forecast** (harvest.HarvestManager): a field holds ~300 x its starting
+  ore cells and each harvester working it takes ~10 a second. When the worked
+  fields have under 150 s left, the next expansion may start at once (its
+  refinery follows when it deploys) and no more harvesters are trained (the
+  money goes to the army). The forecast flagged 8:53-11:10 in recent games,
+  1.5-3 minutes before the expansions actually came.
 - **Outpost** (guard.Garrison): 2 infantry at a forward expansion (nearer the
   enemy than our base) only; posted only while the army masses in calm, back
   at once on any attack, defense, retreat or nearby fight, unless their own

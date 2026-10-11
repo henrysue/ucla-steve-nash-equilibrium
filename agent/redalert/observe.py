@@ -154,6 +154,9 @@ class View:
     # The most enemy army we saw in the last ENEMY_PEAK_SECONDS, less what we
     # killed since (agent.py): the fog hides most of it most of the time.
     enemy_army_peak: float = 0.0
+    # The fields our harvesters work have less than EXPAND_LEAD_SECONDS of ore
+    # left (harvest.HarvestManager's forecast): expand, no more harvesters.
+    ore_running_dry: bool = False
 
     # -- derived, cheap helpers ----------------------------------------------
 

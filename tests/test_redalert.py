@@ -3720,3 +3720,30 @@ def test_one_odd_advisor_answer_does_not_swing_the_plan():
         adv._future.result()
         seen.append(adv.poll(_view(_t=100.0), {}).posture)
     assert seen == ["default", "default", "hold"]                                     # adopted once two agree
+
+
+# -- the ore forecast: expand before the fields run dry, no extra trucks on a drying field -----------
+
+
+def test_the_ore_forecast_runs_down_with_mining_and_calls_for_the_next_expansion():
+    h = HarvestManager()
+    field = [(20 + i, 4 + j) for i in range(4) for j in range(3)]           # 12 cells: 3600
+    v = lambda t: dataclasses.replace(_view(_t=t), ore_cells=tuple(field))  # noqa: E731
+    load = {(21, 5): 4}                                                     # four trucks: 40 a second
+    h._track_mining(v(100.0), load, 100.0)
+    assert h.runway_seconds == 3600 / 40 and h.running_dry(v(100.0))       # 90 s left: < the 150 s lead
+    h2 = HarvestManager()
+    big = [(20 + i, 2 + j) for i in range(6) for j in range(6)]             # 36 cells: 10800
+    w = lambda t: dataclasses.replace(_view(_t=t), ore_cells=tuple(big))    # noqa: E731
+    h2._track_mining(w(100.0), load, 100.0)
+    assert not h2.running_dry(w(100.0))                                     # 270 s left
+    for t in range(102, 242, 2):
+        h2._track_mining(w(float(t)), load, float(t))
+    assert h2.running_dry(w(242.0))                                         # mined down: expand now
+
+
+def test_no_more_harvesters_while_the_fields_run_dry():
+    blds = BASE + [{"id": 20, "type": "proc"}, {"id": 21, "type": "proc"}, {"id": 22, "type": "weap"}]
+    v = _view(buildings=blds, units=_harvs(2))
+    assert executor.harvester_target(v) == 4
+    assert executor.harvester_target(dataclasses.replace(v, ore_running_dry=True)) == 2

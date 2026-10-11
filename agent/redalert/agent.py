@@ -119,7 +119,8 @@ class RedAlertAgent:
                               if view.game_seconds - t < C.FAILED_SPOT_SECONDS}
         if self._failed_cells:
             view = dataclasses.replace(view, failed_cells=frozenset(self._failed_cells))
-        view = dataclasses.replace(view, enemy_army_peak=self._enemy_peak(view))
+        view = dataclasses.replace(view, enemy_army_peak=self._enemy_peak(view),
+                                   ore_running_dry=self._harvest.running_dry(view))
 
         # Track the threat window (sets/expires defensively).
         self._commander.track_threat(view)
@@ -150,7 +151,9 @@ class RedAlertAgent:
                                else self._pick_route(view, advice))
         self._update_flank(view)
         if not rushing:   # testrush: the rusher never expands
-            self._expansion.update(view, self._mode, advice, ore_running_out=self._harvest.home_depleted(view))
+            # Expand again once the worked fields are forecast to run dry (not
+            # only once harvesters idle on an empty one).
+            self._expansion.update(view, self._mode, advice, ore_running_out=view.ore_running_dry)
         if self._expansion.scout_target is not None and self._patrol.visit is None:
             self._patrol.visit = self._expansion.scout_target
         self._game_seconds = view.game_seconds
@@ -171,6 +174,7 @@ class RedAlertAgent:
             "flank_via": self._flank_via,
             "expansion": self._expansion.state, "expansion_site": self._expansion.site,
             "expansions_done": self._expansion.sites, "garrison": len(self._garrison.unit_ids),
+            "ore_runway": (round(self._harvest.runway_seconds) if self._harvest.runway_seconds is not None else None),
             # Each expansion's ore, whether a refinery of ours serves it, and
             # how often the engine moved an expansion refinery off its spot.
             "expansion_ores": [d["ore"] for d in self._expansion.done],
