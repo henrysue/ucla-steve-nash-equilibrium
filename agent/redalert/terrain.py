@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections import deque
 
-from .observe import View
+from .observe import View, dist2
 
 _CACHE: dict[tuple, dict] = {}
 _CACHE_MAX = 64
@@ -113,3 +113,64 @@ def chokes(view: View, start, goal) -> list[tuple[tuple[int, int], int]]:
     narrowest points are chokes (:func:`passage_width`)."""
     path = walk_path(view, start, goal)
     return [(c, passage_width(view, c)) for c in path[3:-3]]
+
+
+_WIDE: dict = {}
+
+
+def _wide(view: View, cell, need: int) -> bool:
+    key = (id(view.blocked_cells), need)
+    cache = _WIDE.get(key)
+    if cache is None or cache[0] is not view.blocked_cells:
+        if len(_WIDE) > 8:
+            _WIDE.clear()
+        cache = _WIDE[key] = (view.blocked_cells, {})
+    hit = cache[1].get(cell)
+    if hit is None:
+        hit = cache[1][cell] = passage_width(view, cell, limit=need) >= need
+    return hit
+
+
+def detour(view: View, start, goal, need: int, max_ratio: float) -> tuple[int, int] | None:
+    """A waypoint on a route from ``start`` to ``goal`` through ground at least
+    ``need`` cells wide, when the shortest path squeezes through something
+    narrower and the wide route is at most ``max_ratio`` as long; else None.
+    A big army takes the open way round instead of a choke, single file."""
+    direct = walk_path(view, start, goal)
+    if len(direct) < 8 or all(_wide(view, c, need) for c in direct[3:-3]):
+        return None
+    start, goal = direct[0], direct[-1]
+    near2 = 9
+    ok = lambda c: (c not in view.blocked_cells and (_wide(view, c, need)  # noqa: E731
+                    or dist2(c, start) <= near2 or dist2(c, goal) <= near2))
+    if view.bounds is not None:
+        bx, by, bw, bh = view.bounds
+        inside = lambda c: bx <= c[0] < bx + bw and by <= c[1] < by + bh  # noqa: E731
+    else:
+        inside = lambda c: True  # noqa: E731
+    prev = {start: None}
+    queue = deque([start])
+    limit = int(len(direct) * max_ratio) + 2
+    depth = {start: 0}
+    while queue:
+        cur = queue.popleft()
+        if cur == goal:
+            break
+        if depth[cur] >= limit:
+            continue
+        for dx, dy in _STEPS:
+            nxt = (cur[0] + dx, cur[1] + dy)
+            if nxt in prev or not inside(nxt) or not ok(nxt):
+                continue
+            prev[nxt] = cur
+            depth[nxt] = depth[cur] + 1
+            queue.append(nxt)
+    if goal not in prev:
+        return None
+    route = []
+    cur = goal
+    while cur is not None:
+        route.append(cur)
+        cur = prev[cur]
+    route.reverse()
+    return route[len(route) // 2]

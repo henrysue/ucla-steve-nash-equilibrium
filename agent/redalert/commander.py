@@ -70,6 +70,7 @@ class Commander:
             scout_id=scout_id, squad_ids=squad_ids, losing_trades=losing,
             retreated_at=self.retreated_at, retreat_army=self.retreat_army, hunting=hunting,
             alarm=alarm, distraction=distraction,
+            attack_seconds=view.game_seconds - self.mode_since if prev is Mode.ALL_IN else None,
         )
         if forced is not None:                     # testrush (TEST ONLY)
             mode = forced

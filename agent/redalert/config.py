@@ -207,6 +207,12 @@ ENEMY_CLUSTER_CELLS = 10           # enemy buildings this close together are one
 
 # -- retreating ------------------------------------------------------------------------------------
 RETREAT_ARMY_EDGE = 0.8            # retreat below this edge while attacking...
+RETREAT_EARLY_EDGE = 0.5           # ...but in the first MIN_ENGAGEMENT_SECONDS only below this (contact reveals their army)
+REINFORCE_GAP_CELLS = 14           # in an attack, units this far behind the front wait at the massing point...
+REINFORCE_GROUP_UNITS = 6          # ...until this many can go together (no trickling through a choke one by one)
+ARMY_MIN_PASSAGE = 5               # a big army avoids passages narrower than this...
+DETOUR_MIN_UNITS = 12              # ...(this many units or more)...
+DETOUR_MAX_RATIO = 1.6             # ...when a route through wider ground is at most this much longer
 TRADE_WINDOW_SECONDS = 30.0        # ...or when, since the attack began (at most this far back),
 TRADE_LOSS_MIN = 1000              # we lost at least this,
 TRADE_LOSS_ARMY_SHARE = 0.25       # and this share of the army (the bigger of at the start and now),
@@ -354,7 +360,7 @@ REBALANCE_PER_VIEW = 2             # harvesters moved off a depleted field per v
 HARVESTER_SETTLE_SECONDS = 30.0    # a moved harvester stays put at least this long
 
 # -- units: micro, movement, stances --------------------------------------------------------------
-FOCUS_RADIUS_CELLS = 6             # focus fire on the weakest enemy this close
+FOCUS_RADIUS_CELLS = 4             # focus fire on the weakest enemy fighter this close (about weapon range); the target sticks
 PULL_BACK_HP = 35                  # vehicles below this (%) leave attacks
 STUCK_SECONDS = 10.0               # an ordered unit that hasn't moved this long gets a stop
 ENGAGED_RADIUS_CELLS = 7           # ...unless an enemy is this close

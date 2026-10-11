@@ -103,6 +103,14 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
 - **The hunt** (c4caa45e: a barracks survived a 100-unit hunt): up to 8
   groups of 6+, every cell where we once knew an enemy building is a search
   point, and a point counts as checked within 5 cells (about sight).
+- **Cleaner fights** (5e840776: attacks retreated 6-30 s after contact and were
+  chased; armies strung out, single file through Sidestep's 2-cell gap):
+  squad leads off unless REDALERT_SQUAD_LEADS=on (80% of ~180 calls repeated
+  the rules 2 s late, the rest overrode them); focus fire only on enemy
+  fighters within ~4 cells, sticky; no lone pull-back of damaged vehicles; in
+  the first 15 s of a fight only < 0.5x pulls back; stragglers wait at the
+  massing point until 6 go together; an army of 12+ goes round a passage under
+  5 cells wide when a wider route is at most 1.6x as long (Sidestep: north).
 - **Choke towers** (screenshot potential-towers): from the terrain alone (any
   map), the narrowest points of the enemy's walking path to each of our yards
   (11 cells across or less, 4-16 cells out, on their side) are chokes; each

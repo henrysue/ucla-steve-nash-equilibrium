@@ -587,7 +587,7 @@ def test_the_agent_retreats_after_its_attack_goes_bad():
     assert agent._mode is Mode.ALL_IN                                       # confirmed 4 s later
     enemies = [{"id": 70 + i, "type": "1tnk", "x": 39, "y": 39, "hp": 100} for i in range(5)]
     dec = agent.choose_action(_state(_t=400.0, buildings=BASE, units=units, visible_enemies=enemies,
-                                     military={"army_value": 3100, "visible_enemy_value": 5000}), CTX)
+                                     military={"army_value": 3100, "visible_enemy_value": 8000}), CTX)   # clearly outmatched
     assert agent._mode is Mode.RETREAT
     # they fight back on the way out, to the massing point in front of the base
     assert {"cmd": "attack_move", "units": [30, 31, 32], "to": [11, 11]} in dec.action["orders"]
@@ -1753,12 +1753,18 @@ def test_focus_fire_on_the_weakest_enemy_in_reach():
     assert o == [{"cmd": "attack", "units": [30, 31], "target": 91}] and ids == {30, 31}   # the 25% tank, not the harvester
 
 
-def test_badly_damaged_vehicles_pull_back_from_attacks_not_defense():
+def test_damaged_vehicles_stay_in_the_fight_and_focus_fire_sticks_to_fighters_in_reach():
     ours = [{"id": 30, "type": "1tnk", "x": 30, "y": 30, "hp": 20}, {"id": 31, "type": "1tnk", "x": 30, "y": 31, "hp": 90}]
     o, ids = micro.plan(_view(units=ours), Mode.ALL_IN, frozenset(), (15, 15))
-    assert o == [{"cmd": "attack_move", "units": [30], "to": [15, 15]}] and ids == {30}
-    o2, _ = micro.plan(_view(units=ours), Mode.DEFEND_BASE, frozenset(), (15, 15))
-    assert o2 == []                                                          # defending: everyone fights
+    assert o == [] and ids == set()                                          # no lone pull-back (5e840776)
+    near = [{"id": 90, "type": "e1", "x": 32, "y": 30, "hp": 80}, {"id": 91, "type": "e1", "x": 33, "y": 31, "hp": 30},
+            {"id": 92, "type": "powr", "x": 31, "y": 33, "hp": 5}]
+    o, _ = micro.plan(_view(units=ours, visible_enemies=near[:2], visible_enemy_buildings=near[2:]), Mode.ALL_IN,
+                      frozenset(), (15, 15))
+    assert o == [{"cmd": "attack", "units": [30, 31], "target": 91}]          # the weakest fighter, not the building
+    weaker = [dict(near[0], hp=10), near[1]]
+    o, _ = micro.plan(_view(units=ours, visible_enemies=weaker), Mode.ALL_IN, frozenset(), (15, 15))
+    assert o == [{"cmd": "attack", "units": [30, 31], "target": 91}]          # sticks to its target
 
 
 def test_micro_leaves_squads_and_retreats_alone():
@@ -4051,3 +4057,32 @@ def test_the_first_tower_watches_a_choke_in_range():
     assert watch is not None and 20 <= watch[0] <= 24 and 15 <= watch[1] <= 19   # the gap
     spot = buildplan.placement_cell(v, "pbox")
     assert (spot[0] - watch[0]) ** 2 + (spot[1] - watch[1]) ** 2 <= C.WATCH_SPOT_CELLS ** 2
+
+
+def test_no_retreat_on_first_contact_unless_clearly_outmatched():
+    v = _view(_t=500.0, buildings=BASE, military={"army_value": 3100, "visible_enemy_value": 5000})   # 0.62
+    assert brain.choose_mode(v, cheese_since=None, prev_mode=Mode.ALL_IN, attack_seconds=5.0) is Mode.ALL_IN
+    assert brain.choose_mode(v, cheese_since=None, prev_mode=Mode.ALL_IN, attack_seconds=20.0) is Mode.RETREAT
+
+
+def test_stragglers_wait_at_the_massing_point_and_go_as_a_group():
+    front = [{"id": 100 + i, "type": "1tnk", "x": 36, "y": 36, "hp": 100} for i in range(12)]
+    late = [{"id": 200 + i, "type": "e1", "x": 20, "y": 20, "hp": 100} for i in range(3)]
+    v = _view(_t=600.0, buildings=BASE, units=front + late, visible_enemy_buildings=[{"id": 90, "type": "fact", "x": 40, "y": 40}])
+    o = executor._army_orders(v, Mode.ALL_IN)
+    assert {"cmd": "attack_move", "units": [200, 201, 202], "to": [11, 11]} in o  # three wait at the massing point
+    more = late + [{"id": 210 + i, "type": "e1", "x": 20, "y": 20, "hp": 100} for i in range(4)]
+    o2 = executor._army_orders(_view(_t=600.0, buildings=BASE, units=front + more,
+                                     visible_enemy_buildings=[{"id": 90, "type": "fact", "x": 40, "y": 40}]), Mode.ALL_IN)
+    assert not any(x["to"] == [11, 11] for x in o2)                           # seven: they go together
+
+
+def test_a_big_army_goes_round_a_choke():
+    from agent.redalert import terrain
+    wall = {(x, 24) for x in range(0, 48) if x not in (23, 24)}              # a 2-cell gap in the middle...
+    wall -= {(x, 24) for x in range(2, 9)}                                    # ...and a 7-cell opening at the side
+    v = dataclasses.replace(_view(), blocked_cells=frozenset(wall))
+    w = terrain.detour(v, (24, 10), (24, 40), 5, 2.5)
+    assert w is not None and w[0] < 12                                        # round by the wide opening
+    open_v = dataclasses.replace(_view(), blocked_cells=frozenset())
+    assert terrain.detour(open_v, (24, 10), (24, 40), 5, 1.6) is None         # no choke: straight on

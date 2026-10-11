@@ -342,17 +342,21 @@ def _army_orders(
             advice = None
         target = _advised_target(view, advice) or _attack_target(view, hunt)
         if target is not None:
+            waiting: list[dict] = []
             # attack_move (not attack-on-id) so the army fights whatever it
             # meets on the way instead of walking past it to one building.
+            combat, waiting = _gather_stragglers(view, combat, target, stage_override or scout.choke_cell(view))
             units = combat[:orders.MAX_UNITS_PER_ORDER]
+            if waiting and not units:
+                return waiting
             if flank_via is not None:
-                # Flank: round the side first, then on to the target.
-                return [orders.attack_move(units, list(flank_via)),
-                        orders.attack_move(units, list(target), queued=True)]
+                # Flank (or a detour round a choke): round the side first, then on to the target.
+                return waiting + [orders.attack_move(units, list(flank_via)),
+                                  orders.attack_move(units, list(target), queued=True)]
             # The advisor's own pick is a single point; otherwise split into
             # groups (two clusters, or a semi-concave across the target).
             points = [target] if _advised_target(view, advice) is not None else _attack_points(view, units, target)
-            return _groups(view, units, points)
+            return waiting + _groups(view, units, points)
         # Blind and no spawns known: fall back to the server's ready-made order
         # (without the scout, which the server counts as a combat unit).
         if view.attack_now:
@@ -361,6 +365,28 @@ def _army_orders(
         return []
 
     return _stage_forward(view, scout_id, reserved, advice, stage_override)  # OPEN / BUILD: mass at the choke, not in the base
+
+
+def _gather_stragglers(view: View, units: list[int], target, stage) -> tuple[list[int], list[dict]]:
+    """In an attack, units far behind the front (``REINFORCE_GAP_CELLS``, nearer
+    our massing point than the front) wait at the massing point until
+    ``REINFORCE_GROUP_UNITS`` can go together, instead of walking to the
+    fight one by one (match 5e840776: 36 at the front, 22 strung out across
+    the map in ones and twos, single file through the choke).
+    Returns (the units that attack, the orders for the ones that wait)."""
+    cells = {u.id: u.cell for u in view.combat_units if u.cell is not None}
+    have = [i for i in units if i in cells]
+    if stage is None or len(have) < 2 * C.REINFORCE_GROUP_UNITS:
+        return units, []
+    near_half = sorted(have, key=lambda i: dist2(cells[i], target))[:max(1, len(have) // 2)]
+    front = (sum(cells[i][0] for i in near_half) / len(near_half), sum(cells[i][1] for i in near_half) / len(near_half))
+    gap2 = C.REINFORCE_GAP_CELLS ** 2
+    behind = [i for i in have if dist2(cells[i], front) > gap2 and dist2(cells[i], stage) < dist2(cells[i], front)]
+    if not behind or len(behind) >= C.REINFORCE_GROUP_UNITS:
+        return units, []                      # none behind, or enough to go as a group
+    wait = [i for i in behind if dist2(cells[i], stage) > C.STAGING_RADIUS_CELLS ** 2]
+    rest = [i for i in units if i not in set(behind)]
+    return rest, ([orders.attack_move(wait[:orders.MAX_UNITS_PER_ORDER], list(stage))] if wait else [])
 
 
 def _fan_out(view: View, units: list[int], points: list) -> list[dict]:

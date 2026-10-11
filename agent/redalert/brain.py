@@ -27,6 +27,7 @@ def choose_mode(
     hunting: bool = False,
     alarm: bool = False,
     distraction: bool = False,
+    attack_seconds: float | None = None,
 ) -> Mode:
     """The posture for this view.
 
@@ -100,7 +101,12 @@ def choose_mode(
     # Retreat: losing the fight we started -> pull back before we feed the
     # enemy kills_cost; hold the retreat until regrouped (or strong again).
     # The model can't override this.
-    if prev_mode in AGGRESSIVE and (edge < C.RETREAT_ARMY_EDGE or losing_trades):
+    # Contact reveals their army and the estimate jumps: in the first seconds
+    # of a fight only being clearly outmatched pulls back; then the trades
+    # judge (match 5e840776: attacks retreated 6-30 s in, and were chased).
+    floor = (C.RETREAT_EARLY_EDGE if attack_seconds is not None and attack_seconds < C.MIN_ENGAGEMENT_SECONDS
+             else C.RETREAT_ARMY_EDGE)
+    if prev_mode in AGGRESSIVE and (edge < floor or losing_trades):
         return Mode.RETREAT
     # Committed: an attack under way goes on until the retreat rule calls it
     # off — not back to massing when the estimate dips under the attack bar

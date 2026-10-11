@@ -365,12 +365,22 @@ class RedAlertAgent:
         target = getattr(advice, "army_target", None) or executor._attack_target(view)
         route = getattr(advice, "attack_route", "auto")
         if view.game_seconds < C.FLANK_AFTER_SECONDS and not (brain._dominant(view) or brain.beaten(view)):
-            return None   # early: straight down the middle, between them and our base
+            return self._detour(view, target)   # early: no flank, but a big army doesn't funnel through a choke
         if route in ("left", "right"):
             return executor.flank_waypoint(view, target, -1 if route == "left" else 1)
         if route == "center":
             return None
         return executor.choose_flank(view, target, self._attacks)[1]
+
+    def _detour(self, view, target) -> tuple[int, int] | None:
+        """A route round a choke for a big army (``DETOUR_MIN_UNITS``+), else None."""
+        from . import terrain
+
+        army = [u.cell for u in view.combat_units if u.cell is not None and u.id not in self._patrol.unit_ids]
+        if target is None or len(army) < C.DETOUR_MIN_UNITS:
+            return None
+        centre = (round(sum(c[0] for c in army) / len(army)), round(sum(c[1] for c in army) / len(army)))
+        return terrain.detour(view, centre, tuple(target), C.ARMY_MIN_PASSAGE, C.DETOUR_MAX_RATIO)
 
     def _update_flank(self, view) -> None:
         """End the flank leg once the army reaches the waypoint, or after

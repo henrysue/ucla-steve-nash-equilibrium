@@ -199,7 +199,10 @@ class SquadLead:
 
 def squad_leads_from_env(log: Callable[[str], None], on_directive=None) -> dict[str, SquadLead]:
     """{"raid": ..., "garrison": ...} when enabled and a model is available, else {}."""
-    if os.environ.get("REDALERT_SQUAD_LEADS", "").strip().lower() in ("off", "0", "false", "no"):
+    # Off unless asked for (REDALERT_SQUAD_LEADS=on): match 5e840776, ~180 calls a
+    # seat, 80% repeated the rules' own move 2 s late and the rest overrode the
+    # raid's pull-back and the outpost's "back at any notice".
+    if os.environ.get("REDALERT_SQUAD_LEADS", "").strip().lower() not in ("on", "1", "true", "yes"):
         return {}
     try:
         from agent.vgc.providers import AnthropicProvider, anthropic_credentials
