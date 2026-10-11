@@ -39,6 +39,7 @@ class ScoutCorps:
         self._last_cell: dict[int, tuple[int, int]] = {}
         self._lost: list[tuple[float, tuple[int, int], bool]] = []   # (time, cell, was circling)
         self.visit: tuple[int, int] | None = None    # a one-off look (our expansion site)
+        self.look: tuple[int, int] | None = None     # where their army masses, before a blind attack
         self.base_seen_at: float | None = None
         self._sent: dict[int, tuple[int, int]] = {}  # unit id -> waypoint last ordered
         self._start_at: dict[str, float] = {}        # role -> when its circuit may set out (the stagger)
@@ -122,7 +123,7 @@ class ScoutCorps:
         enemy's last buildings — each scout not on a circuit takes one."""
         out: list[dict] = []
         units = {u.id: u for u in view.units if u.id is not None}
-        visit_done = False
+        visit_done = look_done = False
         if search:
             out += self._sweep(view, units, list(search))
         for role, uid in self.roles.items():
@@ -134,6 +135,14 @@ class ScoutCorps:
                 continue
             if search:
                 continue                             # sweeping (above)
+            if self.look is not None and not look_done:
+                look_done = True
+                if dist2(u.cell, self.look) <= 36:
+                    self.look = None                 # seen: a fresh look at them
+                    self.base_seen_at = view.game_seconds
+                else:
+                    out.append(orders.move([uid], list(self.look)))
+                    continue
             if role == "p0" and view.game_seconds >= C.MID_PICKET_SECONDS:
                 site = self._next_remote_site(view, u)
                 if site is not None:                 # the roamer: remote fields they may have expanded to

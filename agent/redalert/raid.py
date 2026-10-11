@@ -60,6 +60,8 @@ class Raid:
         self.cooldown = C.RAID_COOLDOWN_SECONDS
         self.size_bonus = 0
         self.limit: int | None = None             # most units this squad may take (extra squads)
+        self._start: tuple[float, float] | None = None   # (kills, deaths) when formed
+        self.results: list[float] = []            # net trade (kills - losses) of each finished raid
 
     def update(self, view: View, mode: Mode, scout_id: int | None, advice=None, taken: set = frozenset()) -> None:
         """Drop dead members; release or form the squad."""
@@ -186,18 +188,25 @@ class Raid:
             self.unit_ids = []
             return
         self._formed_size = len(self.unit_ids)
+        self._start = (view.kills_cost, view.deaths_cost)
 
     def _release(self, view: View) -> None:
+        if self._start is not None:
+            self.results.append((view.kills_cost - self._start[0]) - (view.deaths_cost - self._start[1]))
+            self._start = None
         self.unit_ids = []
         self._formed_size = 0
         self._released_at = view.game_seconds
 
 
 def healthy(view: View) -> bool:
-    """Macro is healthy: ``HEALTHY_HARVESTERS`` harvesters and not outgunned."""
-    from .brain import outgunned
+    """Macro is healthy: ``HEALTHY_HARVESTERS`` harvesters with ore ahead of
+    them, an army worth ``RAID_EXTRA_MIN_ARMY_VALUE``, and not outgunned
+    (match ee2ac21b raided on with a 9-unit army and mined-out fields)."""
+    from .brain import our_unit_value, outgunned
 
-    return len(view.units_of(C.HARVESTER)) >= C.HEALTHY_HARVESTERS and not outgunned(view)
+    return (len(view.units_of(C.HARVESTER)) >= C.HEALTHY_HARVESTERS and not view.ore_running_dry
+            and our_unit_value(view) >= C.RAID_EXTRA_MIN_ARMY_VALUE and not outgunned(view))
 
 
 def raid_steps(view: View) -> int:
@@ -220,6 +229,7 @@ class RaidCorps:
 
     def __init__(self) -> None:
         self.squads: list[Raid] = [Raid()]
+        self._backoff_until = -1e9
 
     @property
     def unit_ids(self) -> list[int]:
@@ -234,26 +244,37 @@ class RaidCorps:
         return sum(1 for s in self.squads if s.unit_ids)
 
     def update(self, view: View, mode: Mode, scout_id: int | None, advice=None, taken: set = frozenset()) -> None:
-        steps = raid_steps(view)
+        t = view.game_seconds
+        # Raids trading at a loss: one squad only for a while (they bleed the army).
+        recent = [r for s in self.squads for r in s.results][-3:]
+        if len(recent) >= 2 and sum(recent) <= -C.RAID_LOSING_NET:
+            self._backoff_until = t + C.RAID_BACKOFF_SECONDS
+            for s in self.squads:
+                s.results.clear()
+        steps = 0 if t < self._backoff_until else raid_steps(view)
         allowed = min(C.RAID_MAX_SQUADS, 1 + steps)
         while len(self.squads) < allowed:
             self.squads.append(Raid())
         fighters = [u for u in view.combat_units if u.id is not None and u.id != scout_id and u.id not in taken]
-        busy = set(taken)
+        # A unit is in one squad only (ee2ac21b: squads re-forming took each
+        # other's units, 28 "raiders" were 13 units pulled two ways).
+        seen: set = set(taken)
+        for s in self.squads:
+            s.unit_ids = [i for i in s.unit_ids if i not in seen]
+            seen |= set(s.unit_ids)
         claimed: list[tuple[int, int]] = []
         for i, s in enumerate(self.squads):
             if i >= allowed:
                 if s.unit_ids:
                     s._release(view)              # unhealthy again: back to the army
                 continue
+            others = {u for j, o in enumerate(self.squads) if j != i for u in o.unit_ids}
             s.avoid = list(claimed)
             s.cooldown = C.RAID_LATE_COOLDOWN_SECONDS if steps else C.RAID_COOLDOWN_SECONDS
             s.size_bonus = max(0, steps - 1)
-            raiders = len(busy - set(taken))
             s.limit = (None if i == 0 else
-                       max(0, int(C.RAID_MAX_ARMY_SHARE * len(fighters)) - raiders))
-            s.update(view, mode, scout_id, advice if i == 0 else None, taken=busy)
-            busy |= set(s.unit_ids)
+                       max(0, int(C.RAID_MAX_ARMY_SHARE * len(fighters)) - len(others)))
+            s.update(view, mode, scout_id, advice if i == 0 else None, taken=set(taken) | others)
             cell = _cell_of(view, s.target(view))
             if cell is not None:
                 claimed.append(cell)

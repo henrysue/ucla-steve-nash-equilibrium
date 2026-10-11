@@ -34,6 +34,7 @@ class Commander:
         self.mode_since = 0.0
         self.changed = False
         self.confirm_at: float | None = None      # when the attack call being confirmed was made
+        self.wants_look = False                    # a blind attack call: a scout looks at their army first
         self.cheese_since: float | None = None    # threat window (brain.update_cheese_since)
         self.retreated_at: float | None = None
         self.retreat_army: float | None = None    # army value at the last retreat
@@ -124,10 +125,16 @@ class Commander:
         """Hold a fresh attack call (on about even trades) until it has held
         for ``CONFIRM_SECONDS``; drop the call when the policy changes its mind."""
         even = abs(view.kills_cost - view.deaths_cost) <= C.CONFIRM_TRADE_BAND
-        if mode is Mode.ALL_IN and prev is not Mode.ALL_IN and even and not skip:
+        # Past the opening, a call made on a blind estimate waits (up to
+        # CONFIRM_BLIND_MAX_SECONDS) for a scout to look where their army masses.
+        blind = view.game_seconds >= C.ESCALATE_AFTER_SECONDS and brain.blind_estimate(view)
+        self.wants_look = False
+        if mode is Mode.ALL_IN and prev is not Mode.ALL_IN and (even or blind) and not skip:
             if self.confirm_at is None:
                 self.confirm_at = view.game_seconds
-            if view.game_seconds - self.confirm_at < C.CONFIRM_SECONDS:
+            waited = view.game_seconds - self.confirm_at
+            if waited < C.CONFIRM_SECONDS or (blind and waited < C.CONFIRM_BLIND_MAX_SECONDS):
+                self.wants_look = blind
                 return prev
         elif mode is not Mode.ALL_IN:
             self.confirm_at = None

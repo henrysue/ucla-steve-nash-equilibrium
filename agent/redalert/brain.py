@@ -173,6 +173,18 @@ def enemy_estimate(view: View) -> float:
     return max(look, prior)
 
 
+def blind_estimate(view: View) -> bool:
+    """The estimate is mostly our guess: the "about as big as us" prior is
+    over ``BLIND_PRIOR_RATIO`` x what we saw of them lately, and no fresh look
+    at their base. Match ee2ac21b attacked 5150 into "4440" (the prior: our
+    income had stopped, theirs had not) and met 13500."""
+    if view.enemy_base_scouted:
+        return False
+    look = max(view.enemy_army_value, view.enemy_army_peak, 0.0)
+    prior = C.ENEMY_PRIOR_SHARE * (view.army_value + view.deaths_cost - view.kills_cost)
+    return prior > C.BLIND_PRIOR_RATIO * look
+
+
 def _army_edge(view: View) -> float:
     """Our army value over the estimated enemy army (:func:`enemy_estimate`).
     Large when nothing is known of them, small when outmatched."""

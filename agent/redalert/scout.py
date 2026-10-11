@@ -187,6 +187,18 @@ def _clear_stage(view: View, stage, toward) -> tuple[int, int]:
     return next((c for c in near if clear(c)), stage)
 
 
+def enemy_staging(view: View) -> tuple[int, int] | None:
+    """Where their army most likely masses: our own massing rule from their
+    base toward ours. A scout looks there before a blind attack."""
+    from .observe import enemy_spawn_guess
+
+    enemy, base = enemy_spawn_guess(view), view.base_center
+    if enemy is None or base is None:
+        return None
+    forward = max(C.STAGE_FORWARD_CELLS, C.STAGE_SHARE * dist2(enemy, base) ** 0.5)
+    return _forward(view, enemy, base, forward, enemy)
+
+
 def _forward(view: View, anchor, toward, cells: float, base) -> tuple[int, int]:
     """``cells`` from ``anchor`` toward ``toward`` (at most ``STAGE_FRACTION``
     of the base-to-enemy distance), on an open cell inside the map."""

@@ -152,6 +152,15 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
   remote expansions, refineries), and enemy scouts and pickets out in the field
   (groups worth 1200 or less, at least 45% of the way from their base) are
   targets too. Outgunned or short on harvesters: the extra squads rejoin the army.
+  Healthy also needs an army worth 6000+ and ore ahead (ee2ac21b raided on with
+  a 9-unit army and mined-out fields); a unit is in one squad only (squads
+  re-forming took each other's units); raids that lost 800+ net over the last
+  few send only one squad for 2 minutes.
+- **No blind attacks**: past 7:00, an attack call whose estimate is mostly the
+  "about as big as us" prior (over 2x what we saw lately, no fresh base look)
+  waits up to 40 s while a scout looks where their army masses (our massing
+  rule mirrored). ee2ac21b attacked 5150 into "4440" — our income had stopped,
+  theirs hadn't — and met 13500.
 - **Mass farther out on big maps**: the massing point is 10 cells in front of
   the base or a quarter of the way to the enemy, whichever is farther (still
   capped at 30%): Shadowfiend II 17 cells, Trapped ~14, Sidestep ~13. The army

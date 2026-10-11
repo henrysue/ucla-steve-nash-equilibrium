@@ -153,6 +153,8 @@ class RedAlertAgent:
             hunting=hunting, alarm=threat, distraction=self._raid.distracting(view),
             escorting=self._expansion.escorting, rushing=rushing, forced=forced,
         )
+        # A blind attack call: a scout looks where their army masses first.
+        self._patrol.look = scout.enemy_staging(view) if self._commander.wants_look else None
         if self._commander.changed:
             # While the raid squad holds their army, straight down the centre.
             self._flank_via = (None if self._mode is not Mode.ALL_IN or self._raid.distracting(view)
@@ -167,7 +169,7 @@ class RedAlertAgent:
         self._game_seconds = view.game_seconds
 
         self._raid.update(view, self._mode, self._patrol.unit_id, advice,
-                          taken=set(self._patrol.unit_ids))
+                          taken={*self._patrol.unit_ids, *self._garrison.unit_ids})
         self._garrison.update(view, self._mode, self._expansion,
                               {*self._patrol.unit_ids, *self._raid.unit_ids})
         self._matchlog.observe(raw, view, self._mode, context, extra={

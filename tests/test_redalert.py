@@ -4148,6 +4148,7 @@ def test_an_attack_winning_its_trades_keeps_going():
 
 def _healthy_view(t, n=30, enemies=(), ore=()):
     units = [{"id": 100 + i, "type": "e3" if i % 2 else "e1", "x": 12, "y": 12, "hp": 100} for i in range(n)]
+    units += [{"id": 400 + i, "type": "3tnk", "x": 12, "y": 12, "hp": 100} for i in range(6)]
     units += [{"id": 300 + i, "type": "harv", "x": 6, "y": 8, "hp": 100} for i in range(4)]
     v = _view(_t=t, buildings=BASE, units=units, visible_enemies=list(enemies))
     return dataclasses.replace(v, ore_cells=tuple(ore)) if ore else v
@@ -4188,3 +4189,58 @@ def test_raiders_clear_a_scout_in_the_field():
     assert ra._target(_healthy_view(400.0, enemies=[scout]), []) == 950
     deep = {"id": 951, "type": "e1", "x": 38, "y": 38, "hp": 100}            # at their base: not a picket
     assert ra._target(_healthy_view(400.0, enemies=[deep]), []) != 951
+
+
+# -- match ee2ac21b: squads sharing units, raiding on with a small army, a blind attack -------------
+
+
+def test_raid_squads_never_share_units():
+    from agent.redalert import raid as ra
+    corps = ra.RaidCorps()
+    v = _healthy_view(560.0, ore=_SIDE_ORE)
+    corps.update(v, Mode.BUILD, scout_id=None)
+    corps.squads[0]._release(v)                                               # the first squad re-forms...
+    corps.squads[0]._released_at = -1e9
+    corps.update(v, Mode.BUILD, scout_id=None)
+    ids = corps.unit_ids
+    assert len(ids) == len(set(ids))                                          # ...from free units only
+    corps.squads[1].unit_ids += corps.squads[0].unit_ids[:2]                  # a stale overlap is dropped
+    corps.update(v, Mode.BUILD, scout_id=None)
+    assert len(corps.unit_ids) == len(set(corps.unit_ids))
+
+
+def test_no_extra_raids_without_an_army_or_ore():
+    from agent.redalert import raid as ra
+    assert ra.squads_allowed(_healthy_view(700.0)) > 1
+    small = _healthy_view(700.0)
+    small = dataclasses.replace(small, units=[u for u in small.units if u.type != "3tnk"][:14]
+                                + [u for u in small.units if u.type == "harv"])
+    assert ra.squads_allowed(small) == 1                                      # a small army: one squad
+    assert ra.squads_allowed(dataclasses.replace(_healthy_view(700.0), ore_running_dry=True)) == 1
+
+
+def test_losing_raids_back_off_to_one_squad():
+    from agent.redalert import raid as ra
+    corps = ra.RaidCorps()
+    v = _healthy_view(700.0, ore=_SIDE_ORE)
+    corps.squads[0].results = [-600.0, -500.0]
+    corps.update(v, Mode.BUILD, scout_id=None)
+    assert corps.active <= 1
+
+
+@pytest.mark.usefixtures("visible_only")
+def test_a_blind_attack_call_waits_for_a_look_at_their_army(monkeypatch):
+    monkeypatch.setattr(C, "ENEMY_PRIOR_SHARE", 0.8)
+    v = lambda t, **kw: _strong(t, army_value=6000, visible_enemy_value=0, kills_cost=8000, deaths_cost=8000, **kw)  # noqa: E731
+    assert brain.blind_estimate(v(600.0))
+    c = Commander()
+    c.mode = Mode.BUILD
+    assert c.decide(v(600.0)) is Mode.BUILD and c.wants_look                  # a scout looks first
+    assert c.decide(v(606.0)) is Mode.BUILD and c.wants_look                  # still blind: still waiting
+    assert c.decide(v(641.0)) is Mode.ALL_IN and not c.wants_look             # no look in 40 s: go anyway
+    looked = Commander()
+    looked.mode = Mode.BUILD
+    seen = lambda t: dataclasses.replace(v(t), enemy_base_scouted=True)      # noqa: E731
+    looked.decide(seen(600.0))
+    assert looked.decide(seen(605.0)) is Mode.ALL_IN                          # a fresh look: the usual 4 s
+    assert scout.enemy_staging(v(600.0)) is not None
