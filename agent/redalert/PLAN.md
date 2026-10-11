@@ -387,8 +387,11 @@ cell from the base are silently moved next to the construction yard.
 ## TEST ONLY — remove before the tournament
 
 - `sparring.py`: in a self-play test match one seat plays a fixed archetype, without the advisor:
-  - `RA_SPARRING=rusher`: one-refinery rush build, 3 barracks, units without pause, no expansion or
-    turrets unless attacked; launches a ball at 2500 (1500 by 3:30), pushes until under 40% of it.
+  - `RA_SPARRING=rusher`: plays like Yuriko (henry-vs-yuriko): one barracks, two refineries, three
+    pillboxes on the approach by 2:30, war factory and depot, a third refinery ~10:00 and a second war
+    factory ~11:30, no expansion; nonstop riflemen then main battle tanks; waves from ~3:00 (18+ fighters),
+    each later one once the army is 1.4x the last launch (2.5-5 min after regrouping), pushing until
+    down to 40% of its launch value.
   - `RA_SPARRING=turtler`: our build plus a growing turret ring (2 at 2:30 up to 8 by 12:00), army at
     home, no raids; attacks only from 15:00 with a 1.3 edge, or with an 18000 army.
   - `RA_SPARRING=macro`: refineries early (2 at 0:45, 3 at 2:30 ... 6 at 7:00), first expansion as early

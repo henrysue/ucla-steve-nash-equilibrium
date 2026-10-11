@@ -3,13 +3,16 @@
 When we play ourselves in a test match, one seat can play a fixed archetype
 instead of our game plan, so the other seat's reads and answers get tested:
 
-- ``rusher``: a one-refinery rush build (power, barracks, refinery, barracks,
-  power, war factory; up to ``RUSH_BARRACKS`` barracks), no expansion, no
-  turrets unless attacked, production that never pauses. It masses a ball and
-  launches at ``RUSH_BALL_VALUE`` (or ``RUSH_MIN_ARMY_VALUE`` by
-  ``RUSH_FORCE_SECONDS``), keeps pushing with reinforcements streaming in,
-  and re-masses only once the army drops below ``RUSH_REGROUP_SHARE`` of its
-  launch value.
+- ``rusher``: plays like Yuriko (replay henry-vs-yuriko, Sidestep): a lean
+  build — power, one barracks, two refineries, power, war factory, power,
+  depot (a third refinery ~10:00, a second war factory ~11:30), three
+  pillboxes on the approach by 2:30, no expansion. Production never pauses:
+  riflemen (a rocket soldier per few), then main battle tanks once the depot
+  stands. It attacks in waves: the first at ~3:00 with ~20 riflemen
+  (``RUSH_FIRST_WAVE_*``), each later one once the army has grown past the
+  last launch (``RUSH_WAVE_GROWTH``, or ``RUSH_WAVE_MAX_GAP_SECONDS`` after
+  regrouping); a wave pushes until it is down to ``RUSH_REGROUP_SHARE`` of its
+  launch value, then everyone regroups at home.
 - ``turtler``: our build plus a growing ring of turrets (``TURTLE_DEFENSES``
   over time, up to ``TURTLE_MAX_DEFENSES``), the army at home, no raids. It
   only attacks late (``TURTLE_PUSH_SECONDS`` with an edge) or with a huge army
@@ -47,16 +50,21 @@ DEFAULT_SEAT = 1
 _MARKER_DIR = Path(tempfile.gettempdir()) / "redalert_selfplay"
 _STALE_SECONDS = 3 * 3600
 
-# rusher
-RUSH_START_SECONDS = 120.0
-RUSH_MIN_ARMY_VALUE = 1500       # launch with at least this...
-RUSH_BALL_VALUE = 2500           # ...once the ball is worth this...
-RUSH_FORCE_SECONDS = 210.0       # ...or at this time with RUSH_MIN_ARMY_VALUE
-RUSH_REGROUP_SHARE = 0.4         # pushing until the army falls below this share of its launch value
-RUSH_BARRACKS = 3
-RUSH_INFANTRY_DEPTH = 3
+# rusher (Yuriko: 1 barracks, 2 refineries by 1:06, 3 pillboxes by 2:26, war factory 3:54,
+# depot 4:38, third refinery 10:17, second war factory 11:36; waves at ~3:00, ~6:30, ~11:30)
+RUSH_BUILD_ORDER = ("powr", ("tent", "barr"), "proc", "proc", "powr", "weap", "powr", "fix")
+RUSH_LATE_REFINERY_SECONDS = 600.0   # a third refinery then...
+RUSH_SECOND_FACTORY_SECONDS = 690.0  # ...and a second war factory
+RUSH_PILLBOXES = ((90.0, 1), (140.0, 3))   # (game s, turrets on the approach)
+RUSH_PILLBOX_FUNDS = 600
+RUSH_FIRST_WAVE_SECONDS = 170.0  # the first wave from 2:50...
+RUSH_FIRST_WAVE_UNITS = 18       # ...with this many fighters (Yuriko: 20-28 riflemen at 3:00)
+RUSH_WAVE_GROWTH = 1.4           # a later wave once the army is this x the last launch...
+RUSH_WAVE_MIN_GAP_SECONDS = 150.0   # ...at least this long after regrouping...
+RUSH_WAVE_MAX_GAP_SECONDS = 300.0   # ...or this long after it with at least the last launch's army
+RUSH_REGROUP_SHARE = 0.4         # a wave pushes until the army falls below this share of its launch value
+RUSH_INFANTRY_DEPTH = 2
 RUSH_TANK_DEPTH = 2
-RUSH_BUILD_ORDER = ("powr", ("tent", "barr"), "proc", ("tent", "barr"), "powr", "weap")   # one refinery: a true rush
 
 # turtler
 TURTLE_DEFENSES = ((150.0, 2), (240.0, 3), (330.0, 4), (420.0, 5), (510.0, 6), (600.0, 7), (720.0, 8))  # (game s, turrets)
@@ -134,48 +142,80 @@ class Rusher(Archetype):
     skip_confirm = True
 
     def __init__(self) -> None:
-        self._launch_value: float | None = None
+        self._launch_value: float | None = None   # army value when the current wave launched
+        self._last_launch = 0.0                    # the last wave's launch value
+        self._regrouped_at: float | None = None    # when the last wave was called home
 
     def mode(self, view, cheese_since, policy: Mode = Mode.BUILD) -> Mode | None:
-        """Defend only if its own base is hit; mass a ball and launch it once
-        big enough; keep pushing until it is mostly spent, then re-mass.
-        ``None`` before it has a yard and barracks."""
+        """Waves: the first at ``RUSH_FIRST_WAVE_SECONDS`` with
+        ``RUSH_FIRST_WAVE_UNITS`` fighters; each pushes until it is down to
+        ``RUSH_REGROUP_SHARE`` of its launch value, then regroups at home;
+        the next goes once the army has grown ``RUSH_WAVE_GROWTH`` past the
+        last launch (or ``RUSH_WAVE_MAX_GAP_SECONDS`` on). Its own base hit:
+        it defends. ``None`` before it has a yard and barracks."""
         from .brain import _defend
 
         if not view.has_building(C.CONSTRUCTION_YARD) or not view.has_building(C.BARRACKS):
             return None
         if cheese_since is not None:
             return _defend(view)
-        if self._launch_value is not None:
-            if view.army_value >= RUSH_REGROUP_SHARE * self._launch_value:
-                return Mode.ALL_IN               # keep pushing; reinforcements stream in
-            self._launch_value = None            # spent: fall back and mass the next ball
-            return Mode.BUILD
         t, army = view.game_seconds, view.army_value
-        ball = army >= RUSH_BALL_VALUE or (t >= RUSH_FORCE_SECONDS and army >= RUSH_MIN_ARMY_VALUE)
-        if t >= RUSH_START_SECONDS and ball:
-            self._launch_value = army
+        if self._launch_value is not None:
+            if army >= RUSH_REGROUP_SHARE * self._launch_value:
+                return Mode.ALL_IN               # the wave pushes; reinforcements stream in
+            self._launch_value, self._regrouped_at = None, t
+            return Mode.BUILD                    # spent: everyone home, the next wave masses
+        if self._regrouped_at is None:
+            go = t >= RUSH_FIRST_WAVE_SECONDS and len(view.combat_units) >= RUSH_FIRST_WAVE_UNITS
+        else:
+            since = t - self._regrouped_at
+            go = ((since >= RUSH_WAVE_MIN_GAP_SECONDS and army >= RUSH_WAVE_GROWTH * self._last_launch)
+                  or (since >= RUSH_WAVE_MAX_GAP_SECONDS and army >= self._last_launch))
+        if go:
+            self._launch_value = self._last_launch = army
             return Mode.ALL_IN
         return Mode.BUILD
 
     def build(self, view, depleted=frozenset()) -> list[dict]:
-        """More barracks, else the rush build order."""
+        """The lean build order; a third refinery and a second war factory late."""
         from . import buildplan
 
+        step = buildplan.walk_build_order(view, RUSH_BUILD_ORDER)
+        if step:
+            return step
         money = view.cash + view.ore
-        rax = buildplan._available(view, C.BARRACKS)
-        if (rax and view.has_building(C.REFINERY) and money >= C.BARRACKS_ADD_FUNDS
-                and not any(view.queued_count(b) for b in C.BARRACKS)
-                and buildplan._count_built_and_queued(view, C.BARRACKS) < RUSH_BARRACKS):
-            return [orders.build(rax)]
-        return buildplan.walk_build_order(view, RUSH_BUILD_ORDER)
+        t = view.game_seconds
+        late = []
+        if t >= RUSH_LATE_REFINERY_SECONDS:
+            late.append(("proc", 3))
+        if t >= RUSH_SECOND_FACTORY_SECONDS:
+            late.append(("weap", 2))
+        for item, want in late:
+            avail = buildplan._available(view, item)
+            if (avail and money >= C.KNOWN_COSTS.get(item, 1000) and not view.queued_count(avail)
+                    and buildplan._count_built_and_queued(view, (item,)) < want):
+                return [orders.build(avail)]
+        return []
 
     def defense(self, view, under_attack: bool) -> list[dict] | None:
-        return None if under_attack else []      # turrets only when attacked
+        """Three pillboxes on the approach by 2:30 (the usual turrets while attacked)."""
+        from . import buildplan
+
+        if under_attack:
+            return None
+        defense = buildplan._available(view, C.DEFENSES)
+        if defense is None or any(view.queued_count(d) for d in C.DEFENSES) or any(
+                p.get("ready") and str(p.get("item") or "").lower() in C.DEFENSES for p in view.production):
+            return []
+        have = sum(1 for b in view.buildings if b.type in C.DEFENSES and not b.wreck)
+        want = _scheduled(RUSH_PILLBOXES, view.game_seconds, 0)
+        if have < want and view.cash + view.ore >= RUSH_PILLBOX_FUNDS:
+            return [orders.build(defense)]
+        return []
 
     def production(self, view, mode: Mode) -> list[dict]:
-        """Units without pause: infantry ``RUSH_INFANTRY_DEPTH`` deep (a rocket
-        soldier in every few), tanks ``RUSH_TANK_DEPTH`` deep."""
+        """Units without pause: riflemen (a rocket soldier per three), then
+        main battle tanks once the depot stands."""
         out = []
         rifle = C.resolve((C.RIFLE,), view.available)
         rocket = C.resolve((C.ROCKET,), view.available)

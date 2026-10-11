@@ -2995,31 +2995,36 @@ def test_sparring_seat_from_the_observation_and_the_old_rush_switch(monkeypatch,
     assert c.resolve(_ctx(0, session="spar-3")).name == "turtler"
 
 
-def test_the_rusher_masses_a_ball_then_pushes_until_it_is_spent():
+def test_the_rusher_attacks_in_waves_like_yuriko():
     rifles = [{"id": 30 + i, "type": "e1", "x": 10, "y": 10, "hp": 100} for i in range(12)]
-    v = _view(_t=130.0, buildings=BASE, units=rifles, military={"army_value": 1200})
+    v = _view(_t=180.0, buildings=BASE, units=rifles, military={"army_value": 1200})
     r = sparring.Rusher()
-    assert r.mode(v, None) is Mode.BUILD                                       # 1200: still massing
-    assert r.mode(dataclasses.replace(v, army_value=2600), None) is Mode.ALL_IN   # the ball launches
-    assert r.mode(dataclasses.replace(v, army_value=1300), None) is Mode.ALL_IN   # pushing: 43% of 2600 left
-    assert r.mode(dataclasses.replace(v, army_value=900), None) is Mode.BUILD     # spent: re-mass
-    assert r.mode(dataclasses.replace(v, army_value=1600), None) is Mode.BUILD    # not the next ball yet...
-    late = dataclasses.replace(v, game_seconds=215.0, army_value=1600)
-    assert r.mode(late, None) is Mode.ALL_IN                                   # ...but by 3:30 it goes anyway
+    assert r.mode(v, None) is Mode.BUILD                                       # 12 riflemen: still massing
+    many = dataclasses.replace(v, units=read(_raw(units=rifles + [dict(u, id=u["id"] + 100) for u in rifles])).units,
+                               army_value=2400)
+    assert r.mode(many, None) is Mode.ALL_IN                                   # ~20 at 3:00: the first wave
+    assert r.mode(dataclasses.replace(many, army_value=1000), None) is Mode.ALL_IN   # 42% left: still pushing
+    home = dataclasses.replace(many, army_value=800)
+    assert r.mode(home, None) is Mode.BUILD                                    # spent: regroup
+    assert r.mode(dataclasses.replace(home, game_seconds=250.0, army_value=4000), None) is Mode.BUILD   # too soon
+    assert r.mode(dataclasses.replace(home, game_seconds=360.0, army_value=3500), None) is Mode.ALL_IN  # 1.46x: the next
     assert brain.choose_mode(v, cheese_since=None) is Mode.BUILD               # our own agent holds
 
 
-def test_the_rusher_produces_without_pause_and_builds_barracks():
+def test_the_rusher_builds_lean_with_early_pillboxes():
     rifles = [{"id": 30 + i, "type": "e1", "x": 10, "y": 10, "hp": 100} for i in range(12)]
     q2 = [{"item": "e1", "queue": "Infantry", "ready": False}] * 2
     v = _view(_t=130.0, buildings=BASE, units=rifles, production=q2)
     r = sparring.Rusher()
-    assert any(x.get("item") == "e1" for x in executor._production_orders(v, Mode.BUILD, sparring=r))   # 3 deep
-    assert not any(x.get("item") == "e1" for x in executor._production_orders(v, Mode.BUILD))            # ours: capped
+    assert not any(x.get("item") == "e1" for x in executor._production_orders(v, Mode.BUILD, sparring=r))   # 2 deep
+    assert any(x.get("item") == "e1" for x in executor._production_orders(
+        _view(_t=130.0, buildings=BASE, units=rifles), Mode.BUILD, sparring=r))
     blds = BASE + [{"id": 13, "type": "proc", "x": 9, "y": 9}, {"id": 14, "type": "powr", "x": 1, "y": 1}]
     o = buildplan.next_build_orders(_view(buildings=blds, economy={"cash": 2000}), sparring=r)
-    assert o == [{"cmd": "build", "item": "tent"}]                             # a second barracks right away
-    assert r.defense(v, under_attack=False) == [] and r.defense(v, under_attack=True) is None
+    assert o == [{"cmd": "build", "item": "proc"}]                             # the second refinery, one barracks
+    pv = _view(_t=150.0, buildings=blds, economy={"cash": 2000}, available_production=["pbox"])
+    assert r.defense(pv, under_attack=False) == [{"cmd": "build", "item": "pbox"}]   # pillboxes by 2:30
+    assert r.defense(pv, under_attack=True) is None
 
 
 @pytest.mark.usefixtures("visible_only")
@@ -3350,8 +3355,8 @@ def test_a_confirmation_made_during_the_anti_flip_window_starts_the_attack_when_
     assert agent._mode is Mode.ALL_IN                                       # at once, no second look
 
 
-def test_the_test_rusher_opens_with_one_refinery():
-    assert sparring.RUSH_BUILD_ORDER.count("proc") == 1
+def test_the_test_rusher_opens_lean_like_yuriko():
+    assert sparring.RUSH_BUILD_ORDER.count("proc") == 2 and sparring.RUSH_BUILD_ORDER.count(("tent", "barr")) == 1
 
 
 # -- simplification step 2: the commander owns the decision -------------------------------------
