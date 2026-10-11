@@ -292,14 +292,15 @@ EXPAND_MIN_FIGHTERS = 8            # no expansion MCV with fewer fighters (08560
 EXPAND_MCV_ARMY_VALUE = 2000       # ...or less army than this (the count includes the scouts: c4caa45e flipped at 8)
 EXPAND_MAX_EXPANSIONS = 3
 EXPAND_MAX_FAILURES = 2
-EXPAND_AGAIN_AFTER_SECONDS = 150.0          # next expansion this long after the last...
+EXPAND_AGAIN_AFTER_SECONDS = 120.0          # next expansion this long after the last...
+EXPAND_EVEN_TRADE_BAND = 2000               # ...and with kills - losses within this, the advisor's "wait" doesn't hold it
 # The ore forecast (harvest.HarvestManager): the observation has no live ore,
 # so a field holds about ORE_VALUE_PER_CELL x its ore cells at the start (ore
 # is 25 a unit, up to 12 a cell: OpenRA mods/ra/rules) and each harvester
 # working it takes about HARVEST_RATE a second (500 a load, ~40 s a trip).
 ORE_VALUE_PER_CELL = 300.0
 HARVEST_RATE = 10.0
-EXPAND_LEAD_SECONDS = 150.0                 # ...or sooner when the worked fields have less ore left than this
+EXPAND_LEAD_SECONDS = 240.0                 # ...or sooner when the worked fields have less ore left than this (an expansion and its refinery take ~3-4 min)
 EXPAND_DEPLETED_IDLE_HARVESTERS = 2         # ...or sooner when this many harvesters idle
 EXPAND_DEPLETED_IDLE_SECONDS = 30.0         # for this long
 EXPAND_STRAPPED_FUNDS = 600                 # ...or sooner when money stays under this...

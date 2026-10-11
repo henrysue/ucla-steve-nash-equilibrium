@@ -1341,9 +1341,10 @@ _EXP_BASE = [{"id": 10, "type": "fact", "x": 4, "y": 4}, {"id": 11, "type": "ten
              {"id": 14, "type": "proc", "x": 12, "y": 9}, {"id": 15, "type": "fix", "x": 1, "y": 8}]
 
 
-def _exp_view(t=260.0, units=(), enemies=(), buildings=_EXP_BASE, available=("mcv", "proc", "1tnk"), army=7000, **kw):
+def _exp_view(t=260.0, units=(), enemies=(), buildings=_EXP_BASE, available=("mcv", "proc", "1tnk"), army=7000,
+              military=None, **kw):
     v = _view(_t=t, buildings=list(buildings), units=list(units) + _harvs(4), visible_enemies=list(enemies),
-              available_production=list(available), military={"army_value": army}, **kw)
+              available_production=list(available), military={"army_value": army, **(military or {})}, **kw)
     return dataclasses.replace(v, ore_cells=_EXP_ORE)
 
 
@@ -1408,7 +1409,8 @@ def test_advisor_can_hold_or_hurry_the_expansion():
     wait = ra_advisor.parse_advice({**_ANSWER, "expand": "wait"}, _view(), 0.0)
     now = ra_advisor.parse_advice({**_ANSWER, "expand": "now"}, _view(), 0.0)
     e = Expansion()
-    e.update(_exp_view(), Mode.BUILD, wait)
+    ahead = {"kills_cost": 9000, "deaths_cost": 3000}                        # not an even game
+    e.update(_exp_view(military=ahead), Mode.BUILD, wait)
     assert e.state == "idle"
     e.update(_exp_view(t=200.0), Mode.BUILD, now)                             # 3:20 is fine on "now"
     assert e.state == "scouting"
@@ -3859,11 +3861,14 @@ def test_running_out_of_ore_overrides_the_advisors_wait():
     import types
     wait = types.SimpleNamespace(expand="wait")
     e = Expansion()
-    v = _exp_view(t=600.0)
+    v = _exp_view(t=600.0, military={"army_value": 7000, "kills_cost": 9000, "deaths_cost": 3000})
     e._ore_running_out = False
-    assert not e._gates(v, Mode.BUILD, wait)                                 # "wait": no expansion...
+    assert not e._gates(v, Mode.BUILD, wait)                                 # "wait" (well ahead): no expansion...
     e._ore_running_out = True
     assert e._gates(v, Mode.BUILD, wait)                                     # ...unless the ore runs out
+    e._ore_running_out = False
+    even = _exp_view(t=600.0, military={"army_value": 7000, "kills_cost": 15900, "deaths_cost": 14300})
+    assert e._gates(even, Mode.BUILD, wait)                                  # an even game keeps expanding (ef66403c)
 
 
 # -- match b90e492f: an early "finish", a slow raze, an MCV in and out of the queue ---------------

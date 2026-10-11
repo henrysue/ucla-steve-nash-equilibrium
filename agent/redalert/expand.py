@@ -354,7 +354,11 @@ class Expansion:
         # Running out of ore overrides a "wait" (match c4caa45e: the advisor's
         # "more_army" read meant "wait" in 151 of 159 answers, and the ore ran
         # out with a second site free).
-        if wish == "wait" and not self._push(view.game_seconds) and not getattr(self, "_ore_running_out", False):
+        # An even game (kills - losses within EXPAND_EVEN_TRADE_BAND) keeps taking
+        # ground: the first three fields run dry around 9:00 (ef66403c: both
+        # seats on one expansion until 9:30 at even trades).
+        even = abs(view.kills_cost - view.deaths_cost) <= C.EXPAND_EVEN_TRADE_BAND
+        if wish == "wait" and not self._push(view.game_seconds) and not getattr(self, "_ore_running_out", False)                 and not even:
             return False   # broke and trading even: income beats the advisor's caution
         earliest = C.EXPAND_EARLIEST_SECONDS if wish == "now" else C.EXPAND_AFTER_SECONDS
         return (

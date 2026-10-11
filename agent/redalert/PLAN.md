@@ -103,6 +103,11 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
 - **The hunt** (c4caa45e: a barracks survived a 100-unit hunt): up to 8
   groups of 6+, every cell where we once knew an enemy building is a search
   point, and a point counts as checked within 5 cells (about sight).
+- **Even games keep expanding** (ef66403c: one expansion each until 9:30 at
+  even trades, with the first three fields running dry around 9:00): with
+  kills - losses within 2000 the advisor's "wait" doesn't hold the next
+  expansion; expansions 120 s apart; the ore forecast fires at 240 s left
+  (an expansion and its refinery take 3-4 minutes).
 - **Expansion vs the advisor**: running out of ore overrides its "wait"
   ("more_army" all game blocked a second expansion); "balanced" is its
   default, "more_economy" when the ore runway is under 3 minutes. The MCV also
