@@ -235,3 +235,41 @@ def test_scouts_and_the_army_go_round_the_choke_and_the_front_of_their_base(path
     route = terrain.route_around(view, stage, enemy, zone, C.DETOUR_MAX_RATIO)
     if "trapped" in path.stem:                                                  # Trapped: round the gap, 1.42x
         assert route and not any(c in zone for c in route[3:-3])
+
+
+@pytest.mark.parametrize("path", FIXTURES, ids=[p.stem for p in FIXTURES])
+def test_nothing_of_ours_walks_down_the_choke_into_their_concave(path):
+    """ae03adbd (Sidestep): scouts walked the gap to their army's spot and
+    died every 15-30 s, each hit sent two more units to look, and their
+    concave at the far mouth pulled the whole army in (6250 lost in 30 s)."""
+    import dataclasses
+
+    from agent.redalert import executor
+    from agent.redalert.observe import read as _read
+
+    fx = _load(path)
+    view = _view(fx, fx["states"][1], path.stem)
+    stage = scout.enemy_staging(view)
+    corps = ScoutCorps()
+    point = scout.concave_point(view)[0]
+    zone = terrain.choke_zone(view)
+    unit = type("U", (), {"id": 7, "cell": point, "idle": True})()
+    moves, arrived = corps._go(view, unit, stage)
+    if stage in corps.unreachable:
+        assert moves == [] and arrived                                            # nowhere safe: it doesn't go
+    else:
+        legs_ = corps._legs[7][1]
+        walked, here = [], point
+        for leg in legs_:
+            walked += terrain.walk_path(view, here, leg)
+            here = leg
+        deep = [c for c in walked if c in zone and (c[0] - legs_[-1][0]) ** 2 + (c[1] - legs_[-1][1]) ** 2
+                > C.SCOUT_CHOKE_ENTRY_CELLS ** 2 and (c[0] - point[0]) ** 2 + (c[1] - point[1]) ** 2 > 9]
+        assert len(deep) <= 4, deep[:8]                       # round (its legs may clip the zone's padded edge), not down the gap
+    # Their army at the far mouth is not the army's fight at home.
+    foes = tuple(type("A", (), {"id": 900 + k, "type": "3tnk", "cell": stage, "wreck": False, "hp": 100})()
+                 for k in range(4))
+    ours = [type("F", (), {"id": 100 + k, "type": "e1", "cell": point})() for k in range(6)]
+    there = dataclasses.replace(view, enemy_units=foes)
+    assert executor.army_contact(there, ours, defending=False) == []
+

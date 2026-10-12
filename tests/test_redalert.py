@@ -5077,12 +5077,17 @@ def test_idle_units_near_an_attacked_spot_hit_back():
     idle = [{"id": 100 + i, "type": "e1", "x": 15, "y": 15, "hp": 100, "idle": True} for i in range(5)]
     busy = [{"id": 200, "type": "e1", "x": 15, "y": 15, "hp": 100, "idle": False}]
     far = [{"id": 300, "type": "e1", "x": 40, "y": 5, "hp": 100, "idle": True}]
-    v = _view(_t=300.0, buildings=BASE, units=idle + busy + far)
+    blds = BASE + [{"id": 12, "type": "powr", "x": 18, "y": 18}]                 # a building by the spot
+    v = _view(_t=300.0, buildings=blds, units=idle + busy + far)
     o, used = executor.respond(v, Mode.BUILD, None, frozenset(), hits=[(20, 20)])   # hit, nobody in sight
     assert o == [{"cmd": "attack_move", "units": [100, 101], "to": [20, 20]}]   # a pair goes to look
     assert used == {100, 101}
+    # A hit out in the field (a scout shot at their concave): nobody goes (ae03adbd).
+    o, _ = executor.respond(_view(_t=300.0, buildings=BASE, units=idle + busy + far), Mode.BUILD, None,
+                            frozenset(), hits=[(30, 30)])
+    assert o == []
     foe = [{"id": 900, "type": "e1", "x": 21, "y": 19, "hp": 100}]
-    o, _ = executor.respond(_view(_t=300.0, buildings=BASE, units=idle + busy + far, visible_enemies=foe),
+    o, _ = executor.respond(_view(_t=300.0, buildings=blds, units=idle + busy + far, visible_enemies=foe),
                             Mode.BUILD, None, frozenset(), hits=[(20, 20)])
     assert o == []                                            # an attacker at the concave: its own fire (e2bc988e)
 

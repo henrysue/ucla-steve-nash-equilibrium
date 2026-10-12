@@ -118,6 +118,11 @@ a turtle about one per turret (3–6) before any attack.
   fresh look for the attack's blind check — which counts only once it saw
   their fighters or stood in front of their base (d2d8dc27 counted an empty
   spot and attacked 3250 on an estimate of 250).
+- **Never down a choke**: a scout never walks a choke corridor between the
+  bases; a place inside one (their army's spot at its far mouth) is looked
+  at from the nearest spot beside it reached the long way round, else not at
+  all — and a look that reached nothing doesn't count (ae03adbd: scouts
+  walked Sidestep's gap into their concave every 15-30 s, ~30 of them).
 - **Routes**: every scout trip is walked in attack-move legs of 8 steps round
   the chokes, the front of their base (15 cells, 70° either side of their way
   out) and 8 cells round every turret we know; circuits start at the side of
@@ -181,6 +186,8 @@ behind/outgunned. The blind check reads only what was actually seen.
    - **Never**: before 3:00 and a war factory, a new attack while the MCV
      travels, within 60 s of a retreat, into a turtle without 3 siege units
      (unless the odds are 2.5+).
+   - **Through a choke with no way round** (terrain.choke_between): 1.5x
+     the bar, unless 3+ siege units come to shell their concave.
    - **The advisor's "hold"** delays an attack the rules call by at most 90 s,
      then the rules go (c1c37a10 held 13 minutes at 1.4-1.9x while a turtle
      built 28800).
@@ -205,6 +212,12 @@ An attack goes on until the retreat rule ends it. No mass/attack flip within
     out and under 45% of the way to them): its kill point on the choke's mouth
     on our side, so the whole arc fires on them as they come through; with no
     such choke, at the massing point. Rally points stay at the massing point.
+  - **Only our half**: the army's own fight and the idle units' answers
+    count only enemies on our half of the map, and a spot we were hit at
+    only by our buildings or trucks — their concave at the far mouth of a
+    choke, or a scout shot there, pulls nobody out (ae03adbd: hits on dying
+    scouts sent pairs down Sidestep's gap, and their concave near those
+    stragglers drew the whole army in: 6250 lost in 30 s while massing).
   - **At the concave** (while the army is home): nobody chases — its slots
     fire on what comes in range, and a real push is the army's fight above
     (e2bc988e chased pokes through Sidestep's gap into their massed army

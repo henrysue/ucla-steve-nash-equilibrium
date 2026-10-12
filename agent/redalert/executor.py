@@ -558,11 +558,19 @@ def _main_cells(view: View) -> list[tuple[int, int]]:
 
 
 def army_contact(view: View, fighters, defending: bool = False) -> list:
-    """The army's own fight: enemy fighters within ``STAGE_ENGAGE_CELLS`` of
-    the army or the main base (buildings, trucks) worth more than a small
-    raid — any of them while ``defending`` (a defend mode: the threat is
-    real). Empty otherwise (a small group is the idle units' job: respond)."""
+    """The army's own fight: enemy fighters on our half of the map within
+    ``STAGE_ENGAGE_CELLS`` of the army or the main base (buildings, trucks)
+    worth more than a small raid — any of them while ``defending`` (a defend
+    mode: the threat is real). Empty otherwise (a small group is the idle
+    units' job: respond). Their army standing on their side — at the far
+    mouth of a choke — is not our fight: the army at home doesn't walk out
+    to it (ae03adbd: their concave came within 12 cells of our own
+    stragglers in Sidestep's gap and the whole army attack-moved into it,
+    6250 lost in 30 s)."""
+    enemy_home, base = enemy_spawn_guess(view), view.base_center
     near = _enemies_near(view, [u.cell for u in fighters if u.cell is not None] + _main_cells(view))
+    if enemy_home is not None and base is not None:
+        near = [a for a in near if dist2(a.cell, enemy_home) >= dist2(a.cell, base)]
     return near if near and (defending or _value(view, near) > C.SMALL_RAID_VALUE) else []
 
 
@@ -608,15 +616,29 @@ def respond(view: View, mode: Mode, scout_id: int | None, reserved: frozenset, h
     main = _main_cells(view)
     targets: list[tuple[tuple[int, int], bool, list]] = []    # (cell, small group at the main base, the group)
     groups = [g for g in enemy_groups(view) if not any(a.id in army_fight for a in g)]
+    enemy_home = enemy_spawn_guess(view)
+    base = view.base_center
+
+    def their_half(cell) -> bool:
+        return base is not None and enemy_home is not None and dist2(cell, enemy_home) < dist2(cell, base)
+
     for g in sorted(groups, key=lambda g: -_value(view, g)):
         if mode not in AGGRESSIVE and held is not None and any(dist2(a.cell, held[0]) <= r2 for a in g):
             continue                                       # at the concave (the army home): its own fire
+        if their_half(_centre(g)):
+            continue                                       # on their side: not ours to chase (into their concave)
         centre = _centre(g)
         cell = min(g, key=lambda a: dist2(a.cell, centre)).cell
         small_home = (_value(view, g) <= C.SMALL_RAID_VALUE
                       and any(dist2(a.cell, c) <= C.HOME_RAID_RADIUS_CELLS ** 2 for a in g for c in main))
         targets.append((cell, small_home, g))
     seen = [a.cell for g in enemy_groups(view) for a in g]
+    # A hit counts where it is ours to answer: by our buildings or trucks —
+    # not a scout shot at their concave (ae03adbd: each scout hit at the far
+    # mouth of Sidestep's gap sent two more units down it to "look").
+    assets = [a.cell for a in list(view.buildings) + list(view.units_of(C.HARVESTER)) if a.cell is not None and not a.wreck]
+    h2 = C.HOME_RAID_RADIUS_CELLS ** 2
+    hits = [s for s in hits if any(dist2(s, c) <= h2 for c in assets)]
     for spot in hits:
         if all(dist2(spot, c) > C.GROUP_CELLS ** 2 for c in seen) and all(dist2(spot, t[0]) > 36 for t in targets):
             targets.append((tuple(spot), False, []))

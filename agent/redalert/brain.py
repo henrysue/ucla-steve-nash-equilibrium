@@ -8,7 +8,7 @@ it never overrides the safety rules.
 from __future__ import annotations
 
 from . import config as C
-from . import scout, strength
+from . import scout, strength, terrain
 from .modes import AGGRESSIVE, Mode
 from .observe import View, dist2
 
@@ -92,6 +92,13 @@ def choose_mode(
         # into turrets we can't break.
         threshold = min(threshold, C.ADVISOR_ATTACK_EDGE)
     strike = attack_odds(view)
+    # Through a choke they can hold (no way round): a column walks out of it
+    # into their concave, which our fight model doesn't price — a higher bar,
+    # unless the siege units come to shell it from out of its reach
+    # (e2bc988e attacked through Sidestep's gap at 1.2x and lost 2050 for 200).
+    choke = (C.CHOKE_ATTACK_FACTOR if terrain.choke_between(view)
+             and len(view.units_of(C.SIEGE_UNITS)) < C.SIEGE_ATTACK_MIN and not _overwhelming(view) else 1.0)
+    threshold *= choke
     # Unseen enemy makes the edge infinite, so also require a real army: never
     # trickle units one at a time into the enemy base.
     cooling_down = retreated_at is not None and view.game_seconds - retreated_at < C.RETREAT_COOLDOWN_SECONDS
@@ -107,7 +114,7 @@ def choose_mode(
     # the target included, is at least even; else the bar on what we know.
     # (The turrets are in the odds: match 654f1b2e attacked a mixed army into
     # three flame towers three times.)
-    can_attack = ((strike >= threshold or (traded_up and strike >= 1.0)) and _has_real_army(view) and built
+    can_attack = ((strike >= threshold or (traded_up and strike >= choke)) and _has_real_army(view) and built
                   and not cooling_down and regrown)
     # A turtle waits for the siege: SIEGE_ATTACK_MIN siege units, or an army
     # that overwhelms army and turrets together (efefdca8: two attacks into

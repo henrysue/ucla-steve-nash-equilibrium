@@ -149,6 +149,29 @@ def choke_zone(view: View) -> frozenset:
 _ZONES: dict = {}
 
 
+def choke_between(view: View) -> bool:
+    """The only road between the bases runs through a choke: there is a
+    choke zone on it and no way round within ``DETOUR_MAX_RATIO``. An
+    attack then walks out of the choke into their concave, one column at a
+    time. Cached per map and spawns."""
+    from . import config as C
+    from .observe import enemy_spawn_guess
+
+    zone = choke_zone(view)
+    base, enemy = view.base_center, enemy_spawn_guess(view)
+    if not zone or base is None or enemy is None:
+        return False
+    key = ("between", id(view.blocked_cells), tuple(base), tuple(enemy))
+    hit = _ZONES.get(key)
+    if hit is not None and hit[0] is view.blocked_cells:
+        return hit[1]
+    direct = walk_path(view, tuple(base), tuple(enemy))
+    through = bool(direct) and any(c in zone for c in direct) and \
+        route_around(view, base, enemy, zone, C.DETOUR_MAX_RATIO) is None
+    _ZONES[key] = (view.blocked_cells, through)
+    return through
+
+
 def route_around(view: View, start, goal, avoid, max_ratio: float) -> list[tuple[int, int]] | None:
     """The walking path from ``start`` to ``goal`` that keeps out of
     ``avoid`` (cells within 3 of either end excepted), when the straight road

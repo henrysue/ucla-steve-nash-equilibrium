@@ -269,6 +269,9 @@ REINFORCE_GAP_CELLS = 14           # in an attack, units this far behind the fro
 REINFORCE_GROUP_UNITS = 6          # ...until this many can go together (no trickling through a choke one by one)
 REINFORCE_HOLD_CELLS = 8           # only units still this close to the massing point wait: none is ever sent back
 DETOUR_MAX_RATIO = 1.6             # an attack goes round the chokes between the bases when that is at most this much longer
+CHOKE_ATTACK_FACTOR = 1.5          # with no way round, an attack through the choke needs this x the usual edge (their concave
+                                   # fires on a column coming out of it), unless it brings SIEGE_ATTACK_MIN siege units
+SCOUT_CHOKE_ENTRY_CELLS = 6        # a scout walks into a choke corridor only this close to where it is going
 CHOKE_AVOID_CELLS = 4              # the choke zone (terrain.choke_zone): this far round each narrow cell on the road...
 CHOKE_AVOID_BASE_CELLS = 13        # ...at least this far from either base (a base's own exit isn't avoided)
 ARMY_LEG_CELLS = 10                # the attack's route as waypoints this many steps apart (it can't stray back)

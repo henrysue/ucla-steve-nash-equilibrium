@@ -50,6 +50,8 @@ class ScoutCorps:
         self._peeking: set = set()                    # roles out on a look right now
         self._army_check: set = set()                 # roles that, round their base, now look at their army
         self._look_leg: dict[int, int] = {}           # scout id -> its look's stop (0 their exit, 1 their base)
+        self._look_saw: set = set()                   # scout ids whose look has seen something (a stop or their army)
+        self.unreachable: set = set()                 # places a scout can't reach without walking a choke corridor
         self.base_seen_at: float | None = None
         self.army_looked_at: float | None = None      # when a scout last looked where their army masses (look)
         self._sent: dict[int, tuple[int, int]] = {}  # unit id -> waypoint last ordered
@@ -271,9 +273,21 @@ class ScoutCorps:
         plan = self._legs.get(u.id)
         if plan is None or plan[0] != dest or (u.idle and plan[1] and dist2(u.cell, plan[1][0]) > (2 * C.SCOUT_LEG_CELLS) ** 2):
             path = route_around(view, u.cell, dest, self.avoid(view), C.SCOUT_MAX_DETOUR)
+            if path is None and self._through_choke(view, u.cell, dest):
+                # No way round, and the straight road runs down a choke
+                # corridor into their concave (ae03adbd: scouts walked
+                # Sidestep's gap to their army's spot and died, again and
+                # again): the nearest spot beside the choke reached the long
+                # way round instead, else not reachable at all.
+                path = self._beside_choke(view, u.cell, dest)
+                if path is None:
+                    self.unreachable.add(dest)
+                    self._legs.pop(u.id, None)
+                    return [], True
             plan = (dest, legs(path, C.SCOUT_LEG_CELLS) if path else [dest])
             self._legs[u.id] = plan
         points = plan[1]
+        dest = points[-1] if points else dest          # beside the choke, when the place itself is in it
         while len(points) > 1 and (dist2(u.cell, points[0]) <= 9
                                    or (u.idle and self._sent.get(u.id) == points[0])):
             points.pop(0)
@@ -287,6 +301,44 @@ class ScoutCorps:
             # instead of being shot in the back (only backing off is a move)
             return [orders.attack_move([u.id], list(nxt))], False
         return [], False
+
+    def _beside_choke(self, view: View, start, dest) -> list | None:
+        """A path to the nearest cell (within ``SCOUT_PEEK_BACK_CELLS`` + 4)
+        to ``dest`` outside the choke zone that a scout reaches without
+        walking the corridor, or None."""
+        from .terrain import choke_zone, route_around, walk_path
+
+        zone, avoid = choke_zone(view), self.avoid(view)
+        r = C.SCOUT_PEEK_BACK_CELLS + 4
+        near = sorted(((dest[0] + i, dest[1] + j) for i in range(-r, r + 1) for j in range(-r, r + 1)
+                       if i * i + j * j <= r * r), key=lambda c: dist2(c, dest))
+        tried = 0
+        for c in near:
+            if c in zone or c in view.blocked_cells:
+                continue
+            tried += 1
+            if tried > 12:
+                break
+            path = route_around(view, start, c, avoid, C.SCOUT_MAX_DETOUR)
+            if path is None and not self._through_choke(view, start, c):
+                path = walk_path(view, tuple(start), c) or None
+            if path is not None:
+                return path
+        return None
+
+    @staticmethod
+    def _through_choke(view: View, start, dest) -> bool:
+        """The straight road from ``start`` to ``dest`` crosses the choke
+        zone (terrain.choke_zone) farther than ``SCOUT_CHOKE_ENTRY_CELLS``
+        from ``dest`` (and 3 from ``start``)."""
+        from .terrain import choke_zone, walk_path
+
+        zone = choke_zone(view)
+        if not zone:
+            return False
+        e2, s2 = C.SCOUT_CHOKE_ENTRY_CELLS ** 2, 9
+        return any(c in zone and dist2(c, dest) > e2 and dist2(c, start) > s2
+                   for c in walk_path(view, tuple(start), tuple(dest)))
 
     # -- places ------------------------------------------------------------------
 
@@ -481,6 +533,7 @@ class ScoutCorps:
             # pillboxes on a turtle's front, none seen until the last second,
             # so no turtle read and no siege units until 11:47).
             self.base_seen_at = self.army_looked_at = view.game_seconds
+            self._look_saw.add(u.id)
         stops = [s for s in (enemy_staging(view), self.base_front(view)) if s is not None]
         if not stops:
             self._look_leg.pop(u.id, None)       # nowhere to look: no credit
@@ -492,12 +545,18 @@ class ScoutCorps:
                 if not arrived:
                     self._look_leg[u.id] = leg
                     return moves
-            leg += 1                                 # there (or as near as it gets), nobody: the next stop
+            if stops[leg] not in self.unreachable:
+                self._look_saw.add(u.id)             # stood there (or as near as it gets)
+            leg += 1                                 # nobody: the next stop
         return self._looked(view, u)
 
     def _looked(self, view: View, u) -> None:
+        """Done: it counts (``army_looked_at``) only if the scout stood at a
+        stop or saw their army — not when every stop was down a choke."""
         self._look_leg.pop(u.id, None)
-        self.base_seen_at = self.army_looked_at = view.game_seconds
+        if u.id in self._look_saw:
+            self.base_seen_at = self.army_looked_at = view.game_seconds
+        self._look_saw.discard(u.id)
         return None
 
     def base_front(self, view: View) -> tuple[int, int] | None:
