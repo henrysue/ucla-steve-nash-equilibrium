@@ -109,6 +109,9 @@ class Archetype:
         return None
 
 
+COUNTER_ODDS = 2.0   # the turtle and the macro counter-attack at this edge (the rules' call)
+
+
 class _Pusher(Archetype):
     """Masses at home until ``_ready``, then pushes until the army falls
     below ``regroup`` of its launch value. A defend/retreat call stands."""
@@ -129,7 +132,12 @@ class _Pusher(Archetype):
                 return Mode.ALL_IN
             self._launch_value = None
             return Mode.BUILD
-        if self._ready(view):
+        # It punishes a blunder: when the rules see a 2x edge (our army just
+        # thrown away), it counter-attacks — a real opponent would (b9145367:
+        # our blind attack left 300 at 5:20 and the turtle sat at home).
+        from .brain import army_odds
+
+        if self._ready(view) or (policy is Mode.ALL_IN and army_odds(view) >= COUNTER_ODDS):
             self._launch_value = view.army_value
             return Mode.ALL_IN
         return Mode.BUILD

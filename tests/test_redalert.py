@@ -287,7 +287,9 @@ def test_live_shape_army_attacks_once_it_is_real():
                           seat_position=0, game_config=LIVE_CONFIG)
     dec = agent.choose_action(state, ctx)
     assert agent._mode is Mode.ALL_IN
-    assert {"cmd": "attack_move", "units": [30, 31, 32, 33, 34], "to": [40, 40]} in dec.action["orders"]
+    march = [o for o in dec.action["orders"] if o.get("units") == [30, 31, 32, 33, 34]]
+    assert march and march[-1]["to"] == [40, 40]                                 # along the road in legs, to the target
+    assert all(o.get("queued") for o in march[1:])
 
 
 def test_a_token_force_does_not_all_in_into_the_fog():
@@ -754,7 +756,8 @@ def test_raid_targets_a_known_expansion_refinery_but_never_their_main():
     v = _view(_t=200.0, buildings=BASE, units=_raid_army(),
               visible_enemy_buildings=[{"id": 80, "type": "proc", "x": 14, "y": 40, "hp": 100}])
     r.update(v, Mode.BUILD, None)
-    assert r.orders(v) == [{"cmd": "attack_move", "units": [100, 101, 102, 103], "to": [14, 40]}]
+    o = r.orders(v)                                                           # along the road in legs, to it
+    assert o[-1]["to"] == [14, 40] and all(x["units"] == [100, 101, 102, 103] for x in o)
     main = Raid()
     mv = _view(_t=200.0, buildings=BASE, units=_raid_army(),
                visible_enemy_buildings=[{"id": 80, "type": "proc", "x": 38, "y": 38, "hp": 100}])
@@ -1018,7 +1021,7 @@ def test_advice_drives_the_raid_and_turret_side_while_the_rules_form_the_concave
     far = dataclasses.replace(adv, raid_target_cell=(14, 41))
     rv = _view(_t=200.0, buildings=BASE, units=_raid_army(), visible_enemy_buildings=[_EXP_PROC])
     r.update(rv, Mode.BUILD, None, far)
-    assert r.orders(rv)[0]["to"] == [14, 41]           # at a remote expansion: the advisor's pick
+    assert r.orders(rv)[-1]["to"] == [14, 41]          # at a remote expansion: the advisor's pick
     # defense_at picks the side of the turret line (within 30 deg of the enemy to the south-east);
     # the rules pick a legal cell on it
     pv = _view(base_center=[10, 10], buildings=[{"id": 10, "type": "fact", "x": 10, "y": 10}], production=[{"item": "pbox", "queue": "Defense", "ready": True}])
@@ -1566,7 +1569,7 @@ def test_raid_hits_a_lightly_defended_enemy_expansion():
     r = Raid()
     v = _view(_t=300.0, buildings=BASE, units=_raid_army(), visible_enemy_buildings=blds)
     r.update(v, Mode.BUILD, None)
-    assert r.orders(v)[0] == {"cmd": "attack_move", "units": r.unit_ids, "to": [42, 13]}
+    assert r.orders(v)[-1]["to"] == [42, 13] and r.orders(v)[0]["units"] == r.unit_ids
 
 
 def test_a_defended_enemy_expansion_is_left_to_the_main_army():
@@ -1997,7 +2000,8 @@ def test_barracks_multiply_after_the_service_depot():
     assert buildplan.barracks_target(_view(_t=340.0, buildings=base + [{"id": 16, "type": "fix"}])) == C.MAX_BARRACKS
 
 
-def test_refineries_keep_coming_over_time():
+def test_refineries_keep_coming_over_time(monkeypatch):
+    monkeypatch.setattr(buildplan, "refinery_room", lambda view, depleted=frozenset(): True)   # (no map here)
     eco = {"cash": 1500, "power_provided": 400, "power_drained": 100}          # short of a second war factory
     built = _ECON_BASE + [{"id": 15, "type": "powr"}, {"id": 16, "type": "fix"}, {"id": 17, "type": "proc"},
                           {"id": 18, "type": "proc"}] + [{"id": 20 + i, "type": "tent"} for i in range(4)]
@@ -2467,10 +2471,11 @@ def test_no_flanking_before_ten_minutes_unless_decisively_ahead():
     their_base = [{"id": 80, "type": "proc", "x": 40, "y": 40, "hp": 100}]
     at = lambda t, **kw: _view(_t=t, _r=1200.0 - t, visible_enemies=center_threat,  # noqa: E731
                                visible_enemy_buildings=their_base, **kw)
-    assert agent._pick_route(at(400.0), None) == []                        # engaged early, hold the middle
-    assert agent._pick_route(at(620.0), None)                              # guarded middle: flank later
+    straight = agent._pick_route(at(400.0), None)                          # engaged early, hold the middle:
+    assert straight == agent._pick_route(at(400.0), None, flank=False)     # the road itself, no flank point
+    assert agent._pick_route(at(620.0), None) != straight                  # guarded middle: flank later
     ahead = at(400.0, military={"kills_cost": 9000, "deaths_cost": 2000})
-    assert agent._pick_route(ahead, None)                                  # decisively ahead: flank now
+    assert agent._pick_route(ahead, None) != straight                      # decisively ahead: flank now
 
 
 def test_an_early_push_is_spotted_and_we_hold_at_home():
@@ -3131,7 +3136,9 @@ def test_the_turtler_builds_a_turret_ring_and_pushes_only_late():
     assert t.defense(v, under_attack=False) == [{"cmd": "build", "item": "pbox"}]   # 4 turrets wanted by 5:30
     ring = blds + [{"id": 60 + i, "type": "pbox", "x": 14 + i, "y": 14} for i in range(4)]
     assert t.defense(dataclasses.replace(v, buildings=read(_raw(buildings=ring)).buildings), False) is None
-    assert t.mode(v, None, Mode.ALL_IN) is Mode.BUILD                          # 4.5x their army at 6:40: still home
+    assert t.mode(v, None, Mode.BUILD) is Mode.BUILD                           # 6:40, the rules hold: still home
+    assert t.mode(v, None, Mode.ALL_IN) is Mode.ALL_IN                         # 4.5x and the rules attack: it punishes
+    t = sparring.Turtler()
     assert t.mode(v, None, Mode.DEFEND_BASE) is Mode.DEFEND_BASE               # it defends the usual way
     late = dataclasses.replace(v, game_seconds=910.0)
     assert t.mode(late, None, Mode.BUILD) is Mode.ALL_IN                       # 15:00 with an edge: out
@@ -3393,9 +3400,9 @@ def test_the_reserve_covers_what_is_owed_and_the_next_step():
 
 
 def test_the_army_attacks_in_a_semi_concave_of_groups():
-    units = [{"id": 30 + i, "type": "e1", "x": 20 + (i % 4), "y": 20 + i // 4, "hp": 100} for i in range(9)]
+    units = [{"id": 30 + i, "type": "e1", "x": 30 + (i % 4), "y": 30 + i // 4, "hp": 100} for i in range(9)]
     v = _view(_t=400.0, buildings=BASE, units=units, visible_enemy_buildings=[{"id": 90, "type": "fact", "x": 40, "y": 40, "hp": 100}])
-    o = executor._army_orders(v, Mode.ALL_IN)
+    o = executor._army_orders(v, Mode.ALL_IN)                                   # near the target: it spreads
     assert len(o) == 3 and all(x["cmd"] == "attack_move" for x in o)
     spots = [tuple(x["to"]) for x in o]
     assert len(set(spots)) == 3 and sorted(len(x["units"]) for x in o) == [3, 3, 3]
@@ -3572,7 +3579,7 @@ def test_while_hunting_each_free_scout_sweeps_its_own_search_point():
     corps._route = {"right": [(40, 40)]}
     scouts = [{"id": 30 + i, "type": "e1", "x": 10 + 10 * i, "y": 10, "hp": 100, "idle": True} for i in range(3)]
     o = corps.orders(_view(_t=900.0, units=scouts), search=[(12, 30), (35, 12), (40, 40)])
-    sweeps = {x["units"][0]: tuple(x["to"]) for x in o if x["units"][0] in (30, 32)}
+    sweeps = {u: corps._legs[u][0] for u in (30, 32)}                        # where each is walking (in legs)
     assert sweeps == {30: (12, 30), 32: (35, 12)}                            # nearest, one each
     assert any(x["units"] == [31] for x in o) and corps._legs[31][0] == (40, 40)   # the circling scout keeps its route
 
@@ -3881,11 +3888,12 @@ def test_against_a_macro_enemy_the_raid_party_is_bigger_and_flanks():
     r.update(v, Mode.BUILD, None, macro)
     assert len(r.unit_ids) == C.RAID_SQUAD_SIZE_MACRO
     o = r.orders(v)
-    assert len(o) == 2 and o[1].get("queued") and o[1]["to"] == [14, 41]     # round the side, then in
+    assert o[-1].get("queued") and o[-1]["to"] == [14, 41]                    # round the side, then in
+    assert r._via is not None and list(r._via) in [x["to"] for x in o]
     plain = Raid()
     plain.update(v, Mode.BUILD, None, types.SimpleNamespace(enemy_style="standard", raid_target_id=None,
                                                              raid_target_cell=(14, 41)))
-    assert len(plain.unit_ids) == C.RAID_SQUAD_SIZE and len(plain.orders(v)) == 1
+    assert len(plain.unit_ids) == C.RAID_SQUAD_SIZE and plain._via is None and plain.orders(v)[-1]["to"] == [14, 41]
 
 
 def test_the_advice_schema_uses_only_keywords_claude_structured_outputs_accept():
@@ -4293,7 +4301,7 @@ def test_a_roaming_picket_checks_remote_fields_and_the_raid_goes_there_first():
     o = corps.orders(roamer)
     from agent.redalert.scouting import field_points
     watch = [p for s in sites for p in field_points(v, s)]
-    assert o and tuple(o[0]["to"]) in watch                                   # off round a remote field, not its post
+    assert o and corps._legs[30][0] in watch                                  # off round a remote field, not its post
     from agent.redalert import raid as ra_raid
     assert ra_raid._target(v, []) is None                                      # unscouted fields: the scouts' job, no raid
 
@@ -4600,7 +4608,10 @@ def test_extra_raid_squads_spread_over_different_targets():
     assert a != b and (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 > C.RAID_SPREAD_CELLS ** 2
     assert len(corps.unit_ids) <= 4 + int(C.RAID_MAX_ARMY_SHARE * 30)        # the main army keeps most
     o = corps.orders(v)
-    assert {tuple(x["to"]) for x in o} == {tuple(a), tuple(b)}
+    ends = {}
+    for x in o:
+        ends[tuple(x["units"])] = tuple(x["to"])                                # each squad's chain ends at its target
+    assert set(ends.values()) == {tuple(a), tuple(b)}
     corps.update(_healthy_view(570.0, ore=_SIDE_ORE,
                                enemies=[{"id": 900 + i, "type": "3tnk", "x": 30, "y": 30, "hp": 100} for i in range(40)]),
                  Mode.BUILD, scout_id=None)
@@ -4664,7 +4675,7 @@ def test_a_blind_attack_call_waits_for_a_look_at_their_army(monkeypatch):
     c.mode = Mode.BUILD
     assert c.decide(v(600.0)) is Mode.BUILD and c.wants_look                  # a scout looks first
     assert c.decide(v(606.0)) is Mode.BUILD and c.wants_look                  # still blind: still waiting
-    assert c.decide(v(641.0)) is Mode.ALL_IN and not c.wants_look             # no look in 40 s: go anyway
+    assert c.decide(v(700.0)) is Mode.BUILD and c.wants_look                  # no look, no attack (b9145367)
     looked = Commander()
     looked.mode = Mode.BUILD
     seen = lambda t: dataclasses.replace(v(t), enemy_base_scouted=True)      # noqa: E731
@@ -4936,8 +4947,8 @@ def test_lane_scouts_take_turns_looking_at_the_enemy_exit():
     units = [{"id": 30, "type": "e1", "x": 14, "y": 30, "hp": 100, "idle": True},
              {"id": 31, "type": "e1", "x": 30, "y": 14, "hp": 100, "idle": True}]
     v = _view(_t=400.0, buildings=BASE, units=units)
-    o = corps.orders(v)
-    peeks = {tuple(x["to"]) for x in o}
+    corps.orders(v)
+    peeks = {corps._legs[u][0] for u in (30, 31) if u in corps._legs}         # where each is walking
     assert tuple(corps.peek_point(v, "left")) in peeks or tuple(corps.peek_point(v, "right")) in peeks
     left, right = corps.peek_point(v, "left"), corps.peek_point(v, "right")
     centre = scout.enemy_staging(v)
@@ -5742,3 +5753,21 @@ def test_against_a_passive_enemy_the_advisors_more_army_keeps_the_economy_going(
     executor.plan(v, Mode.BUILD, advice=more)
     executor.plan(dataclasses.replace(v, enemy_passive=True), Mode.BUILD, advice=more)
     assert seen == [True, False]
+
+
+def test_during_an_attack_the_advisors_first_target_stays_while_it_stands():
+    """b9145367: the advisor named a new army target every 6 s and half the
+    army was re-aimed mid-march."""
+    import types
+    agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
+    agent._mode = Mode.ALL_IN
+    blds = [{"id": 90, "type": "fact", "x": 31, "y": 16, "hp": 100}, {"id": 91, "type": "proc", "x": 42, "y": 44, "hp": 100}]
+    v = _view(_t=470.0, visible_enemy_buildings=blds)
+    base_advice = ra_advisor.parse_advice(_ANSWER, _view(), 0.0)
+    pick = lambda cell: dataclasses.replace(base_advice, army_target=cell)  # noqa: E731
+    assert agent._army_advice(pick((31, 16)), False, v).army_target == (31, 16)
+    assert agent._army_advice(pick((42, 44)), False, v).army_target == (31, 16)  # kept: it still stands
+    gone = _view(_t=480.0, visible_enemy_buildings=blds[1:])
+    assert agent._army_advice(pick((42, 44)), False, gone).army_target == (42, 44)  # razed: the new one
+    agent._mode = Mode.BUILD
+    assert agent._army_advice(pick((31, 16)), False, v).army_target == (31, 16) and agent._latched_target is None

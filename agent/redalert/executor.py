@@ -972,6 +972,11 @@ def _attack_points(view: View, units: list[int], target) -> list[tuple[int, int]
     if not cells:
         return [tuple(target)]
     cx, cy = sum(c[0] for c in cells) / len(cells), sum(c[1] for c in cells) / len(cells)
+    # Far off, the army goes as one to the target (the route's legs bring
+    # it); it spreads only near it (b9145367: groups aimed across a target on
+    # Trapped walked round opposite sides of the rocks).
+    if (target[0] - cx) ** 2 + (target[1] - cy) ** 2 > C.ATTACK_SPREAD_NEAR_CELLS ** 2:
+        return [tuple(target)]
     dx, dy = target[0] - cx, target[1] - cy
     length = (dx * dx + dy * dy) ** 0.5 or 1.0
     px, py = -dy / length, dx / length
@@ -984,6 +989,17 @@ def _attack_points(view: View, units: list[int], target) -> list[tuple[int, int]
             bx, by, bw, bh = view.bounds
             x, y = min(max(x, bx), bx + bw - 1), min(max(y, by), by + bh - 1)
         out.append((x, y))
+    # Each group's point must be walkable without a detour from where the
+    # army stands, else the army goes as one.
+    from .terrain import walk_path
+
+    start = min(cells, key=lambda c: (c[0] - cx) ** 2 + (c[1] - cy) ** 2)
+    for p in out:
+        if p in view.blocked_cells:
+            return [tuple(target)]
+        path = walk_path(view, start, p)
+        if not path or len(path) > C.ATTACK_POINT_MAX_DETOUR * dist2(start, p) ** 0.5 + 4:
+            return [tuple(target)]
     return out
 
 

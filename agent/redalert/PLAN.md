@@ -78,7 +78,10 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
   barracks only after those. Under a rush read everything goes into units —
   except a lost war factory's rebuild and the harvesters in production.
 - **Harvesters**: refineries + 2, at most 3 per refinery. **Refineries** by
-  game time, spread over the fields by load (at most 3 per field).
+  game time, spread over the fields by load (at most 3 per field), each
+  beside the first field with room whose trucks walk to its ore in 6 steps;
+  with none such (the base boxed in round its fields), no refinery now
+  (d2d8dc27 on Shadowfiend paid 2000 for one 10 steps from its ore).
 - **Expansions**: to the natural after the depot (from ~3:45), then every 2
   minutes or sooner when the ore forecast runs dry; up to 3; none after 14:00.
   Against a passive enemy (below): from 3:00 and every minute, whatever our
@@ -188,8 +191,10 @@ behind/outgunned. The blind check reads only what was actually seen.
    - **Look first**: knowing little of them (under half our army seen lately,
      and no fresh look where their army masses — the mouth of the choke on
      their side; a lap round their base doesn't count), a scout looks first
-     (up to 40 s); on even trades, a second look 4 s later (cb4bfc36 attacked
-     on a lap and met the riflemen massed at their exit).
+     — and without a look there is no attack (only behind at the end does it
+     go without: b9145367's blind attack at 4:41 left 300 of 3100); on even
+     trades, a second look 4 s later (cb4bfc36 attacked on a lap and met the
+     riflemen massed at their exit).
    - **Never**: before 3:00 and a war factory, a new attack while the MCV
      travels, within 60 s of a retreat, into a turtle without 3 siege units
      (unless the odds are 2.5+).
@@ -238,13 +243,19 @@ An attack goes on until the retreat rule ends it. No mass/attack flip within
     every view until the whole concave stood at the back of the base).
   - **Expansions**: the outpost (2 infantry, the engine's guard order), one
     turret and the idle units nearby. The army never walks out to one.
-- **Attack**: three groups in a semi-concave across the target; stragglers
-  wait to go 6 together; no flank before 10:00 unless far ahead. The route
-  goes round the chokes on the road between the bases (`terrain.choke_zone`:
-  passages 7 or narrower, padded 4 cells, not the bases' own exits) when the
-  way round is at most 1.6x as long, as queued attack-move waypoints 10 steps
-  apart so the units can't path back through (82bdca3e's first attack went
-  through Trapped's gap into their concave).
+- **Attack**: the army marches as one on one road — the walking road (or
+  the way round the chokes on the road between the bases, `terrain.choke_zone`:
+  passages 7 or narrower, padded 4 cells, not the bases' own exits, when at
+  most 1.6x as long) as queued attack-move waypoints 10 steps apart, so no
+  unit takes a road of its own round a rock (82bdca3e went through Trapped's
+  gap into their concave; b9145367 split round Trapped's rocks when half the
+  army was re-aimed mid-march). A new route from where it stands when the
+  target moves 12+ cells or the route runs out short of it (at most every
+  15 s); the advisor's target stays for the attack while anything of theirs
+  stands by it. Only within 15 cells of the target does it spread into three
+  groups in a semi-concave, and only to points it walks to without a detour.
+  Stragglers wait to go 6 together; no flank before 10:00 unless far ahead.
+  Scouts and raid squads walk in legs too.
 - **Raids**: only at their remote expansions — a yard or refinery of theirs
   25+ cells from their main base (not its edge) — that our scouts found; more squads the
   longer a healthy game goes (at most 35% of the fighters); they kill
@@ -382,7 +393,8 @@ logged placements)
     each later one once the army is 1.4x the last launch (2.5-5 min after regrouping), pushing until
     down to 40% of its launch value.
   - `RA_SPARRING=turtler`: our build plus a growing turret ring (2 at 2:30 up to 8 by 12:00), army at
-    home, no raids; attacks only from 15:00 with a 1.3 edge, or with an 18000 army.
+    home, no raids; attacks only from 15:00 with a 1.3 edge, or with an 18000 army — or at once when the
+    rules see a 2x edge (it punishes a blunder; the macro too).
   - `RA_SPARRING=macro`: refineries early (2 at 0:45, 3 at 2:30 ... 6 at 7:00), first expansion as early
     as allowed, a token army (1500) until 5:30, no raids; one big push at 12000 (or 13:00 with 1.15).
   - Every archetype still defends the usual way. `RA_SPARRING_SEAT` picks the seat (default 1); the old

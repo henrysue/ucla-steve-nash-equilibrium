@@ -179,7 +179,11 @@ class Commander:
             if self.confirm_at is None:
                 self.confirm_at = view.game_seconds
             waited = view.game_seconds - self.confirm_at
-            if waited < C.CONFIRM_SECONDS or (blind and waited < C.CONFIRM_BLIND_MAX_SECONDS):
+            # Blind, it waits for a look however long it takes (only behind at
+            # the end does it go without): the 40 s expiry sent blind attacks
+            # that lost the army (b9145367 at 4:41: 3100 into "seen 0", 300
+            # left; 5a4bc83f at 7:06: 7350 lost).
+            if waited < C.CONFIRM_SECONDS or (blind and not brain._catching_up(view)):
                 self.wants_look = blind
                 return prev
         elif mode is not Mode.ALL_IN:

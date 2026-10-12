@@ -281,7 +281,7 @@ class ScoutCorps:
         own pathing can't cut back through them, each an attack-move: the
         next leg when it reaches one (or stands idle short of it).
         ``arrived``: on the last leg and there, or idle as near as it gets."""
-        from .terrain import legs, route_around
+        from .terrain import legs, route_around, walk_path
 
         dest = tuple(dest)
         plan = self._legs.get(u.id)
@@ -298,6 +298,8 @@ class ScoutCorps:
                     self.unreachable.add(dest)
                     self._legs.pop(u.id, None)
                     return [], True
+            if path is None:                         # the straight road is clear: still walked in legs,
+                path = walk_path(view, tuple(u.cell), dest) or None   # so it is the road we checked
             plan = (dest, legs(path, C.SCOUT_LEG_CELLS) if path else [dest])
             self._legs[u.id] = plan
         points = plan[1]

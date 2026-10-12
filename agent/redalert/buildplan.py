@@ -145,7 +145,7 @@ def next_build_orders(view: View, expansion_ore: tuple[int, int] | None = None,
         # Only where a field has room for one more (MAX_REFINERIES_PER_FIELD);
         # far ore doesn't rule it out when we're ahead: the base crawls toward it.
         if proc and view.queued_count(proc) == 0 and (
-                open_ore(view, depleted) is not None
+                refinery_room(view, depleted)
                 or (_ahead(view, money) and open_ore(view, depleted, radius=None) is not None)):
             return [orders.build(proc)]
 
@@ -343,9 +343,7 @@ def placement_orders(
             elif item == C.REFINERY:
                 # Beside a field with room (not a mined-out or full one), else
                 # grow the base toward the nearest such field.
-                live = open_ore(view, depleted)
-                at = _beside_ore(view, live, item) if live is not None else \
-                    _crawl_toward(view, open_ore(view, depleted, radius=None), item)
+                at = refinery_spot(view, depleted)
             elif item in C.TURRETS and expansion_defense is not None:
                 # The expansion's turret: watching a choke in range, else on its enemy-facing edge.
                 at = (_watch_spot(view, item, expansion_defense, near=expansion_defense)
@@ -448,7 +446,7 @@ def placement_cell(view: View, item: str, defense_at: tuple[int, int] | None = N
         live = open_ore(view)
         if live is None:   # no field with room in reach: grow the base toward the nearest one
             return _crawl_toward(view, open_ore(view, radius=None), item)
-        return _beside_ore(view, live, item) or grow_spot(view, _unit(base, live), item)
+        return refinery_spot(view) or grow_spot(view, _unit(base, live), item)
     enemy = _unit(base, enemy_spawn_guess(view))
     if enemy is None:
         return None
@@ -792,13 +790,14 @@ def grow_spot(view: View, bearing, item: str, near=None, skip_types=(), side_wei
     return _pick(view, item, front or spots, score, slack)
 
 
-def _beside_ore(view: View, ore, item: str, near=None) -> tuple[int, int] | None:
+def _beside_ore(view: View, ore, item: str, near=None, walkable_only: bool = False) -> tuple[int, int] | None:
     """A legal refinery spot (:func:`legal_spots`) nearest ``ore`` whose
     trucks can WALK to that field's ore in ``REFINERY_ORE_WALK_STEPS`` — not
     across a cliff; with no walkable spot, the nearest spot anyway (better a
     refinery than none). ``near``: only beside one expansion's buildings (a
     spot beside the main base put the expansion's refinery at home — match
-    0561274e)."""
+    0561274e). ``walkable_only``: None rather than a spot the trucks can't
+    walk from."""
     from .terrain import field_cells, steps_from_rect, walk_distances
 
     if ore is None:
@@ -823,7 +822,46 @@ def _beside_ore(view: View, ore, item: str, near=None) -> tuple[int, int] | None
         walkable = steps is not None and steps <= C.REFINERY_ORE_WALK_STEPS
         return (not walkable, spread_risk(spot), dist2((spot[0] + (nw - 1) / 2, spot[1] + (nh - 1) / 2), ore))
 
-    return _pick(view, item, spots, score)
+    spot = _pick(view, item, spots, score)
+    if walkable_only and spot is not None and score(spot)[0]:
+        return None
+    return spot
+
+
+_ROOM: dict = {}
+
+
+def refinery_room(view: View, depleted: frozenset = frozenset()) -> bool:
+    """A field with room in reach has a legal spot its trucks walk from
+    (:func:`refinery_spot`'s first choice): else no refinery now — one 10
+    steps from its ore (d2d8dc27 on Shadowfiend, the base round the home
+    field full) costs 2000 and saves the trucks nothing. Cached for 5 s per
+    building count (the spot search is not cheap)."""
+    depleted = depleted or frozenset()
+    key = (round(view.game_seconds / 5), len(view.buildings), len(depleted), id(view.blocked_cells))
+    hit = _ROOM.get("key")
+    if hit == key:
+        return _ROOM["room"]
+    room = any(_beside_ore(view, ore, C.REFINERY, walkable_only=True) is not None for ore in open_ores(view, depleted))
+    _ROOM.update(key=key, room=room)
+    return room
+
+
+def refinery_spot(view: View, depleted: frozenset = frozenset()) -> tuple[int, int] | None:
+    """The next refinery's spot: beside the first field with room (best
+    first, :func:`open_ores`) whose trucks walk to the ore in
+    ``REFINERY_ORE_WALK_STEPS``; only when none has one, the old way —
+    beside the best field anyway, or the base grown toward the nearest field
+    (d2d8dc27 on Shadowfiend: the home field had room but the base round it
+    was full, and a refinery went up 10 steps from it)."""
+    fields = open_ores(view, depleted)
+    for ore in fields:
+        spot = _beside_ore(view, ore, C.REFINERY, walkable_only=True)
+        if spot is not None:
+            return spot
+    if fields:
+        return _beside_ore(view, fields[0], C.REFINERY)
+    return _crawl_toward(view, open_ore(view, depleted, radius=None), C.REFINERY)
 
 
 def scout_watch(view: View, base) -> tuple[int, int] | None:
@@ -976,6 +1014,13 @@ def sell_for_income(view: View) -> dict | None:
 
 def open_ore(view: View, depleted: frozenset = frozenset(),
              radius: float | None = C.REFINERY_ORE_SEARCH_CELLS) -> tuple[int, int] | None:
+    """The best of :func:`open_ores`, or None."""
+    fields = open_ores(view, depleted, radius)
+    return fields[0] if fields else None
+
+
+def open_ores(view: View, depleted: frozenset = frozenset(),
+              radius: float | None = C.REFINERY_ORE_SEARCH_CELLS) -> list[tuple[int, int]]:
     """Where the next refinery goes: the ore cell, nearest our yards, of the
     field with the most room — fewest refineries for its size — among fields
     within ``radius`` of a yard (None: any distance) that are not mined out.
@@ -985,14 +1030,14 @@ def open_ore(view: View, depleted: frozenset = frozenset(),
     load, not distance: the nearest field used to take every refinery (match
     a2952a6d: three around a 37-cell field 8 cells out, none at the 47-cell
     field 11 cells out, while the trucks drove there; b7fcbd4e: five on one
-    field)."""
+    field). Every field with room, best first."""
     from .expand import _ore_components
     from .harvest import refinery_fields
     from .scout import our_yards
 
     yards = our_yards(view)
     if not yards or not view.ore_cells:
-        return None
+        return []
     comps = _ore_components(view)
     owner = {c: i for i, comp in enumerate(comps) for c in comp}
     load = [0] * len(comps)
@@ -1001,7 +1046,7 @@ def open_ore(view: View, depleted: frozenset = frozenset(),
             load[owner[key]] += n
     field2 = (C.EXPAND_CLUSTER_CELLS * 1.5) ** 2
     r2 = radius * radius if radius is not None else None
-    best = None
+    ranked = []
     for i, comp in enumerate(comps):
         cap = max(1, min(C.MAX_REFINERIES_PER_FIELD, len(comp) // C.ORE_CELLS_PER_REFINERY))
         if load[i] >= cap:
@@ -1012,10 +1057,8 @@ def open_ore(view: View, depleted: frozenset = frozenset(),
         d, cell = min((min(dist2(c, y) for y in yards), c) for c in live)
         if r2 is not None and d > r2:
             continue
-        rank = (load[i] / cap, d)
-        if best is None or rank < best[0]:
-            best = (rank, cell)
-    return best[1] if best else None
+        ranked.append(((load[i] / cap, d), cell))
+    return [cell for _, cell in sorted(ranked)]
 
 
 def _crawl_toward(view: View, target, item: str) -> tuple[int, int] | None:

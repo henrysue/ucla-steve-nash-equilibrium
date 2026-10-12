@@ -110,6 +110,9 @@ class RedAlertAgent:
         self._game_seconds: float | None = None
         # The current attack's waypoints: round the chokes, through a flank point (_pick_route).
         self._flank_via: list = []
+        self._route_target: tuple | None = None          # the target the current route leads to...
+        self._route_at = float("-inf")                    # ...planned then
+        self._latched_target: tuple | None = None         # the advisor's army target this attack keeps (_army_advice)
         # The model advisor (None: rules only). Built after the match log so
         # each piece of advice is logged as it arrives.
         self._advisor = advisor_factory(self._log, on_advice=self._on_advice) if advisor_factory else None
@@ -213,8 +216,9 @@ class RedAlertAgent:
             self._mode_changes = (self._mode_changes + [
                 {"t": round(view.game_seconds), "to": str(self._mode)}])[-C.ADVISOR_MEMORY_READS - 2:]
             self._track_attack(view, advice)
-            self._flank_via = self._pick_route(view, advice) if self._mode is Mode.ALL_IN else []
-        self._update_flank(view)
+            self._flank_via = (self._pick_route(view, self._army_advice(advice, hunting, view))
+                               if self._mode is Mode.ALL_IN else [])
+        self._update_flank(view, self._army_advice(advice, hunting, view))
         if spar is None or spar.expands:   # sparring: the rusher never expands
             # Expand again once the worked fields are forecast to run dry (not
             # only once harvesters idle on an empty one).
@@ -284,7 +288,7 @@ class RedAlertAgent:
                       *self._patrol.unit_ids],
             raid_orders=(self._raid_orders(view)
                          + self._garrison_orders(view) + micro_orders),
-            advice=self._army_advice(advice, hunting, view),
+            advice=self._army_advice(advice, hunting, view),   # (the latched target: idempotent)
             flank_via=self._flank_via, expansion=self._expansion,
             hunt=hunt[0] if hunt else None, hunt_points=hunt,
             harvest_orders=self._harvest.orders(view),
@@ -481,7 +485,7 @@ class RedAlertAgent:
         """The expansion that takes over building once home is mined out (or None)."""
         return self._expansion.active_base(view, self._harvest.home_depleted(view), self._harvest.depleted())
 
-    def _pick_route(self, view, advice) -> list:
+    def _pick_route(self, view, advice, flank: bool = True) -> list:
         """The waypoints of a new attack ([]: straight at the target): round
         the chokes on the road between the bases (terrain.choke_zone) when
         the way round is at most ``DETOUR_MAX_RATIO`` as long — never into a
@@ -491,43 +495,63 @@ class RedAlertAgent:
         the side with the fewest known enemies, rotating on ties."""
         from . import terrain
 
-        target = getattr(advice, "army_target", None) or executor._attack_target(view)
+        target = executor._advised_target(view, advice) or executor._attack_target(view)
         army = [u.cell for u in view.combat_units if u.cell is not None and u.id not in self._patrol.unit_ids]
         if target is None or not (army or view.base_center):
             return []
+        self._route_target, self._route_at = tuple(target), view.game_seconds
         via = None
-        if (not self._raid.distracting(view) and (view.game_seconds >= C.FLANK_AFTER_SECONDS
-                                                  or brain._dominant(view) or brain.beaten(view))):
+        if flank and (not self._raid.distracting(view) and (view.game_seconds >= C.FLANK_AFTER_SECONDS
+                                                             or brain._dominant(view) or brain.beaten(view))):
             route = getattr(advice, "attack_route", "auto")
             if route in ("left", "right"):
                 via = executor.flank_waypoint(view, target, -1 if route == "left" else 1)
             elif route != "center":
                 via = executor.choose_flank(view, target, self._attacks)[1]
-        here = ((round(sum(c[0] for c in army) / len(army)), round(sum(c[1] for c in army) / len(army)))
-                if army else tuple(view.base_center))
+        here = _army_cell(army) if army else tuple(view.base_center)
         avoid = terrain.choke_zone(view)
         points: list = []
         for goal in ([tuple(via)] if via else []) + [tuple(target)]:
-            path = terrain.route_around(view, here, goal, avoid, C.DETOUR_MAX_RATIO)
+            # Round the chokes when that isn't much longer; else the walking
+            # road itself — always in legs, so the whole army takes one road
+            # and none of it paths round the other side of a rock (b9145367:
+            # half the army re-aimed mid-march went its own way on Trapped).
+            path = (terrain.route_around(view, here, goal, avoid, C.DETOUR_MAX_RATIO)
+                    or terrain.walk_path(view, here, goal))
             points += terrain.legs(path, C.ARMY_LEG_CELLS) if path else [goal]
             here = goal
         return points[:-1]                         # the target is the attack's own last leg
 
-    def _update_flank(self, view) -> None:
-        """Drop each waypoint of the attack's route as the army reaches it;
-        all of them after ``FLANK_MAX_SECONDS`` (straight at the target)."""
-        if not self._flank_via:
+    def _update_flank(self, view, advice=None) -> None:
+        """Drop each waypoint of the attack's route as the army reaches it.
+        A new route from where the army stands (at most every
+        ``ROUTE_REPLAN_SECONDS``) when the target moves ``ROUTE_RETARGET_CELLS``,
+        when the route has run out short of it, or after
+        ``FLANK_MAX_SECONDS`` on one route: never straight across the map,
+        each unit on its own road (b9145367 split on Trapped that way)."""
+        if self._mode is not Mode.ALL_IN:
             return
-        if view.game_seconds - self._mode_since > C.FLANK_MAX_SECONDS:
-            self._flank_via = []
+        army = [u.cell for u in view.combat_units if u.cell is not None
+                and u.id not in {*self._patrol.unit_ids, *self._raid.unit_ids, *self._garrison.unit_ids}]
+        if not army:
             return
-        army = [u.cell for u in view.combat_units if u.cell is not None and u.id not in self._patrol.unit_ids]
-        if army:
-            cx = sum(c[0] for c in army) / len(army)
-            cy = sum(c[1] for c in army) / len(army)
+        cx = sum(c[0] for c in army) / len(army)
+        cy = sum(c[1] for c in army) / len(army)
+        if self._flank_via:
             nxt = self._flank_via[0]
             if (cx - nxt[0]) ** 2 + (cy - nxt[1]) ** 2 <= C.FLANK_ARRIVED_CELLS ** 2:
                 self._flank_via = self._flank_via[1:]
+        t = view.game_seconds
+        if t - self._route_at < C.ROUTE_REPLAN_SECONDS:
+            return
+        target = executor._advised_target(view, advice) or executor._attack_target(view)
+        if target is None:
+            return
+        moved = self._route_target is None or dist2(target, self._route_target) > C.ROUTE_RETARGET_CELLS ** 2
+        short = not self._flank_via and (cx - target[0]) ** 2 + (cy - target[1]) ** 2 > (1.5 * C.ARMY_LEG_CELLS) ** 2
+        stale = bool(self._flank_via) and t - self._route_at > C.FLANK_MAX_SECONDS
+        if moved or short or stale:
+            self._flank_via = self._pick_route(view, advice, flank=False)
 
     def _on_advice(self, advice, latency_s: float) -> None:
         """Each answer goes to the match log; the console gets a line only
@@ -715,12 +739,23 @@ class RedAlertAgent:
     def _army_advice(self, advice, hunting: bool, view):
         """The advice the army follows: without its army target while we
         finish a razed enemy (the rules walk onto each remembered building,
-        which clears stale ones) or after a stall."""
+        which clears stale ones) or after a stall. During an attack its first
+        target stays while anything of theirs stands by it (b9145367: a new
+        target every 6 s re-aimed half the army mid-march)."""
+        import dataclasses
+
+        if self._mode is not Mode.ALL_IN:
+            self._latched_target = None
         if advice is None or getattr(advice, "army_target", None) is None:
             return advice
         if hunting or view.game_seconds < self._ignore_advice_until:
-            import dataclasses
             return dataclasses.replace(advice, army_target=None)
+        if self._mode is Mode.ALL_IN:
+            kept = self._latched_target
+            if kept is not None and executor._advised_target(view, dataclasses.replace(advice, army_target=kept)):
+                return dataclasses.replace(advice, army_target=kept)
+            if executor._advised_target(view, advice) is not None:
+                self._latched_target = tuple(advice.army_target)
         return advice
 
     def _models_switch(self, context) -> None:
@@ -965,6 +1000,14 @@ def _order_key(order: dict) -> str:
     if isinstance(body.get("units"), list):
         body["units"] = sorted(body["units"], key=str)
     return json.dumps(body, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _army_cell(cells) -> tuple[int, int]:
+    """Where the army stands: the cell of the unit nearest its centroid (the
+    centroid itself may be rock between two groups)."""
+    cx = sum(c[0] for c in cells) / len(cells)
+    cy = sum(c[1] for c in cells) / len(cells)
+    return tuple(min(cells, key=lambda c: (c[0] - cx) ** 2 + (c[1] - cy) ** 2))
 
 
 def _seat_number(your_seat, seat_position) -> int | None:

@@ -157,24 +157,35 @@ class Raid:
         self._aim = _cell_of(view, target) or self._aim
         if isinstance(target, int):
             return [orders.attack(ids, target)]
-        route = self._round_turrets(view, members, target)
+        via = self._flank(view, members, target)
+        route = self._round_turrets(view, members, target, via)
         if route:
             return [orders.attack_move(ids, list(route[0]))] + [
                 orders.attack_move(ids, list(p), queued=True) for p in route[1:] + [target]]
-        via = self._flank(view, members, target)
-        if via is not None:
-            return [orders.attack_move(ids, list(via)), orders.attack_move(ids, list(target), queued=True)]
         return [orders.attack_move(ids, list(target))]
 
-    def _round_turrets(self, view: View, members: list[Actor], target) -> list:
-        """An infantry squad's waypoints round the reach of the turrets we
-        know (raid_route), kept until walked: [] when the road is clear or
-        the squad has the tanks to go straight."""
+    def _round_turrets(self, view: View, members: list[Actor], target, via=None) -> list:
+        """The squad's waypoints to ``target``, kept until walked: round the
+        reach of the turrets we know (raid_route) for infantry, the road
+        itself for a squad with the tanks to go straight — always in legs, so
+        the squad keeps to one road and no terrain splits it."""
+        from .terrain import legs, walk_path
+
         centre = _centroid(members)
-        if centre is None or _armored([u.type for u in members]) >= C.RAID_ARMOR_UNITS:
+        if centre is None:
             return []
-        if self._legs is None or self._legs[0] != tuple(target):
-            self._legs = (tuple(target), list(raid_route(view, centre, target) or []))
+        key = (tuple(target), tuple(via) if via is not None else None)
+        if self._legs is None or self._legs[0] != key:
+            armored = _armored([u.type for u in members]) >= C.RAID_ARMOR_UNITS
+
+            def road(a, b):
+                if armored:
+                    return legs(walk_path(view, a, tuple(b)), C.ARMY_LEG_CELLS)[:-1]
+                return raid_route(view, a, b) or []
+
+            # Through the flank point first when there is one (macro read).
+            path = (road(centre, via) + [tuple(via)] + road(tuple(via), target)) if via is not None else road(centre, target)
+            self._legs = (key, list(path))
         points = self._legs[1]
         while points and dist2(centre, points[0]) <= 9:
             points.pop(0)
@@ -552,7 +563,7 @@ def raid_spot(view: View, squad: list[str], origin, cell) -> tuple[int, int] | N
 
 def raid_route(view: View, origin, goal, zone: frozenset | None = None) -> list | None:
     """Waypoints from ``origin`` to ``goal`` out of the turrets' reach
-    (:func:`turret_zone`): [] when the straight road is already clear, the
+    (:func:`turret_zone`): the straight road's legs when it is clear, the
     legs of the way round when there is one (at most
     ``RAID_ROUTE_MAX_RATIO`` as long), None when there is none."""
     from .terrain import legs, route_around, walk_path
@@ -564,7 +575,7 @@ def raid_route(view: View, origin, goal, zone: frozenset | None = None) -> list 
     if not direct:
         return None
     if not any(c in zone for c in direct[3:]):
-        return []
+        return legs(direct, C.ARMY_LEG_CELLS)[:-1]   # the road itself, in legs (one road for the whole squad)
     path = route_around(view, origin, goal, zone, C.RAID_ROUTE_MAX_RATIO)
     if path is None or any(c in zone for c in path[3:]):
         return None

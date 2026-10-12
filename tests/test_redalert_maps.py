@@ -120,7 +120,9 @@ def test_refineries_on_real_maps_can_walk_to_their_ore(path):
         ore = buildplan.open_ore(view)
         if ore is None:
             continue                     # every field in reach is full: the base crawls outward instead
-        spot = buildplan._beside_ore(view, ore, "proc")
+        if not buildplan.refinery_room(view):
+            continue                     # no spot the trucks walk from (base boxed in): no refinery now
+        spot = buildplan.refinery_spot(view)
         assert _legal(view, "proc", spot) is None, (i, spot)
         field = terrain.field_cells(view, ore, C.EXPAND_CLUSTER_CELLS * 1.5)
         steps = terrain.steps_from_rect(terrain.walk_distances(view, field, 12), _rect("proc", spot))
@@ -195,6 +197,12 @@ def test_the_concave_holds_the_mouth_of_the_choke_on_real_maps(path):
     fx = _load(path)
     view = _view(fx, fx["states"][1], path.stem)
     base = tuple(fx["base_center"])
+    if scout.choke_stage(view) is None:                                           # open ground (Shadowfiend)
+        point, facing = scout.concave_point(view)
+        assert point not in view.blocked_cells
+        slots = executor.concave_slots(view, point, facing, 20)
+        assert len(slots) >= 15 and not any(s in view.blocked_cells for s in slots)
+        return
     choke = scout.choke_stage(view)[1]
     assert terrain.passage_width(view, choke) <= C.CHOKE_STAGE_MAX_WIDTH         # Sidestep's gap, Trapped's passage
     point, facing = scout.concave_point(view)
@@ -218,7 +226,8 @@ def test_scouts_and_the_army_go_round_the_choke_and_the_front_of_their_base(path
     base, enemy = tuple(fx["base_center"]), tuple(enemy_spawn_guess(view))
     corps = ScoutCorps()
     avoid, zone = corps.avoid(view), terrain.choke_zone(view)
-    assert zone and enemy not in zone and base not in zone
+    assert enemy not in zone and base not in zone
+    assert zone or "shadowfiend" in path.stem                                   # open ground has none
     for role in ("left", "right", "p0", "p1"):                                   # posts and looks stand outside it
         assert corps.post(view, role) not in avoid, role
     for role in ("left", "right"):
@@ -273,3 +282,53 @@ def test_nothing_of_ours_walks_down_the_choke_into_their_concave(path):
     there = dataclasses.replace(view, enemy_units=foes)
     assert executor.army_contact(there, ours, defending=False) == []
 
+
+
+@pytest.mark.parametrize("path", FIXTURES, ids=[p.stem for p in FIXTURES])
+def test_the_attack_marches_on_one_road_in_short_legs(path):
+    """b9145367 (Trapped): half the army, re-aimed mid-march, walked round the
+    other side of the rocks. Every route is the walking road in legs a few
+    steps apart, so no unit can take a road of its own."""
+    import dataclasses
+
+    from agent.redalert.agent import RedAlertAgent
+    from agent.redalert.modes import Mode
+    from agent.redalert.observe import enemy_spawn_guess
+
+    fx = _load(path)
+    view = _view(fx, fx["states"][1], path.stem)
+    enemy = tuple(enemy_spawn_guess(view))
+    fact = type("B", (), {"id": 900, "type": "fact", "cell": enemy, "wreck": False, "hp": 100})()
+    there = dataclasses.replace(view, known_enemy_buildings=[fact])
+    agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
+    agent._mode = Mode.ALL_IN
+    for flank in (False, True):
+        legs_ = agent._pick_route(there, None, flank=flank) + [enemy]
+        here = tuple(fx["base_center"])
+        for leg in legs_:
+            step = terrain.walk_path(there, here, leg)
+            assert step and len(step) <= C.ARMY_LEG_CELLS + 4, (flank, here, leg, len(step))
+            here = leg
+
+
+@pytest.mark.parametrize("path", FIXTURES, ids=[p.stem for p in FIXTURES])
+def test_attack_groups_spread_only_where_they_walk_without_a_detour(path):
+    import dataclasses
+
+    from agent.redalert import executor
+    from agent.redalert.observe import read as _rd
+
+    fx = _load(path)
+    view = _view(fx, fx["states"][1], path.stem)
+    target = scout.enemy_staging(view)
+    far = scout.concave_point(view)[0]
+    units = _rd({"phase": "playing", "is_terminal": False, "state_version": 1, "pacing": {"mode": "realtime"},
+                 "observation": {"tick": 1, "units": [{"id": 100 + k, "type": "e1", "x": far[0], "y": far[1], "hp": 100}
+                                                      for k in range(12)]},
+                 "time": {"game_seconds": 600}}, None).units
+    v = dataclasses.replace(view, units=units)
+    ids = [u.id for u in units]
+    points = executor._attack_points(v, ids, target)
+    for p in points:
+        route = terrain.walk_path(v, far, p)
+        assert route and len(route) <= C.ATTACK_POINT_MAX_DETOUR * ((p[0] - far[0]) ** 2 + (p[1] - far[1]) ** 2) ** 0.5 + 4
