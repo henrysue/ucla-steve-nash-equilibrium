@@ -44,6 +44,10 @@ def plan(
     if not view.ok:
         return []
     out: list[dict] = []
+    # The advisor's "more_army" puts units before refineries and the MCV —
+    # not against a passive enemy, which we out-expand (5a4bc83f: "more_army"
+    # from 5:47 on, its turtle took 9 harvesters to our 8).
+    units_first = getattr(advice, "balance", None) == "more_army" and not view.enemy_passive
     # Requests are throttled (asked for once per retry window); placement is
     # not: a finished refinery or turret goes to the expansion that lacks one.
     exp_ore = expansion.refinery_ore(view) if expansion is not None else None
@@ -62,7 +66,7 @@ def plan(
     clearing_ids = {i for o in placed if o.get("cmd") in ("move", "attack_move") for i in o.get("units") or ()}
     out += placed
     out += buildplan.next_build_orders(view, exp_ore, depleted, sparring=sparring,   # advance the build order / power
-                                       units_first=getattr(advice, "balance", None) == "more_army")
+                                       units_first=units_first)
     out += expansion.orders(view) if expansion is not None else []
     # warning (intel.suspect: one refinery seen early) only adds the warning turret.
     under_attack = mode in (Mode.DEFEND_RUSH, Mode.DEFEND_BASE) or scout.early_push_warning(view) or threat or warning
@@ -79,7 +83,7 @@ def plan(
     out += _economy_orders(view, harvest_orders)
     out += _rally_orders(view)
     out += _production_orders(view, mode, sparring=sparring, threat=threat,
-                              units_first=getattr(advice, "balance", None) == "more_army")
+                              units_first=units_first)
     out += list(scout_orders)
     out += list(raid_orders)
     # The base's defense, one handler: idle units answer what comes near them;

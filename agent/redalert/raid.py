@@ -68,6 +68,7 @@ class Raid:
         self.finished: list[dict] = []            # each raid's outcome, until RaidCorps.drain takes it
         self._formed_at = 0.0
         self._armor = False                       # the target needs tanks or siege (raid_spot)
+        self._no_target_since: float | None = None   # the formed squad has had no target since
         self._legs: tuple | None = None           # (target, waypoints round the turrets still to walk)
 
     def update(self, view: View, mode: Mode, scout_id: int | None, advice=None, taken: set = frozenset(),
@@ -79,9 +80,18 @@ class Raid:
         self.unit_ids = [i for i in self.unit_ids if i in alive]
         if self.unit_ids:
             lost_half = len(self.unit_ids) * 2 <= self._formed_size
+            # No target for a moment (it flickers as their units come and go
+            # out of sight) isn't the end: RAID_NO_TARGET_GRACE_SECONDS of it is
+            # (5a4bc83f formed and dropped five squads in 25 s, walking them
+            # out and back).
+            if _target(view, self._members(view), self._advice, avoid=self.avoid) is None:
+                self._no_target_since = self._no_target_since or view.game_seconds
+            else:
+                self._no_target_since = None
+            gone = (self._no_target_since is not None
+                    and view.game_seconds - self._no_target_since >= C.RAID_NO_TARGET_GRACE_SECONDS)
             # In an attack the squad stays: it is the second prong (orders()).
-            if (mode in DEFENSIVE or mode is Mode.RETREAT or lost_half
-                    or _target(view, self._members(view), self._advice, avoid=self.avoid) is None):
+            if mode in DEFENSIVE or mode is Mode.RETREAT or lost_half or gone:
                 self._release(view)
             return
         if may_form and self._may_form(view, mode):
@@ -256,6 +266,7 @@ class Raid:
                 self.failed.append((self._aim, view.game_seconds))   # it lost there: leave it alone a while
             self._start = None
         self._aim = None
+        self._no_target_since = None
         self.unit_ids = []
         self._formed_size = 0
         self._released_at = view.game_seconds

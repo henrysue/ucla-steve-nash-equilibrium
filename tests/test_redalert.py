@@ -4387,17 +4387,64 @@ def test_losing_raids_stop_new_squads_for_a_while():
     assert corps.unit_ids                                                      # later, raids again
 
 
-def test_a_look_that_meets_their_army_walks_on_to_their_front():
-    """c1c37a10: eight pillboxes on a turtle's front, none seen until the
-    end: the look counts once it sees their army, and goes on for their defenses."""
+def test_a_look_that_meets_their_army_counts_and_turns_back():
+    """5a4bc83f: looks and peeks that walked on through their army fed a
+    scout every ~30 s (58 in the game). Seeing them is the look."""
     corps = ScoutCorps()
     corps.roles = {"left": 30}
     corps._army_check = {"left"}
     here = [{"id": 30, "type": "e1", "x": 30, "y": 30, "hp": 100, "idle": True}]
-    seen = [{"id": 900, "type": "e1", "x": 31, "y": 31, "hp": 100}]
-    o = corps.orders(_view(_t=300.0, units=here, visible_enemies=seen))
+    seen = [{"id": 900, "type": "e1", "x": 33, "y": 34, "hp": 100}]
+    corps.orders(_view(_t=300.0, units=here, visible_enemies=seen))
     assert corps.army_looked_at == 300.0                                      # counted at once
-    assert "left" in corps._army_check and o                                  # still walking on
+    assert "left" not in corps._army_check                                    # and done: back it goes
+
+
+def test_an_empty_exit_alone_is_not_a_look():
+    from agent.redalert import scout as sc
+    corps = ScoutCorps()
+    corps.roles = {"left": 30}
+    corps._army_check = {"left"}
+    v0 = _view(_t=300.0, units=[{"id": 30, "type": "e1", "x": 30, "y": 30, "hp": 100, "idle": True}])
+    stage = sc.enemy_staging(v0)
+    at = [{"id": 30, "type": "e1", "x": stage[0], "y": stage[1], "hp": 100, "idle": True}]
+    corps.orders(_view(_t=310.0, units=at))
+    assert corps.army_looked_at is None                                       # nobody at their exit: on it goes
+
+
+def test_scouts_stop_looking_after_losing_three_in_two_minutes():
+    corps = ScoutCorps()
+    corps._lost = [(100.0, (30, 30), False), (140.0, (31, 31), False), (180.0, (32, 32), False)]
+    assert corps.backing_off(_view(_t=200.0))
+    assert not corps.backing_off(_view(_t=180.0 + C.SCOUT_BACKOFF_SECONDS + 1))
+    corps.roles = {"left": 30}
+    corps._army_check = {"left"}
+    corps.orders(_view(_t=200.0, units=[{"id": 30, "type": "e1", "x": 30, "y": 30, "hp": 100, "idle": True}]))
+    assert "left" not in corps._army_check and corps.army_looked_at is None   # no look, no credit
+
+
+def test_a_raid_rides_out_a_flickering_target():
+    from agent.redalert.raid import Raid
+    r = Raid()
+    v = _view(_t=500.0, buildings=BASE, units=_raid_army(), visible_enemies=[_ENEMY_HARV], visible_enemy_buildings=[_EXP_PROC])
+    r.update(v, Mode.BUILD, None)
+    assert r.unit_ids
+    blank = _view(_t=503.0, buildings=BASE, units=_raid_army())                # target out of sight for a moment
+    r.update(blank, Mode.BUILD, None)
+    assert r.unit_ids                                                          # still on
+    r.update(_view(_t=503.0 + C.RAID_NO_TARGET_GRACE_SECONDS + 1, buildings=BASE, units=_raid_army()), Mode.BUILD, None)
+    assert r.unit_ids == []                                                    # really gone: released
+
+
+def test_the_unseen_army_fades_only_with_our_main_army_in_their_main_base():
+    agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
+    near_yard = [{"id": 100 + k, "type": "e1", "x": 14, "y": 40, "hp": 100} for k in range(5)]
+    yard = [{"id": 85, "type": "fact", "x": 14, "y": 42, "hp": 100}]           # an expansion of theirs
+    assert not agent._at_their_base(_view(_t=600.0, units=near_yard, visible_enemy_buildings=yard))
+    at_main = [dict(u, x=40, y=40) for u in near_yard]                          # their spawn (40, 40)
+    assert agent._at_their_base(_view(_t=600.0, units=at_main))
+    agent._raid.squads[0].unit_ids = [u["id"] for u in at_main]                # raiders don't count
+    assert not agent._at_their_base(_view(_t=600.0, units=at_main))
 
 
 def test_a_fresh_look_at_a_weak_enemy_starts_an_attack():
@@ -5678,3 +5725,20 @@ def test_raids_go_only_to_remote_expansions_not_their_main_base_edge():
     r.update(_view(_t=500.0, buildings=BASE, units=_raid_army(), visible_enemy_buildings=[_EXP_PROC],
                    visible_enemies=[_ENEMY_HARV]), Mode.BUILD, None)
     assert r.unit_ids
+
+
+def test_against_a_passive_enemy_the_advisors_more_army_keeps_the_economy_going(monkeypatch):
+    """5a4bc83f: "more_army" from 5:47 held the refinery and MCV money back
+    against a turtle that never came."""
+    import types
+    seen = []
+    real = buildplan.next_build_orders
+    monkeypatch.setattr(buildplan, "next_build_orders",
+                        lambda view, *a, **kw: seen.append(kw.get("units_first")) or real(view, *a, **kw))
+    more = types.SimpleNamespace(balance="more_army", enemy_style="macro", confidence=0.7, defense_at=None,
+                                 guard="on", army_stance="auto", army_target=None, raid_target_id=None,
+                                 raid_target_cell=None, attack_route="auto", posture="hold")
+    v = _view(_t=500.0, buildings=_ECON_BASE, units=_harvs(3))
+    executor.plan(v, Mode.BUILD, advice=more)
+    executor.plan(dataclasses.replace(v, enemy_passive=True), Mode.BUILD, advice=more)
+    assert seen == [True, False]

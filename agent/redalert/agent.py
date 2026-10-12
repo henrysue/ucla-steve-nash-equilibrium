@@ -802,16 +802,16 @@ class RedAlertAgent:
         return self._believed
 
     def _at_their_base(self, view) -> bool:
-        """``BELIEF_LOOK_UNITS`` of our army (not scouts) within
-        ``BELIEF_LOOK_CELLS`` of their spawn or a yard of theirs we know."""
+        """``BELIEF_LOOK_UNITS`` of our main army (not scouts, raiders or the
+        outpost) within ``BELIEF_LOOK_CELLS`` of their main base — not one of
+        their expansions (5a4bc83f: released raiders by an expansion yard
+        faded the estimate from 14480 to 8300 while their army was 13850)."""
         from .observe import enemy_spawn_guess
 
-        spots = [b.cell for b in list(view.enemy_buildings) + list(view.known_enemy_buildings)
-                 if b.type == C.CONSTRUCTION_YARD and b.cell is not None and not b.wreck]
         spawn = enemy_spawn_guess(view)
-        if spawn is not None:
-            spots.append(tuple(spawn))
-        scouts, r2 = set(self._patrol.unit_ids), C.BELIEF_LOOK_CELLS ** 2
+        spots = [tuple(spawn)] if spawn is not None else []
+        scouts = {*self._patrol.unit_ids, *self._raid.unit_ids, *self._garrison.unit_ids}
+        r2 = C.BELIEF_LOOK_CELLS ** 2
         near = sum(1 for u in view.combat_units if u.cell is not None and u.id not in scouts
                    and any((u.cell[0] - s[0]) ** 2 + (u.cell[1] - s[1]) ** 2 <= r2 for s in spots))
         return near >= C.BELIEF_LOOK_UNITS

@@ -118,6 +118,11 @@ a turtle about one per turret (3–6) before any attack.
   fresh look for the attack's blind check — which counts only once it saw
   their fighters or stood in front of their base (d2d8dc27 counted an empty
   spot and attacked 3250 on an estimate of 250).
+- **See and turn back**: a look or a peek ends the moment the scout sees
+  their fighters (9 cells) and it backs off; a look counts only if it saw
+  them or stood in front of their base — an empty exit isn't a look. After
+  3 scouts lost in 2 minutes, no looks or peeks for 90 s (5a4bc83f lost 58
+  scouts, the left one every ~30 s, peeking into their army).
 - **Never down a choke**: a scout never walks a choke corridor between the
   bases; a place inside one (their army's spot at its far mouth) is looked
   at from the nearest spot beside it reached the long way round, else not at
@@ -144,7 +149,8 @@ a turtle about one per turret (3–6) before any attack.
   lost, no enemy army (1000+) within 8 cells of a building of ours; their
   army at our concave and their units chasing our retreat (90 s) don't count
   → expand early and often, 70% tanks, more war factories; the advisor's
-  "aggressive" read puts up no turrets (e2bc988e: a turtle took 10
+  "aggressive" read puts up no turrets and its "more_army" doesn't hold the
+  refinery and MCV money back (e2bc988e: a turtle took 10
   harvesters to our 7 and out-built us while we held for a push that never
   came).
 
@@ -156,7 +162,8 @@ ratio. Turrets fight in it. Their army is what we saw lately or, if more,
 what they could have built since: it grows by 0.6 of what we spend on our
 army (both sides have the same money) and loses half our kills; it stops
 growing once their main base is razed and the unseen part fades while our
-army stands in their base and finds nothing. (Seen-only read 1.3-12x low on
+main army (not raiders or scouts) stands in their main base and finds nothing
+(5a4bc83f: raiders by an expansion yard faded it from 14480 to 8300). (Seen-only read 1.3-12x low on
 our self-play logs; this is unbiased there with half the error.) The part we
 believe in but can't see counts as a mirror of our own mix. Every decision
 reads it: attack, retreat, meeting a push, raids, the base's defense,

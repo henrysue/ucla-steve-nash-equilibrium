@@ -74,6 +74,15 @@ class ScoutCorps:
         """One scout (for code that keeps a single scout out of the army)."""
         return next(iter(self.roles.values()), None)
 
+    def backing_off(self, view: View) -> bool:
+        """``SCOUT_BACKOFF_LOSSES`` scouts lost within
+        ``SCOUT_BACKOFF_WINDOW_SECONDS``: no looks or peeks until
+        ``SCOUT_BACKOFF_SECONDS`` after the last — they are feeding scouts to
+        whatever kills them (5a4bc83f lost 58)."""
+        t = view.game_seconds
+        recent = [lt for lt, _, _ in self._lost if t - lt <= C.SCOUT_BACKOFF_WINDOW_SECONDS]
+        return len(recent) >= C.SCOUT_BACKOFF_LOSSES and t - max(recent) <= C.SCOUT_BACKOFF_SECONDS
+
     def alarm(self, view: View) -> bool:
         """``SCOUT_ALARM_LOSSES`` scouts killed past the middle early, within
         ``SCOUT_ALARM_SECONDS``: something is out there — an early-push alarm.
@@ -184,7 +193,9 @@ class ScoutCorps:
             post = self.post(view, role)
             if post is None:
                 continue
-            r2 = C.SCOUT_FLEE_CELLS ** 2
+            # Out on a peek it turns back as soon as it sees them (it has
+            # seen what it went for); at its post, when they come close.
+            r2 = (C.SCOUT_SEEN_CELLS if role in self._peeking else C.SCOUT_FLEE_CELLS) ** 2
             threatened = any(a.cell is not None and not a.wreck and a.type not in C.HARVESTER
                              and dist2(a.cell, u.cell) <= r2 for a in view.enemy_units)
             if threatened and view.base_center is not None:
@@ -200,6 +211,9 @@ class ScoutCorps:
             # own side (their army and its moves), then goes back (3bd6e450:
             # two scouts stood at the same corners for minutes).
             peek = self.peek_point(view, role) if role in ("left", "right") else None
+            if peek is not None and self.backing_off(view):
+                self._end_peek(role, view)
+                peek = None
             if peek is not None and role not in self._peeking and \
                     view.game_seconds - self._peek_at.get(role, self._peek_offset(role)) >= C.SCOUT_PEEK_SECONDS:
                 self._peeking.add(role)
@@ -527,13 +541,15 @@ class ScoutCorps:
         from .scout import enemy_staging
 
         if any(a.cell is not None and not a.wreck and a.type not in C.HARVESTER
-               and dist2(a.cell, u.cell) <= (C.SCOUT_FLEE_CELLS + 2) ** 2 for a in view.enemy_units):
-            # Their army seen: the look counts now — and it still walks on to
-            # the front of their base, for their defenses (c1c37a10: eight
-            # pillboxes on a turtle's front, none seen until the last second,
-            # so no turtle read and no siege units until 11:47).
-            self.base_seen_at = self.army_looked_at = view.game_seconds
+               and dist2(a.cell, u.cell) <= C.SCOUT_SEEN_CELLS ** 2 for a in view.enemy_units):
+            # Their army seen: the look counts, and the scout turns back (its
+            # post's flee rule) — walking on through their army fed a scout
+            # every ~30 s (5a4bc83f). An empty spot goes on to their base front.
             self._look_saw.add(u.id)
+            return self._looked(view, u)
+        if self.backing_off(view):
+            self._look_leg.pop(u.id, None)
+            return None                              # too many scouts lost lately: no look (and no credit)
         stops = [s for s in (enemy_staging(view), self.base_front(view)) if s is not None]
         if not stops:
             self._look_leg.pop(u.id, None)       # nowhere to look: no credit
@@ -545,9 +561,9 @@ class ScoutCorps:
                 if not arrived:
                     self._look_leg[u.id] = leg
                     return moves
-            if stops[leg] not in self.unreachable:
-                self._look_saw.add(u.id)             # stood there (or as near as it gets)
-            leg += 1                                 # nobody: the next stop
+            if leg == len(stops) - 1 and stops[leg] not in self.unreachable:
+                self._look_saw.add(u.id)             # stood in front of their base: nobody there
+            leg += 1                                 # nobody: the next stop (an empty exit doesn't count)
         return self._looked(view, u)
 
     def _looked(self, view: View, u) -> None:
