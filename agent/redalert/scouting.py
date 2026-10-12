@@ -476,7 +476,11 @@ class ScoutCorps:
 
         if any(a.cell is not None and not a.wreck and a.type not in C.HARVESTER
                and dist2(a.cell, u.cell) <= (C.SCOUT_FLEE_CELLS + 2) ** 2 for a in view.enemy_units):
-            return self._looked(view, u)
+            # Their army seen: the look counts now — and it still walks on to
+            # the front of their base, for their defenses (c1c37a10: eight
+            # pillboxes on a turtle's front, none seen until the last second,
+            # so no turtle read and no siege units until 11:47).
+            self.base_seen_at = self.army_looked_at = view.game_seconds
         stops = [s for s in (enemy_staging(view), self.base_front(view)) if s is not None]
         if not stops:
             self._look_leg.pop(u.id, None)       # nowhere to look: no credit

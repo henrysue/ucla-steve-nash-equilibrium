@@ -170,6 +170,9 @@ behind/outgunned. The blind check reads only what was actually seen.
    - **Never**: before 3:00 and a war factory, a new attack while the MCV
      travels, within 60 s of a retreat, into a turtle without 3 siege units
      (unless the odds are 2.5+).
+   - **The advisor's "hold"** delays an attack the rules call by at most 90 s,
+     then the rules go (c1c37a10 held 13 minutes at 1.4-1.9x while a turtle
+     built 28800).
    - **Raid**: while our raid squads hold a real share of their army, the
      main army is judged against the rest and attacks away from the raid.
 7. **MASS**: otherwise.
@@ -195,7 +198,9 @@ An attack goes on until the retreat rule ends it. No mass/attack flip within
     trucks, a spot we were hit at with no attacker in sight
     (`under_attack`/`unit_lost` events, vanished units) → the idle units
     within 12 cells (and, for a small group at the main base, the idle units
-    at home).
+    at home), just enough to win clearly — counting the units already sent at
+    it for 20 s or until they get there (c1c37a10: a lone scout drew two more
+    every view until the whole concave stood at the back of the base).
   - **Expansions**: the outpost (2 infantry, the engine's guard order), one
     turret and the idle units nearby. The army never walks out to one.
 - **Attack**: three groups in a semi-concave across the target; stragglers
@@ -209,7 +214,14 @@ An attack goes on until the retreat rule ends it. No mass/attack flip within
   longer a healthy game goes (at most 35% of the fighters); they kill
   defenders first, break off when outmatched, and join the main army's fight
   as a second prong. From 8:00 a found expansion is raided in force (8+
-  units): the army doesn't just mass while their economy grows.
+  units): the army doesn't just mass while their economy grows. Infantry
+  never walks into a known turret's reach (7 cells): it goes round to a spot
+  by the expansion the turrets don't cover (their field's far edge) by a road
+  out of their reach, at most 2x as long; with every side covered the raid
+  waits until it can take 2 tanks or siege units, and then still needs to
+  clearly win (2x) against the turrets and units there. Raids that lose
+  800+ net stop new squads for 2 minutes (c1c37a10: four raids into
+  pillboxes lost 7300 for 1950).
 - **Retreat**: a plain move to the main turret line; regroup there.
 - **Micro**: focus fire on the weakest enemy fighter within 4 cells; siege
   units shell turrets.
@@ -299,7 +311,21 @@ logged placements)
 - Scouts look, they don't stand at corners (3bd6e450); pickets watch the
   exit from the flanks.
 - Raids only at expansions our scouts found (52a77fb1 fed squads to their main
-  field); a target that cost a raid is left alone for 4 minutes (efefdca8).
+  field); a target that cost a raid is left alone for 4 minutes (efefdca8);
+  infantry goes round turrets or waits for tanks (c1c37a10).
+- A look at their army goes on to the front of their base even after it sees
+  them: a turtle's pillboxes stand there, out of the scouts' usual way
+  (c1c37a10 saw none of eight until the last second: no turtle read, no
+  siege units until 11:47).
+
+**The advisor** (its prompt carries these as LESSONS FROM OUR GAMES)
+- Holding is not free: a turtle or macro player out-builds a waiting army.
+- Pillboxes eat infantry raids; aim at the side they don't cover, or wait for
+  tanks or V2s.
+- Turrets not seen are still there; a quiet enemy with few units is a turtle
+  until a look at their front says otherwise.
+- The opponent's history is a hypothesis (c1c37a10 kept "passive macro" from
+  the last game for 13 minutes).
 
 ## Sources
 

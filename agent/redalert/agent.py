@@ -96,6 +96,7 @@ class RedAlertAgent:
         self._sparring = sparring.Sparring()       # sparring: TEST ONLY
         self._models_checked = False                # REDALERT_MODELS_OFF_SEAT applied yet
         self._clearing: dict = {}   # building item -> game time its spot was first found occupied
+        self._responding: dict = {}  # unit id -> (cell, enemy ids, when): units sent to answer a group (executor.respond)
         self._harvest = HarvestManager()
         # Per-match review log (off unless a log directory is configured).
         self._matchlog = MatchLog(self._log, directory=log_dir)
@@ -295,6 +296,7 @@ class RedAlertAgent:
             warning=self._intel.suspect(view),
             fan=hunting,
             attacked=attacked,
+            responding=self._responding,
         ) + self._unstick.orders(view, set(self._garrison.unit_ids)) + executor.stance_orders(
             view, self._mode, set(self._garrison.unit_ids), getattr(advice, "army_stance", None))
         now = self._clock()

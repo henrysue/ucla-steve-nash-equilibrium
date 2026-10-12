@@ -30,6 +30,7 @@ def plan(
     warning: bool = False,
     fan: bool = False,
     attacked: list | None = None,
+    responding: dict | None = None,
 ) -> list[dict]:
     """All orders for this view, concatenated in priority order (pre-cap).
 
@@ -83,7 +84,8 @@ def plan(
     out += list(raid_orders)
     # The base's defense, one handler: idle units answer what comes near them;
     # the army's own fight, a push coming and massing are _army_home's.
-    response, responders = respond(view, mode, scout_id, frozenset(raid_ids) | clearing_ids, attacked or [], advice)
+    response, responders = respond(view, mode, scout_id, frozenset(raid_ids) | clearing_ids, attacked or [], advice,
+                                   responding)
     out += response
     # The massing point stays at the main choke (an MCV on the road gets the
     # outpost, not the army); it edges forward while an attack is confirmed.
@@ -563,7 +565,7 @@ def army_contact(view: View, fighters, defending: bool = False) -> list:
 
 
 def respond(view: View, mode: Mode, scout_id: int | None, reserved: frozenset, hits=(), advice=None,
-            ) -> tuple[list[dict], set]:
+            responding: dict | None = None) -> tuple[list[dict], set]:
     """The idle units answer what comes near them, one attack-move per
     target:
 
@@ -580,8 +582,9 @@ def respond(view: View, mode: Mode, scout_id: int | None, reserved: frozenset, h
       40-unit push came from the south-west.)
 
     While the army is home, its own fight (army_contact) is left to it.
-    ``advice.guard`` "off" keeps the concave's units out of it. Returns
-    (orders, unit ids used)."""
+    ``advice.guard`` "off" keeps the concave's units out of it.
+    ``responding`` (the agent's, kept between views): the units already sent
+    and where. Returns (orders, unit ids used)."""
     from .guard import _at_home
 
     if mode is Mode.RETREAT:
@@ -610,26 +613,43 @@ def respond(view: View, mode: Mode, scout_id: int | None, reserved: frozenset, h
     for spot in hits:
         if all(dist2(spot, c) > C.GROUP_CELLS ** 2 for c in seen) and all(dist2(spot, t[0]) > 36 for t in targets):
             targets.append((tuple(spot), False, []))
+    # Units already sent count toward the answer (until they get there, or
+    # RESPONSE_HOLD_SECONDS): forgotten each view, a lone scout drew two more
+    # idle units every view until the whole concave stood at the back of the
+    # base (c1c37a10, at 7:27 and 9:45).
+    sent = {} if responding is None else responding
+    t = view.game_seconds
+    alive = {u.id: u for u in view.combat_units if u.id is not None and u.cell is not None}
+    for i, (c, ids0, at) in list(sent.items()):
+        u = alive.get(i)
+        if u is None or not 0 <= t - at <= C.RESPONSE_HOLD_SECONDS or (u.idle and dist2(u.cell, c) <= 9):
+            del sent[i]
     out, used = [], set()
     for cell, small_home, group in targets:
+        gids = frozenset(a.id for a in group if a.id is not None)
+        already = [alive[i] for i, (c, ids0, _) in sent.items() if i not in used
+                   and ((gids & ids0) if gids else dist2(c, cell) <= C.GROUP_CELLS ** 2)]
+        used.update(u.id for u in already)
         near = [u for u in idle if u.id not in used
                 and (dist2(u.cell, cell) <= r2 or (small_home and _at_home(view, u.cell)))]
-        if not near:
-            continue
         poke = bool(group) and held is not None and any(dist2(a.cell, held[0]) <= r2 for a in group)
         if not poke:                                       # just enough, nearest first
             near.sort(key=lambda u: dist2(u.cell, cell))
             theirs = [a.type for a in group]
-            picked: list = []
+            picked: list = list(already)
             for u in near:
-                picked.append(u)
                 if len(picked) >= C.RESPONSE_MIN_UNITS and (
                         not theirs or strength.odds(view, [p.type for p in picked], theirs) >= C.RESPOND_ODDS):
                     break
-            near = picked
+                picked.append(u)
+            near = [u for u in picked if u not in already]
+        if not near:
+            continue
         ids = [u.id for u in near][:orders.MAX_UNITS_PER_ORDER]
         out.append(orders.attack_move(ids, list(cell)))
         used.update(ids)
+        for i in ids:
+            sent[i] = (tuple(cell), gids, t)
     return out, used
 
 

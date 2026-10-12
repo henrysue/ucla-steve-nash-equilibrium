@@ -973,6 +973,25 @@ def test_model_hold_keeps_the_army_home_but_cannot_override_defense():
     assert brain.choose_mode(_view(buildings=BASE, _t=400.0), cheese_since=395.0, model_pref=Mode.ALL_IN) is Mode.DEFEND_BASE
 
 
+def test_model_hold_only_delays_an_attack_the_rules_call():
+    """c1c37a10: the advisor held 13 minutes at 1.4-1.9x while a turtle built
+    28800; its hold now delays the rules' call by ADVISOR_HOLD_MAX_SECONDS."""
+    from agent.redalert.commander import Commander
+    c = Commander()
+    c.mode, c.mode_since = Mode.BUILD, 0.0
+
+    def at(t):
+        v = dataclasses.replace(_view(_t=t, buildings=BASE + [{"id": 12, "type": "weap"}],
+                                      military={"army_value": 6000, "visible_enemy_value": 3000}),
+                                enemy_base_scouted=True)
+        return c.decide(v, model_pref=Mode.BUILD)
+
+    assert at(500.0) is Mode.BUILD
+    assert at(500.0 + C.ADVISOR_HOLD_MAX_SECONDS / 2) is Mode.BUILD               # held a while...
+    modes = [at(500.0 + C.ADVISOR_HOLD_MAX_SECONDS + s) for s in (1, 5, 10, 15)]
+    assert Mode.ALL_IN in modes                                                    # ...then the rules go
+
+
 def test_model_cannot_force_an_attack_during_retreat_cooldown():
     v = _view(buildings=BASE, _t=300.0, military={"army_value": 4000, "visible_enemy_value": 1000})
     assert brain.choose_mode(v, cheese_since=None, model_pref=Mode.ALL_IN, retreated_at=290.0) is Mode.BUILD
@@ -4312,6 +4331,69 @@ def test_a_found_expansion_is_raided_in_force_from_8_00():
         assert (len(r.unit_ids) >= C.RAID_EXPANSION_SQUAD) is want
 
 
+def _raid_view(turrets, units, t=600.0):
+    ore = tuple((36 + i, 2 + j) for i in range(8) for j in range(8))         # their expansion's field
+    yard = [{"id": 900, "type": "proc", "x": 38, "y": 4}] + [
+        {"id": 910 + k, "type": "pbox", "x": x, "y": y} for k, (x, y) in enumerate(turrets)]
+    return dataclasses.replace(_view(_t=t, buildings=BASE, units=units, visible_enemy_buildings=yard), ore_cells=ore)
+
+
+def test_an_infantry_raid_walks_round_a_pillbox_to_the_side_it_does_not_cover():
+    """c1c37a10: four raids into pillboxed expansions lost 7300 for 1950. A
+    pillbox rarely covers every side: the raid goes round its reach to the
+    field's far edge."""
+    from agent.redalert import raid as ra
+    rifles = [{"id": 100 + i, "type": "e3", "x": 10, "y": 10, "hp": 100} for i in range(20)]
+    v = _raid_view([(36, 8)], rifles)                                          # one pillbox on our side of it
+    target = ra._target(v, [])
+    zone = ra.turret_zone(v)
+    assert target is not None and tuple(target) not in zone                   # a spot out of its reach
+    route = ra.raid_route(v, (10, 10), target)
+    assert route is not None and not any(p in zone for p in route)            # a road round it
+
+
+def test_a_pillbox_ringed_expansion_waits_for_tanks():
+    from agent.redalert import raid as ra
+    ring = [(35, 5), (44, 5), (40, 11), (40, 0)]                             # every side covered
+    rifles = [{"id": 100 + i, "type": "e3", "x": 10, "y": 10, "hp": 100} for i in range(20)]
+    v = _raid_view(ring, rifles)
+    assert ra._target(v, []) is None                                          # infantry: no way in, no raid
+    r = ra.Raid()
+    r.update(v, Mode.BUILD, None)
+    assert r.unit_ids == []
+    tanks = [{"id": 200 + i, "type": "3tnk", "x": 10, "y": 10, "hp": 100} for i in range(3)]
+    vt = _raid_view(ring, rifles + tanks)
+    r.update(vt, Mode.BUILD, None)
+    kinds = [u.type for u in vt.combat_units if u.id in r.unit_ids]
+    assert kinds.count("3tnk") >= C.RAID_ARMOR_UNITS                          # the tanks lead it in
+    fortress = ring + [(34, 1), (46, 9)]                                       # too many even for them
+    assert ra._target(_raid_view(fortress, rifles + tanks), [], squad=ra.would_form(vt, armor=True)) is None
+
+
+def test_losing_raids_stop_new_squads_for_a_while():
+    from agent.redalert.raid import RaidCorps
+    rifles = [{"id": 100 + i, "type": "e3", "x": 10, "y": 10, "hp": 100} for i in range(20)]
+    corps = RaidCorps()
+    corps.squads[0].results = [-1500.0, -1200.0]                             # two raids lost 2700 net
+    corps.update(_raid_view([], rifles), Mode.BUILD, None)
+    assert corps.unit_ids == []                                                # backing off: none forms
+    corps.update(_raid_view([], rifles, t=600.0 + C.RAID_BACKOFF_SECONDS + 1), Mode.BUILD, None)
+    assert corps.unit_ids                                                      # later, raids again
+
+
+def test_a_look_that_meets_their_army_walks_on_to_their_front():
+    """c1c37a10: eight pillboxes on a turtle's front, none seen until the
+    end: the look counts once it sees their army, and goes on for their defenses."""
+    corps = ScoutCorps()
+    corps.roles = {"left": 30}
+    corps._army_check = {"left"}
+    here = [{"id": 30, "type": "e1", "x": 30, "y": 30, "hp": 100, "idle": True}]
+    seen = [{"id": 900, "type": "e1", "x": 31, "y": 31, "hp": 100}]
+    o = corps.orders(_view(_t=300.0, units=here, visible_enemies=seen))
+    assert corps.army_looked_at == 300.0                                      # counted at once
+    assert "left" in corps._army_check and o                                  # still walking on
+
+
 def test_a_fresh_look_at_a_weak_enemy_starts_an_attack():
     weak = _view(_t=300.0, buildings=BASE, military={"army_value": 4000, "visible_enemy_value": 900})
     assert brain.blind_estimate(weak)                                                  # little seen: look first
@@ -5402,6 +5484,29 @@ def test_a_lone_scout_in_the_base_draws_a_pair_not_the_concave():
     (o,), _ = executor.respond(dataclasses.replace(v, enemy_units=read(_raw(visible_enemies=tanks)).enemy_units),
                                Mode.BUILD, None, frozenset())
     assert len(o["units"]) > 2                                                  # a tank takes more of them
+
+
+def test_a_lone_scout_draws_one_pair_over_many_views_not_two_more_each_view():
+    """c1c37a10: the pair sent at a scout was forgotten each view, two more
+    idle units went every view, and the whole concave ended at the back of
+    the base (7:27, 9:45)."""
+    blds = [{"id": 10, "type": "fact", "x": 4, "y": 4}, {"id": 11, "type": "tent", "x": 8, "y": 4}]
+    trucks = [{"id": 20, "type": "harv", "x": 6, "y": 20, "hp": 100}]
+    scout_ = [{"id": 900, "type": "e1", "x": 3, "y": 26, "hp": 100}]
+    memory: dict = {}
+    sent: set = set()
+    for k in range(10):
+        # the pair sent is on its way (not idle); everyone else idles at the concave
+        army = [{"id": 100 + i, "type": "e1", "x": 12 + i % 3, "y": 12 + i // 3, "hp": 100, "idle": (100 + i) not in sent}
+                for i in range(10)]
+        v = _view(_t=300.0 + k, buildings=blds, units=trucks + army, visible_enemies=scout_)
+        out, _ = executor.respond(v, Mode.BUILD, None, frozenset(), responding=memory)
+        sent |= {i for o in out for i in o["units"]}
+    assert len(sent) == 2
+    later = [{"id": 100 + i, "type": "e1", "x": 12 + i % 3, "y": 12 + i // 3, "hp": 100, "idle": True} for i in range(2, 10)]
+    v = _view(_t=300.0 + C.RESPONSE_HOLD_SECONDS + 5, buildings=blds, units=trucks + later, visible_enemies=scout_)
+    out, _ = executor.respond(v, Mode.BUILD, None, frozenset(), responding=memory)
+    assert out and len(out[0]["units"]) == 2                                    # the pair died: a new pair, not more
 
 
 def test_the_game_is_saved_before_the_analysis_runs_in_its_own_process(tmp_path, monkeypatch):

@@ -656,13 +656,6 @@ def enemy_expansions(view: View) -> list[tuple[int, int]]:
     return out
 
 
-def expansion_defenses(view: View, cell) -> int:
-    """Known enemy defenses near an enemy expansion."""
-    r2 = C.EXPAND_CLUSTER_CELLS ** 2
-    return sum(1 for b in list(view.enemy_buildings) + list(view.known_enemy_buildings)
-               if b.type in C.TURRETS and b.cell is not None and dist2(b.cell, cell) <= r2)
-
-
 def choose_site(view: View, exclude=()) -> tuple[tuple[int, int], tuple[int, int]] | None:
     """(deploy cell, ore cell) for the next expansion: the NATURAL first —
     the ore field nearest our base by walking that no refinery of ours mines

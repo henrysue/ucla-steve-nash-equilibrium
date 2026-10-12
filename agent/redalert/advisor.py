@@ -81,8 +81,9 @@ value in main battle tanks. Units spend what the economy doesn't need.
 one re-checks their base every 2.5 minutes. One refinery plus an early war factory or 2nd barracks, \
 or an early army, reads as a rush (intel.enemy_opening).
 - Every fight is judged by strength (unit types, hit points, damage per armor), not price: \
-riflemen barely scratch tanks. enemy.army_value_estimate is what we saw of their units lately, less \
-half our kills since — no guess, turrets not included.
+riflemen barely scratch tanks. enemy.army_value_estimate is what we saw of their units lately or, \
+if more, what they could have built since (0.6 of what we spend on our army), less half our kills \
+since; turrets not included.
 - The army masses in a concave at the main choke and holds it; it never walks out to an expansion \
 (an outpost, a turret and nearby units hold those). A push seen coming: it gets ready at the main \
 base's turret line. In a fight at the main base it attacks if it wins clearly, else holds at the \
@@ -91,8 +92,25 @@ turret line. Idle units nearby answer small raids and any spot we are hit.
 or at once after clearly winning a fight (1500+ net, 1.5x). Knowing little of their army, a scout \
 looks first. It retreats (breaks off to the turret line) when losing 1.3x what it kills, and does \
 not flank before 10:00 unless decisively ahead. Raid squads go only for enemy expansions our \
-scouts found; when they hold part of their army, the main army is judged against the rest and \
-attacks away from the raid.
+scouts found, never into a turret's reach with infantry: they walk round it to a spot it doesn't \
+cover, or wait for tanks or siege units to take along (enemy.expansions_known: turrets and \
+raid_spot, None = out of reach for now); when they hold part of their army, the main army is judged \
+against the rest and attacks away from the raid.
+
+LESSONS FROM OUR GAMES (call on them):
+- Holding is not free. Against a turtle or a macro player the side that waits gets out-built: \
+c1c37a10 held 13 minutes at 1.4-1.9x odds (their real army was a third of ours at 9:14) while a \
+turtle built 28800 behind pillboxes and then crushed us. A "hold" only delays the engine's attack \
+by 90 s; use it for a real reason (a push coming, a look pending), not to "shore up the economy".
+- Pillboxes and turrets eat infantry raids. c1c37a10 sent four raids into pillboxed expansions and \
+lost 7300 for 1950. A pillbox rarely covers every side: aim raid_target_cell at the side of the \
+expansion away from its turrets (harvesters on the far edge of the field, a refinery out of reach). \
+If every side is covered, leave it until tanks or V2s can go, or for the main army.
+- Turrets you haven't seen are still there: a turtle's are on the front of its base, where our \
+scouts don't walk. Few units seen plus a quiet enemy is a turtle until a look at their front says \
+otherwise — expect siege units to be needed, and don't call them "passive macro".
+- The opponent's history is a hypothesis: c1c37a10's advisor kept "passive macro, thin army" from \
+the last game for 13 minutes while this game's turtle out-built us.
 
 EARLY GAME (you are consulted from the first second): situation.scouting is what our scouts \
 have seen — buildings_known, first_seen (enemy type -> game second), recent_sightings, the rules' \
@@ -154,7 +172,9 @@ YOUR CALLS (null or "default"/"auto" = the engine decides; each works inside the
 blind estimate (a scout looks first) and never into turrets the army can't break. Not on a stale \
 estimate either: when situation.enemy_army_last_seen_seconds_ago is over 60, what we know of their \
 army is old and they have rebuilt (a rusher trains riflemen nonstop) — hold until a look; "hold" keeps \
-massing (ignored when we clearly outnumber them or are behind at the end). Use them for what the \
+massing (ignored when we clearly outnumber them or are behind at the end) and only DELAYS an attack \
+the engine calls: after 90 s of holding against its call the engine attacks anyway. Holding is not \
+free: a turtle or macro player out-builds a waiting army. Use them for what the \
 numbers miss (their army is out of position, a counter-push is coming). Keep a posture 30+ seconds: \
 flip-flopping marches the army out and back.
 - attack_route: "center", "left" or "right" for the next attack, from 10:00 (sooner only when \
@@ -331,7 +351,7 @@ def build_prompt(view: View, situation: dict) -> dict:
                                 for a in view.known_enemy_buildings if a.cell is not None][:25],
             "spawn_guess": list(enemy_spawn_guess(view) or []) or None,
             "ore_field_guess": list(enemy_ore_field(view) or []) or None,
-            "expansions_known": [list(c) for c in _enemy_expansions(view)],
+            "expansions_known": _expansions_known(view),
             "expansion_sites_suspected": [list(c) for c in _enemy_expansion_sites(view)[:3]],
         },
         "map": {"bounds": list(view.bounds) if view.bounds else None,
@@ -540,6 +560,23 @@ def advisor_from_env(log: Callable[[str], None], on_advice=None) -> Advisor | No
             pass
     log(f"[redalert] advisor on: {provider!r}, every {interval or C.ADVISOR_INTERVAL_SECONDS:g} s")
     return Advisor(provider, log=log, interval=interval, on_advice=on_advice)
+
+
+def _expansions_known(view) -> list[dict]:
+    """Each known enemy expansion: its cell, the turrets known by it, and
+    where our raid would go now (raid.raid_spot: round the turrets for
+    infantry, or with tanks) — None: out of reach until tanks or siege."""
+    from .raid import raid_spot, would_form
+
+    out = []
+    for c in _enemy_expansions(view):
+        r2 = (C.EXPAND_CLUSTER_CELLS + C.RAID_TURRET_CLEAR_CELLS) ** 2
+        turrets = [a.type for a in list(view.enemy_buildings) + list(view.known_enemy_buildings)
+                   if a.type in C.TURRETS and a.cell is not None and not a.wreck
+                   and (a.cell[0] - c[0]) ** 2 + (a.cell[1] - c[1]) ** 2 <= r2]
+        spot = raid_spot(view, would_form(view), view.base_center, c)
+        out.append({"cell": list(c), "turrets": turrets, "raid_spot": list(spot) if spot else None})
+    return out
 
 
 def _estimate(view) -> float:

@@ -47,6 +47,7 @@ class Commander:
         self.attacks = 0
         self._trades: list[tuple[float, float, float]] = []   # (game seconds, kills, deaths)
         self._building_ids: set | None = None
+        self._held_since: float | None = None      # the advisor's "hold" has stopped an attack the rules call since
 
     def track_threat(self, view: View) -> None:
         """Update the threat window (call first each view). Losing a building
@@ -72,15 +73,31 @@ class Commander:
         # rush always calls the army home.
         base_race = (prev is Mode.ALL_IN and not losing and brain.army_odds(view) >= 1.0
                      and view.game_seconds >= C.CHEESE_WINDOW_SECONDS)
-        mode = brain.choose_mode(
-            view, cheese_since=None if base_race else self.cheese_since, model_pref=model_pref, prev_mode=prev,
-            scout_id=scout_id, squad_ids=squad_ids, losing_trades=losing,
-            winning_trades=self.winning_trades(view) if prev is Mode.ALL_IN else False,
-            traded_up=up,
-            retreated_at=self.retreated_at, retreat_army=self.retreat_army, hunting=hunting,
-            alarm=alarm, distraction=distraction,
-            attack_seconds=view.game_seconds - self.mode_since if prev is Mode.ALL_IN else None,
-        )
+        winning = self.winning_trades(view) if prev is Mode.ALL_IN else False
+
+        def choose(pref):
+            return brain.choose_mode(
+                view, cheese_since=None if base_race else self.cheese_since, model_pref=pref, prev_mode=prev,
+                scout_id=scout_id, squad_ids=squad_ids, losing_trades=losing, winning_trades=winning,
+                traded_up=up,
+                retreated_at=self.retreated_at, retreat_army=self.retreat_army, hunting=hunting,
+                alarm=alarm, distraction=distraction,
+                attack_seconds=view.game_seconds - self.mode_since if prev is Mode.ALL_IN else None,
+            )
+
+        mode = choose(model_pref)
+        # The advisor's "hold" may delay an attack the rules call, not veto it:
+        # after ADVISOR_HOLD_MAX_SECONDS the rules go (c1c37a10 held 13
+        # minutes at 1.4-1.9x odds — their real army was a third of ours at
+        # 9:14 — while a turtle built 28800 behind its pillboxes).
+        blocking = model_pref is Mode.BUILD and mode is not Mode.ALL_IN and choose(None) is Mode.ALL_IN
+        if not blocking:
+            self._held_since = None
+        else:
+            if self._held_since is None:
+                self._held_since = view.game_seconds
+            if view.game_seconds - self._held_since >= C.ADVISOR_HOLD_MAX_SECONDS:
+                mode = Mode.ALL_IN
         if forced is not None:                     # sparring (TEST ONLY): a mode, or a function of the policy's
             mode = (forced(mode) or mode) if callable(forced) else forced
         if escorting and mode is Mode.ALL_IN and prev is not Mode.ALL_IN and not brain.must_attack(view) and not hunting:
