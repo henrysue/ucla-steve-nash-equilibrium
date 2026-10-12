@@ -81,6 +81,8 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
   game time, spread over the fields by load (at most 3 per field).
 - **Expansions**: to the natural after the depot (from ~3:45), then every 2
   minutes or sooner when the ore forecast runs dry; up to 3; none after 14:00.
+  Against a passive enemy (below): from 3:00 and every minute, whatever our
+  army odds or the advisor's "wait", and refineries keep coming.
   The MCV is escorted by the outpost, never the army. While it drives there
   no order sends our units onto the yard's spot (posts, concave slots, rally
   points land beside it), and anyone standing on it steps off; the MCV waits
@@ -98,7 +100,9 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
 
 ### 2. The army's make-up
 
-Half the combat value in main battle tanks (the strongest offered, never
+Half the combat value in main battle tanks (70% against a passive enemy,
+with the second war factory at the depot and a third once two expansions
+stand: we out-build it) (the strongest offered, never
 light tanks once better ones exist), riflemen and rockets 3:1 shifting to 1:1
 as their armor grows — judged from the enemy units our scouts saw in the last
 3 minutes, not just those in sight. Siege units once enemy turrets are known; against
@@ -131,6 +135,13 @@ a turtle about one per turret (3–6) before any attack.
   Turrets are not army.
 - **Turtle read**: 4+ ground turrets and no push of theirs for 5 minutes →
   the dome at once, siege units, expansions early.
+- **Passive read**: from 4:00, no attack on us for 4 minutes — no building
+  lost, no enemy army (1000+) within 8 cells of a building of ours; their
+  army at our concave and their units chasing our retreat (90 s) don't count
+  → expand early and often, 70% tanks, more war factories; the advisor's
+  "aggressive" read puts up no turrets (e2bc988e: a turtle took 10
+  harvesters to our 7 and out-built us while we held for a push that never
+  came).
 
 ### 4. Judging a fight — one way
 
@@ -194,7 +205,11 @@ An attack goes on until the retreat rule ends it. No mass/attack flip within
     out and under 45% of the way to them): its kill point on the choke's mouth
     on our side, so the whole arc fires on them as they come through; with no
     such choke, at the massing point. Rally points stay at the massing point.
-  - **Everything else** — a small group, a poke at the concave, a raid on the
+  - **At the concave** (while the army is home): nobody chases — its slots
+    fire on what comes in range, and a real push is the army's fight above
+    (e2bc988e chased pokes through Sidestep's gap into their massed army
+    for ten minutes and lost 10000 more than it killed).
+  - **Everything else** — a small group, a raid on the
     trucks, a spot we were hit at with no attacker in sight
     (`under_attack`/`unit_lost` events, vanished units) → the idle units
     within 12 cells (and, for a small group at the main base, the idle units
@@ -210,7 +225,8 @@ An attack goes on until the retreat rule ends it. No mass/attack flip within
   way round is at most 1.6x as long, as queued attack-move waypoints 10 steps
   apart so the units can't path back through (82bdca3e's first attack went
   through Trapped's gap into their concave).
-- **Raids**: only at enemy expansions our scouts found; more squads the
+- **Raids**: only at their remote expansions — a yard or refinery of theirs
+  25+ cells from their main base (not its edge) — that our scouts found; more squads the
   longer a healthy game goes (at most 35% of the fighters); they kill
   defenders first, break off when outmatched, and join the main army's fight
   as a second prong. From 8:00 a found expansion is raided in force (8+

@@ -27,6 +27,9 @@ class EnemyIntel:
         self.sightings: list[dict] = []          # first sightings of each enemy actor, newest last
         self.fresh: list[dict] = []              # this view's first sightings
         self.first_push_at: int | None = None    # when their fighters first pushed near our base
+        self._main_pushes: list[float] = []      # when their fighters pushed at our main base
+        self._our_buildings: set | None = None
+        self._lost_at: float | None = None       # when a building of ours last went
 
     @staticmethod
     def buildings(view: View) -> Counter:
@@ -38,6 +41,10 @@ class EnemyIntel:
     def update(self, view: View) -> None:
         self._note_sightings(view)
         self._track_pushes(view)
+        ids = {b.id for b in view.buildings if b.id is not None and not b.wreck}
+        if self._our_buildings is not None and self._our_buildings - ids:
+            self._lost_at = view.game_seconds
+        self._our_buildings = ids
         c = self.buildings(view)
         if sum(c.values()) < C.INTEL_MIN_BUILDINGS:
             self._army_read(view)
@@ -119,7 +126,7 @@ class EnemyIntel:
             "first_seen": dict(self.first_seen),
             "recent_sightings": self.sightings[-15:],
             "rules_read": {"opening": self.opening(), "rush_suspected": self.suspect(view),
-                           "turtling": self.turtling(view)},
+                           "turtling": self.turtling(view), "passive": view.enemy_passive},
         }
 
     def _track_pushes(self, view: View) -> None:
@@ -134,6 +141,30 @@ class EnemyIntel:
             self._push_at = view.game_seconds
             if self.first_push_at is None:
                 self.first_push_at = round(view.game_seconds)
+        # At our buildings (not our turrets, not the concave out front): an
+        # attack on us, for the passive read.
+        ours = [b.cell for b in view.buildings if b.cell is not None and not b.wreck and b.type not in C.TURRETS]
+        b2 = C.PASSIVE_PUSH_CELLS ** 2
+        at_ours = [a for a in view.enemy_units if a.cell is not None and not a.wreck and a.type not in C.HARVESTER
+                   and any((a.cell[0] - c[0]) ** 2 + (a.cell[1] - c[1]) ** 2 <= b2 for c in ours)]
+        if sum(cost(a.type) for a in at_ours) >= C.PUSH_SEEN_VALUE:
+            self._main_pushes = (self._main_pushes + [view.game_seconds])[-50:]
+
+    def passive(self, view: View, retreated_at: float | None = None) -> bool:
+        """They don't come out: past ``PASSIVE_READ_SECONDS``, no rush read,
+        no building of ours lost and no push at our buildings (within
+        ``PASSIVE_PUSH_CELLS``) for ``PASSIVE_QUIET_SECONDS`` — their units
+        chasing our retreat (within ``PASSIVE_CHASE_SECONDS`` of
+        ``retreated_at``) don't count, nor do pokes at the concave. Answer: expand early and often, more
+        tanks (e2bc988e: a turtle took 10 harvesters to our 7 while we
+        skirmished in the middle and held for a push that never came)."""
+        t = view.game_seconds
+        if t < C.PASSIVE_READ_SECONDS or self._rush:
+            return False
+        if self._lost_at is not None and t - self._lost_at < C.PASSIVE_QUIET_SECONDS:
+            return False
+        chase = (lambda p: retreated_at is not None and retreated_at <= p <= retreated_at + C.PASSIVE_CHASE_SECONDS)
+        return not any(t - p < C.PASSIVE_QUIET_SECONDS and not chase(p) for p in self._main_pushes)
 
     def turtling(self, view: View) -> bool:
         """They turtle: ``TURTLE_READ_DEFENSES`` ground turrets known, past

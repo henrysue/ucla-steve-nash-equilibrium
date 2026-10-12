@@ -111,6 +111,13 @@ scouts don't walk. Few units seen plus a quiet enemy is a turtle until a look at
 otherwise — expect siege units to be needed, and don't call them "passive macro".
 - The opponent's history is a hypothesis: c1c37a10's advisor kept "passive macro, thin army" from \
 the last game for 13 minutes while this game's turtle out-built us.
+- An army parked on their side of the middle is their concave, not a push. e2bc988e read a turtle \
+as "aggressive" from it (and from history), held all game and put turrets up at home while the \
+turtle out-expanded us 10 harvesters to 7. When situation.intel.enemy_passive is true they are not \
+coming: say so, expand ("now"), keep "balanced"/"more_economy", and let the engine mass tanks \
+(it goes to 70% tanks and three war factories against a passive enemy) for a decisive push.
+- Raid only their remote expansions (a yard or refinery 25+ cells from their main base); the \
+engine won't raid their main base's edge.
 
 EARLY GAME (you are consulted from the first second): situation.scouting is what our scouts \
 have seen — buildings_known, first_seen (enemy type -> game second), recent_sightings, the rules' \
@@ -149,7 +156,8 @@ once instead of waiting for a second answer.
 YOUR READ:
 - enemy_style: what the enemy is playing, from their buildings, army and moves:
   "aggressive": early or repeated pushes, 2+ barracks or an early war factory on one refinery, units \
-  at our base. The engine puts up to 3 turrets on the approach and wins on macro; once their pushes \
+  at our base — attacks on us, not their army standing on their side of the middle. Never while \
+  situation.intel.enemy_passive is true (no attack on us for 4 minutes). The engine puts up to 3 turrets on the approach and wins on macro; once their pushes \
   are spent and their economy is behind ours, punish them (a rusher on one refinery can't rebuild).
   "macro": many refineries or harvesters, fast expansions, few units, no pressure. The engine sends \
   a bigger raid party round the flank to their harvesters and expansions.

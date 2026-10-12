@@ -420,12 +420,15 @@ def _target(view: View, members: list[Actor], advice=None, avoid=(), squad=None)
     s2 = C.RAID_SPREAD_CELLS ** 2
     squad = squad or [u.type for u in members] or would_form(view)
     origin = _centroid(members) or view.base_center
+    remote = remote_expansions(view)
+    by2 = (C.EXPAND_CLUSTER_CELLS + 4) ** 2
 
     def spot(cell):
         """Where the squad goes for ``cell`` (it, or a spot by it out of the
-        turrets' reach), or None: not an expansion, another squad's, or out
-        of reach."""
+        turrets' reach), or None: not at a remote expansion, another
+        squad's, or out of reach."""
         if cell is None or (main is not None and dist2(cell, main) < far2) \
+                or not any(dist2(cell, r) <= by2 for r in remote) \
                 or any(dist2(cell, a) <= s2 for a in avoid):
             return None
         return raid_spot(view, squad, origin, cell)
@@ -455,6 +458,20 @@ def _target(view: View, members: list[Actor], advice=None, avoid=(), squad=None)
         if best is not None:
             return best[0]
     return None
+
+
+def remote_expansions(view: View) -> list[tuple[int, int]]:
+    """Their remote expansions: a construction yard or refinery of theirs we
+    know ``RAID_REMOTE_MIN_CELLS`` or more from their main base. Raids go
+    only there (e2bc988e raided a refinery 18 cells out, their main base's
+    edge, and lost)."""
+    main = enemy_spawn_guess(view)
+    if main is None:
+        return []
+    far2 = C.RAID_REMOTE_MIN_CELLS ** 2
+    return [a.cell for a in list(view.enemy_buildings) + list(view.known_enemy_buildings)
+            if a.type in (C.CONSTRUCTION_YARD, C.REFINERY) and a.cell is not None and not a.wreck
+            and dist2(a.cell, main) >= far2]
 
 
 def would_form(view: View, armor: bool = False) -> list[str]:

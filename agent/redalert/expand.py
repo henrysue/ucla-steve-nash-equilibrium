@@ -202,7 +202,8 @@ class Expansion:
         self._track_defense_requests(view)
         if self.state == "idle":
             if (len(self.done) < C.EXPAND_MAX_EXPANSIONS and self._failures < C.EXPAND_MAX_FAILURES
-                    and t >= self._cooldown_until and self._again(t) and self._gates(view, mode, advice)):
+                    and t >= self._cooldown_until and self._again(t, view.enemy_passive)
+                    and self._gates(view, mode, advice)):
                 site = choose_site(view, exclude=self.sites)
                 if site is not None:
                     self.site, self.ore = site
@@ -267,7 +268,8 @@ class Expansion:
         if self.state in ("scouting", "training") and C.MCV in view.available and not view.units_of(C.MCV):
             # Checked again when it trains, not just when the expansion began
             # (08560d9b: the gates passed at 2:30, the MCV trained at 4:22 with 3 fighters).
-            if outgunned(view) or (behind_on_army(view) and not getattr(self, "_ore_running_out", False)):
+            if not view.enemy_passive and (
+                    outgunned(view) or (behind_on_army(view) and not getattr(self, "_ore_running_out", False))):
                 # Outgunned (or well behind on army, with ore left at home) while preparing: the expansion is called off (MCV
                 # cancelled, the money back, the cooldown); a new one must pass
                 # every gate again. Kept alive, it queued and cancelled its MCV
@@ -329,17 +331,19 @@ class Expansion:
 
     # -- internals ---------------------------------------------------------------
 
-    def _again(self, t: float) -> bool:
+    def _again(self, t: float, passive: bool = False) -> bool:
         """The first expansion any time; later ones ``EXPAND_AGAIN_AFTER_SECONDS``
-        after the last, or sooner once harvesters idle (the ore is running
-        out), or ``EXPAND_AGAIN_STRAPPED_SECONDS`` after it when we are cash
-        strapped while trading even or better (:meth:`_push`)."""
+        after the last (``EXPAND_AGAIN_PASSIVE_SECONDS`` against a ``passive``
+        enemy), or sooner once harvesters idle (the ore is running out), or
+        ``EXPAND_AGAIN_STRAPPED_SECONDS`` after it when we are cash strapped
+        while trading even or better (:meth:`_push`)."""
         if self._last_done_at is None:
             return True
         depleted = self._idle_since is not None and t - self._idle_since >= C.EXPAND_DEPLETED_IDLE_SECONDS
         home_dry = getattr(self, "_ore_running_out", False)   # harvest.HarvestManager says home is mined out
         since = t - self._last_done_at
-        return (depleted or home_dry or since >= C.EXPAND_AGAIN_AFTER_SECONDS
+        return (depleted or home_dry
+                or since >= (C.EXPAND_AGAIN_PASSIVE_SECONDS if passive else C.EXPAND_AGAIN_AFTER_SECONDS)
                 or (self._push(t) and since >= C.EXPAND_AGAIN_STRAPPED_SECONDS))
 
     def _push(self, t: float) -> bool:
@@ -430,19 +434,23 @@ class Expansion:
         # ground: the first three fields run dry around 9:00 (ef66403c: both
         # seats on one expansion until 9:30 at even trades).
         even = abs(view.kills_cost - view.deaths_cost) <= C.EXPAND_EVEN_TRADE_BAND
-        if wish == "wait" and not self._push(view.game_seconds) and not getattr(self, "_ore_running_out", False)                 and not even:
+        passive = view.enemy_passive
+        if wish == "wait" and not self._push(view.game_seconds) and not getattr(self, "_ore_running_out", False) \
+                and not even and not passive:
             return False   # broke and trading even: income beats the advisor's caution
-        # A turtle doesn't come out: take the ground early and out-scale it.
-        earliest = C.EXPAND_EARLIEST_SECONDS if (wish == "now" or view.enemy_turtling) else C.EXPAND_AFTER_SECONDS
+        # A turtle or a passive enemy doesn't come out: take the ground early
+        # and out-scale it — their army at home is no reason to wait.
+        earliest = (C.EXPAND_EARLIEST_SECONDS if (wish == "now" or view.enemy_turtling or passive)
+                    else C.EXPAND_AFTER_SECONDS)
         return (
             view.game_seconds >= earliest
             and len(view.units_of(C.HARVESTER)) >= C.EXPAND_MIN_HARVESTERS
             and _count(view, C.REFINERY) >= C.EXPAND_MIN_REFINERIES
             and view.has_building(C.WAR_FACTORY)
-            and not outgunned(view)
+            and (passive or not outgunned(view))
             # Well behind on army: units first, unless home is running dry (52a77fb1:
-            # an MCV in production at 2-3x behind).
-            and not (behind_on_army(view) and not getattr(self, "_ore_running_out", False))
+            # an MCV in production at 2-3x behind) or they don't come out.
+            and (passive or not (behind_on_army(view) and not getattr(self, "_ore_running_out", False)))
             and mode not in DEFENSIVE and mode is not Mode.RETREAT
             and (view.remaining_seconds is None or view.game_seconds <= C.EXPAND_LAST_START_SECONDS)
         )

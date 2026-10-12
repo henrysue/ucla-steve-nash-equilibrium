@@ -729,12 +729,13 @@ def _raid_army(n_rockets=4, n_rifles=6):
     return units
 
 
-_ENEMY_HARV = {"id": 90, "type": "harv", "x": 20, "y": 40, "hp": 100}   # at an expansion: 20 cells from their main (40,40)
+_ENEMY_HARV = {"id": 90, "type": "harv", "x": 14, "y": 40, "hp": 100}   # at a remote expansion: 26 cells from their main (40,40)
+_EXP_PROC = {"id": 85, "type": "proc", "x": 14, "y": 43, "hp": 100}     # ...whose refinery we know (raids go only there)
 
 
 def test_raid_forms_from_rockets_and_hunts_a_visible_harvester():
     r = Raid()
-    v = _view(_t=200.0, buildings=BASE, units=_raid_army(), visible_enemies=[_ENEMY_HARV])
+    v = _view(_t=200.0, buildings=BASE, units=_raid_army(), visible_enemies=[_ENEMY_HARV], visible_enemy_buildings=[_EXP_PROC])
     r.update(v, Mode.BUILD, scout_id=None)
     assert sorted(r.unit_ids) == [100, 101, 102, 103]
     assert r.orders(v) == [{"cmd": "attack", "units": [100, 101, 102, 103], "target": 90}]
@@ -742,18 +743,18 @@ def test_raid_forms_from_rockets_and_hunts_a_visible_harvester():
 
 def test_raid_waits_for_the_opening_to_pass_and_spares_defenders():
     r = Raid()
-    r.update(_view(_t=100.0, buildings=BASE, units=_raid_army(), visible_enemies=[_ENEMY_HARV]), Mode.BUILD, None)
+    r.update(_view(_t=100.0, buildings=BASE, units=_raid_army(), visible_enemies=[_ENEMY_HARV], visible_enemy_buildings=[_EXP_PROC]), Mode.BUILD, None)
     assert r.unit_ids == []
-    r.update(_view(_t=200.0, buildings=BASE, units=_raid_army(4, 2), visible_enemies=[_ENEMY_HARV]), Mode.BUILD, None)
+    r.update(_view(_t=200.0, buildings=BASE, units=_raid_army(4, 2), visible_enemies=[_ENEMY_HARV], visible_enemy_buildings=[_EXP_PROC]), Mode.BUILD, None)
     assert r.unit_ids == []  # 6 units can't spare 4 and keep 6 defenders
 
 
 def test_raid_targets_a_known_expansion_refinery_but_never_their_main():
     r = Raid()
     v = _view(_t=200.0, buildings=BASE, units=_raid_army(),
-              visible_enemy_buildings=[{"id": 80, "type": "proc", "x": 20, "y": 40, "hp": 100}])
+              visible_enemy_buildings=[{"id": 80, "type": "proc", "x": 14, "y": 40, "hp": 100}])
     r.update(v, Mode.BUILD, None)
-    assert r.orders(v) == [{"cmd": "attack_move", "units": [100, 101, 102, 103], "to": [20, 40]}]
+    assert r.orders(v) == [{"cmd": "attack_move", "units": [100, 101, 102, 103], "to": [14, 40]}]
     main = Raid()
     mv = _view(_t=200.0, buildings=BASE, units=_raid_army(),
                visible_enemy_buildings=[{"id": 80, "type": "proc", "x": 38, "y": 38, "hp": 100}])
@@ -769,26 +770,26 @@ def test_raid_without_a_target_never_forms():
 
 def test_raid_is_released_after_losing_half_then_cools_down():
     r = Raid()
-    r.update(_view(_t=200.0, buildings=BASE, units=_raid_army(), visible_enemies=[_ENEMY_HARV]), Mode.BUILD, None)
+    r.update(_view(_t=200.0, buildings=BASE, units=_raid_army(), visible_enemies=[_ENEMY_HARV], visible_enemy_buildings=[_EXP_PROC]), Mode.BUILD, None)
     survivors = [u for u in _raid_army() if u["id"] not in (100, 101)]
-    r.update(_view(_t=210.0, buildings=BASE, units=survivors, visible_enemies=[_ENEMY_HARV]), Mode.BUILD, None)
+    r.update(_view(_t=210.0, buildings=BASE, units=survivors, visible_enemies=[_ENEMY_HARV], visible_enemy_buildings=[_EXP_PROC]), Mode.BUILD, None)
     assert r.unit_ids == []
-    r.update(_view(_t=230.0, buildings=BASE, units=_raid_army(), visible_enemies=[_ENEMY_HARV]), Mode.BUILD, None)
+    r.update(_view(_t=230.0, buildings=BASE, units=_raid_army(), visible_enemies=[_ENEMY_HARV], visible_enemy_buildings=[_EXP_PROC]), Mode.BUILD, None)
     assert r.unit_ids == []  # still cooling down
-    r.update(_view(_t=280.0, buildings=BASE, units=_raid_army(), visible_enemies=[_ENEMY_HARV]), Mode.BUILD, None)
+    r.update(_view(_t=280.0, buildings=BASE, units=_raid_army(), visible_enemies=[_ENEMY_HARV], visible_enemy_buildings=[_EXP_PROC]), Mode.BUILD, None)
     assert r.unit_ids
 
 
 def test_raid_disbands_when_the_base_needs_defending():
     r = Raid()
-    r.update(_view(_t=200.0, buildings=BASE, units=_raid_army(), visible_enemies=[_ENEMY_HARV]), Mode.BUILD, None)
-    r.update(_view(_t=205.0, buildings=BASE, units=_raid_army(), visible_enemies=[_ENEMY_HARV]), Mode.DEFEND_BASE, None)
+    r.update(_view(_t=200.0, buildings=BASE, units=_raid_army(), visible_enemies=[_ENEMY_HARV], visible_enemy_buildings=[_EXP_PROC]), Mode.BUILD, None)
+    r.update(_view(_t=205.0, buildings=BASE, units=_raid_army(), visible_enemies=[_ENEMY_HARV], visible_enemy_buildings=[_EXP_PROC]), Mode.DEFEND_BASE, None)
     assert r.unit_ids == []
 
 
 def test_the_army_leaves_the_raid_squad_alone():
     agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
-    state = _state(_t=400.0, buildings=BASE, units=_raid_army(4, 10), visible_enemies=[_ENEMY_HARV],  # 4 rifles scout
+    state = _state(_t=400.0, buildings=BASE, units=_raid_army(4, 10), visible_enemies=[_ENEMY_HARV], visible_enemy_buildings=[_EXP_PROC],  # 4 rifles scout
                    military={"army_value": 3000, "visible_enemy_value": 2500})   # massing, not attacking
     orders_ = agent.choose_action(state, CTX).action["orders"]
     raid = [o for o in orders_ if o.get("target") == 90]
@@ -1014,9 +1015,10 @@ def test_advice_drives_the_raid_and_turret_side_while_the_rules_form_the_concave
     rv = _view(_t=200.0, buildings=BASE, units=_raid_army())
     r.update(rv, Mode.BUILD, None, adv)
     assert r.orders(rv) == []                          # its pick is their main field: no raid there
-    far = dataclasses.replace(adv, raid_target_cell=(20, 40))
+    far = dataclasses.replace(adv, raid_target_cell=(14, 41))
+    rv = _view(_t=200.0, buildings=BASE, units=_raid_army(), visible_enemy_buildings=[_EXP_PROC])
     r.update(rv, Mode.BUILD, None, far)
-    assert r.orders(rv)[0]["to"] == [20, 40]           # an expansion: the advisor's pick
+    assert r.orders(rv)[0]["to"] == [14, 41]           # at a remote expansion: the advisor's pick
     # defense_at picks the side of the turret line (within 30 deg of the enemy to the south-east);
     # the rules pick a legal cell on it
     pv = _view(base_center=[10, 10], buildings=[{"id": 10, "type": "fact", "x": 10, "y": 10}], production=[{"item": "pbox", "queue": "Defense", "ready": True}])
@@ -1145,7 +1147,7 @@ def test_raids_use_light_vehicles_when_infantry_is_short_and_spare_other_squads(
     tanks = [{"id": 300 + i, "type": "1tnk", "x": 22, "y": 22, "hp": 100} for i in range(10)]
     guard = [{"id": 400, "type": "e1", "x": 5, "y": 5, "hp": 100}, {"id": 401, "type": "e1", "x": 5, "y": 5, "hp": 100}]
     r = Raid()
-    v = _view(_t=200.0, buildings=BASE, units=tanks + guard, visible_enemies=[_ENEMY_HARV])
+    v = _view(_t=200.0, buildings=BASE, units=tanks + guard, visible_enemies=[_ENEMY_HARV], visible_enemy_buildings=[_EXP_PROC])
     r.update(v, Mode.BUILD, None, taken={400, 401})
     assert len(r.unit_ids) == 4 and not {400, 401} & set(r.unit_ids)
 
@@ -1578,7 +1580,7 @@ def test_a_defended_enemy_expansion_is_left_to_the_main_army():
 
 
 def test_a_visible_harvester_still_comes_first():
-    blds = [{"id": 81, "type": "proc", "x": 42, "y": 13, "hp": 100}]
+    blds = [{"id": 81, "type": "proc", "x": 42, "y": 13, "hp": 100}, _EXP_PROC]
     r = Raid()
     v = _view(_t=300.0, buildings=BASE, units=_raid_army(), visible_enemy_buildings=blds, visible_enemies=[_ENEMY_HARV])
     r.update(v, Mode.BUILD, None)
@@ -1935,7 +1937,7 @@ def _settle(lead, view, ids):
 
 
 def test_squad_lead_directs_its_squad_and_is_validated():
-    v = _view(_t=300.0, visible_enemies=[_ENEMY_HARV])
+    v = _view(_t=300.0, visible_enemies=[_ENEMY_HARV], visible_enemy_buildings=[_EXP_PROC])
     lead = squadlead.SquadLead("raid", _FakeLead({"action": "attack", "target_id": 90, "cell": None, "reasoning": "kill it"}),
                                log=lambda *_: None, clock=lambda: 0.0, interval=0.0)
     d = _settle(lead, v, [100, 101])
@@ -1965,7 +1967,7 @@ def test_the_raid_follows_its_lead_and_falls_back_to_rules_on_failure():
     good = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0,
                          squad_lead_factory=leads(_FakeLead({"action": "move", "target_id": None, "cell": [33, 33], "reasoning": ""})))
     good._raid.unit_ids = [100, 101, 102]
-    v = _view(_t=300.0, buildings=BASE, units=_raid_army(), visible_enemies=[_ENEMY_HARV])
+    v = _view(_t=300.0, buildings=BASE, units=_raid_army(), visible_enemies=[_ENEMY_HARV], visible_enemy_buildings=[_EXP_PROC])
     good._raid_orders(v)
     good._leads["raid"]._future.result()
     assert good._raid_orders(v) == [{"cmd": "attack_move", "units": [100, 101, 102], "to": [33, 33]}]
@@ -2943,7 +2945,8 @@ def test_no_squad_claims_during_an_attack_and_raiders_join_it():
     assert g.unit_ids == []
     r = Raid()
     r.unit_ids, r._formed_size = [30, 31, 32], 3
-    r.update(dataclasses.replace(v, enemy_units=read(_raw(visible_enemies=[_ENEMY_HARV])).enemy_units), Mode.ALL_IN, None)
+    seen = read(_raw(visible_enemies=[_ENEMY_HARV], visible_enemy_buildings=[_EXP_PROC]))
+    r.update(dataclasses.replace(v, enemy_units=seen.enemy_units, enemy_buildings=seen.enemy_buildings), Mode.ALL_IN, None)
     assert r.unit_ids == [30, 31, 32]                               # the raid stays: it is the second prong
     assert r.orders(v, main_fight=(30, 30)) == [{"cmd": "attack_move", "units": [30, 31, 32], "to": [30, 30]}]
 
@@ -3241,7 +3244,7 @@ def test_a_mid_game_bank_buys_a_second_war_factory_and_a_deeper_tank_queue():
 def _raid_with(units, enemies, t=400.0):
     r = Raid()
     r.unit_ids, r._formed_size = [u["id"] for u in units], len(units)
-    return r, _view(_t=t, buildings=BASE, units=units, visible_enemies=enemies)
+    return r, _view(_t=t, buildings=BASE, units=units, visible_enemies=enemies, visible_enemy_buildings=[_EXP_PROC])
 
 
 _RAIDERS = [{"id": 30 + i, "type": "e3", "x": 30, "y": 30, "hp": 100} for i in range(4)]
@@ -3253,8 +3256,8 @@ def test_the_raid_kills_defenders_before_harvesters():
     r, v = _raid_with(_RAIDERS, [_THEIR_HARV, rifle])
     assert r.situation(v)[0] == "fight"
     assert r.orders(v) == [{"cmd": "attack", "units": [30, 31, 32, 33], "target": 80}]
-    far = [dict(u, x=20, y=36) for u in _RAIDERS]
-    r2, v2 = _raid_with(far, [dict(_THEIR_HARV, x=20, y=38)])                # at an expansion
+    far = [dict(u, x=14, y=36) for u in _RAIDERS]
+    r2, v2 = _raid_with(far, [dict(_THEIR_HARV, x=14, y=38)])                # at a remote expansion
     assert r2.orders(v2) == [{"cmd": "attack", "units": [30, 31, 32, 33], "target": 90}]   # undefended: the truck
 
 
@@ -3538,7 +3541,7 @@ def test_the_advisor_sees_what_the_rules_see():
     for key in ("mode", "confirming_attack", "massing_point", "our_unit_value", "enemy_unit_value_known",
                 "enemy_turrets_known", "raid_squad", "scouts", "intel", "scouting"):
         assert key in seen, key
-    assert set(seen["intel"]) == {"enemy_opening", "enemy_turtling", "threat_alarm", "their_base_seen_at"}
+    assert set(seen["intel"]) == {"enemy_opening", "enemy_turtling", "enemy_passive", "threat_alarm", "their_base_seen_at"}
 
 
 # -- placement keeps off the trucks' roads and away from units (a2952a6d) -------------------------
@@ -3725,12 +3728,15 @@ def test_after_the_opening_the_depot_then_refinery_three_only_when_not_outgunned
 # -- match 89356b51 ------------------------------------------------------------
 
 
-def test_a_lone_scout_draws_the_idle_units_near_it():
+def test_a_scout_at_the_concave_draws_nobody_out_of_it():
+    """e2bc988e: chasing pokes at the concave ran our idle units through
+    Sidestep's gap into their massed army for ten minutes. The concave fires
+    from its slots (its stance); nobody chases."""
     army = [{"id": 100 + i, "type": "e1", "x": 6 + i % 3, "y": 6, "hp": 100, "idle": True} for i in range(10)]
     army += [{"id": 200, "type": "1tnk", "x": 8, "y": 8, "hp": 100, "idle": True}]
     v = _view(_t=300.0, buildings=BASE, units=army, visible_enemies=[{"id": 900, "type": "dog", "x": 9, "y": 9}])
     out, used = executor.respond(v, Mode.BUILD, None, frozenset())
-    assert out == [{"cmd": "attack_move", "units": [100 + i for i in range(10)] + [200], "to": [9, 9]}]
+    assert out == [] and used == set()
     busy = _view(_t=300.0, buildings=BASE, units=[dict(u, idle=False) for u in army],
                  visible_enemies=[{"id": 900, "type": "dog", "x": 9, "y": 9}])
     assert executor.respond(busy, Mode.BUILD, None, frozenset()) == ([], set())   # units with orders keep them
@@ -3837,7 +3843,7 @@ def test_the_massing_army_fights_a_push_it_beats_and_holds_the_line_otherwise():
     assert o and all((x["to"][0] - line[0]) ** 2 + (x["to"][1] - line[1]) ** 2 <= 7 ** 2 for x in o)
     poke = _view(_t=500.0, buildings=BASE, units=[dict(u, idle=True) for u in rifles], visible_enemies=push[:1])
     out, used = executor.respond(poke, Mode.BUILD, None, frozenset())
-    assert out[0]["to"] == [18, 18] and len(out[0]["units"]) == 10              # a poke: every idle unit answers it
+    assert out == []                                                           # a poke: the concave holds its slots
     busy = _view(_t=500.0, buildings=BASE, units=rifles, visible_enemies=push[:1])  # nobody idle: they keep going
     assert executor.respond(busy, Mode.BUILD, None, frozenset()) == ([], set())
 
@@ -3868,17 +3874,17 @@ def test_an_aggressive_enemy_gets_turrets_and_more_army_skips_the_extra_refinery
 
 def test_against_a_macro_enemy_the_raid_party_is_bigger_and_flanks():
     import types
-    macro = types.SimpleNamespace(enemy_style="macro", raid_target_id=None, raid_target_cell=(20, 40))
+    macro = types.SimpleNamespace(enemy_style="macro", raid_target_id=None, raid_target_cell=(14, 41))
     army = [{"id": 30 + i, "type": "e3", "x": 6, "y": 6, "hp": 100} for i in range(14)]
-    v = _view(_t=300.0, buildings=BASE, units=army)
+    v = _view(_t=300.0, buildings=BASE, units=army, visible_enemy_buildings=[_EXP_PROC])
     r = Raid()
     r.update(v, Mode.BUILD, None, macro)
     assert len(r.unit_ids) == C.RAID_SQUAD_SIZE_MACRO
     o = r.orders(v)
-    assert len(o) == 2 and o[1].get("queued") and o[1]["to"] == [20, 40]     # round the side, then in
+    assert len(o) == 2 and o[1].get("queued") and o[1]["to"] == [14, 41]     # round the side, then in
     plain = Raid()
     plain.update(v, Mode.BUILD, None, types.SimpleNamespace(enemy_style="standard", raid_target_id=None,
-                                                             raid_target_cell=(20, 40)))
+                                                             raid_target_cell=(14, 41)))
     assert len(plain.unit_ids) == C.RAID_SQUAD_SIZE and len(plain.orders(v)) == 1
 
 
@@ -4976,14 +4982,13 @@ def test_a_raid_far_away_is_not_trading_up():
     assert not c.traded_up(later)                                             # a refinery and a truck: not their army
 
 
-def test_the_massing_army_guards_itself_against_a_small_attack():
+def test_pokes_at_the_massing_army_draw_nobody_out_of_the_concave():
     scout._INTERCEPT.update(at=None, facing=None, group=[], seen=-1e9)
     army = [{"id": 100 + i, "type": "e1", "x": 13, "y": 13, "hp": 100, "idle": True} for i in range(12)]
     pokers = [{"id": 900, "type": "e1", "x": 18, "y": 18, "hp": 100}, {"id": 901, "type": "e1", "x": 19, "y": 18, "hp": 100}]
     v = _view(_t=500.0, buildings=BASE, units=army, visible_enemies=pokers)
     out, used = executor.respond(v, Mode.BUILD, None, frozenset())
-    assert out[0]["cmd"] == "attack_move" and out[0]["to"] in ([18, 18], [19, 18])
-    assert len(used) == 12                                                    # every idle unit answers
+    assert out == [] and used == set()                                        # its slots fire on them (e2bc988e)
     from agent.redalert import advisor as ra_adv
     off = ra_adv.parse_advice({"guard": "off"}, _view(), 500.0)
     held, _ = executor.respond(v, Mode.BUILD, None, frozenset(), advice=off)
@@ -5079,7 +5084,7 @@ def test_idle_units_near_an_attacked_spot_hit_back():
     foe = [{"id": 900, "type": "e1", "x": 21, "y": 19, "hp": 100}]
     o, _ = executor.respond(_view(_t=300.0, buildings=BASE, units=idle + busy + far, visible_enemies=foe),
                             Mode.BUILD, None, frozenset(), hits=[(20, 20)])
-    assert o == [{"cmd": "attack_move", "units": [100, 101, 102, 103, 104], "to": [21, 19]}]   # at the attacker
+    assert o == []                                            # an attacker at the concave: its own fire (e2bc988e)
 
 
 # -- the review fixes: turrets are not army, blind from the start, the outpost's guard, unstick ----------
@@ -5605,3 +5610,66 @@ def test_a_scout_back_from_round_their_base_looks_at_their_army():
     seen = [{"id": 900, "type": "e1", "x": 31, "y": 41, "hp": 100}]           # their fighters in sight on the way
     corps.orders(_view(_t=150.0, units=here, visible_enemies=seen))
     assert corps.army_looked_at == 150.0
+
+
+# -- a passive enemy: out-expand it, out-build it in tanks (e2bc988e) ------------------------------
+
+from agent.redalert.intel import EnemyIntel as _Intel  # noqa: E402
+
+
+def test_an_enemy_that_never_attacks_reads_passive_and_a_push_at_our_buildings_ends_it():
+    i = _Intel()
+    blds = [{"id": 10, "type": "fact", "x": 4, "y": 4}, {"id": 11, "type": "tent", "x": 8, "y": 4}]
+    quiet = lambda t, **kw: _view(_t=t, buildings=blds, **kw)  # noqa: E731
+    i.update(quiet(100.0))
+    assert not i.passive(quiet(200.0))                                         # too early to tell
+    i.update(quiet(300.0))
+    assert i.passive(quiet(300.0))
+    # Their army at the concave out front is not an attack; at our buildings it is.
+    push = [{"id": 900 + k, "type": "3tnk", "x": 6, "y": 6, "hp": 100} for k in range(2)]
+    i.update(quiet(400.0, visible_enemies=push))
+    assert not i.passive(quiet(410.0))
+    assert i.passive(quiet(410.0), retreated_at=380.0)                         # chasing our retreat: not a push
+    assert i.passive(quiet(400.0 + C.PASSIVE_QUIET_SECONDS + 1))
+
+
+def test_against_a_passive_enemy_we_expand_early_and_often_even_behind():
+    from agent.redalert.expand import Expansion
+    behind = {"army_value": 1000, "visible_enemy_value": 6000}                 # their army at home is big
+    e = Expansion()
+    e.update(_exp_view(t=200.0, military=behind), Mode.BUILD)
+    assert e.state == "idle"                                                   # not passive: wait
+    e.update(dataclasses.replace(_exp_view(t=200.0, military=behind), enemy_passive=True), Mode.BUILD)
+    assert e.state == "scouting"                                               # passive: take the ground
+    assert e._again(400.0 + C.EXPAND_AGAIN_PASSIVE_SECONDS, passive=True) or e._last_done_at is None
+
+
+def test_against_a_passive_enemy_more_tanks_and_war_factories():
+    tanks = [{"id": 30 + k, "type": "3tnk", "x": 5, "y": 5, "hp": 100} for k in range(6)]
+    rifles = [{"id": 50 + k, "type": "e1", "x": 5, "y": 5, "hp": 100} for k in range(4)]
+    v = _view(_t=500.0, buildings=BASE, units=tanks + rifles, available_production=["3tnk", "e1"])
+    cost = lambda k: v.unit_costs.get(k, C.DEFAULT_UNIT_COST)  # noqa: E731
+    share = 6 * cost("3tnk") / (6 * cost("3tnk") + 4 * cost("e1"))
+    assert C.TANK_VALUE_SHARE < share < C.TANK_VALUE_SHARE_PASSIVE
+    assert not executor.tanks_lag(v, "3tnk") and executor.tanks_lag(dataclasses.replace(v, enemy_passive=True), "3tnk")
+    eco = {"cash": 0, "ore": 500, "resource_capacity": 8000, "power_provided": 600, "power_drained": 100}
+    base = _ECON_BASE + [{"id": 15, "type": "powr"}, {"id": 16, "type": "fix"}, {"id": 18, "type": "powr"}]
+    early = _view(_t=300.0, buildings=base, units=_harvs(1), economy=eco)
+    weap = {"cmd": "build", "item": "weap"}
+    assert weap not in buildplan.next_build_orders(early)                      # 5:00, poor: one war factory
+    assert buildplan.next_build_orders(dataclasses.replace(early, enemy_passive=True)) == [weap]
+    two = base + [{"id": 17, "type": "weap"}, {"id": 60, "type": "fact"}, {"id": 61, "type": "fact"}]
+    three = dataclasses.replace(_view(_t=600.0, buildings=two, units=_harvs(1), economy=eco), enemy_passive=True)
+    assert buildplan.next_build_orders(three) == [weap]                        # two expansions: a third
+
+
+def test_raids_go_only_to_remote_expansions_not_their_main_base_edge():
+    from agent.redalert.raid import Raid
+    edge = [{"id": 80, "type": "proc", "x": 24, "y": 34, "hp": 100}]           # 17 cells from their main (40,40)
+    r = Raid()
+    r.update(_view(_t=500.0, buildings=BASE, units=_raid_army(), visible_enemy_buildings=edge,
+                   visible_enemies=[dict(_ENEMY_HARV, x=22, y=36)]), Mode.BUILD, None)
+    assert r.unit_ids == []
+    r.update(_view(_t=500.0, buildings=BASE, units=_raid_army(), visible_enemy_buildings=[_EXP_PROC],
+                   visible_enemies=[_ENEMY_HARV]), Mode.BUILD, None)
+    assert r.unit_ids

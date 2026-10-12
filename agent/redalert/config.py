@@ -113,6 +113,17 @@ TURTLE_DEFENSES = 2                # this many known enemy defenses: lean on tan
 TURTLE_READ_DEFENSES = 4
 TURTLE_READ_SECONDS = 150.0
 TURTLE_QUIET_SECONDS = 300.0
+# A passive enemy: past PASSIVE_READ_SECONDS, no push at our main base and no
+# building of ours lost for PASSIVE_QUIET_SECONDS (their units chasing our
+# retreat for PASSIVE_CHASE_SECONDS after it don't count). It doesn't come
+# out: we expand early and often and build more tanks (e2bc988e: a turtle
+# out-expanded us, 10 harvesters to 7, and out-built us behind its pillboxes).
+PASSIVE_READ_SECONDS = 240.0
+PASSIVE_QUIET_SECONDS = 240.0
+PASSIVE_CHASE_SECONDS = 90.0
+PASSIVE_PUSH_CELLS = 8             # their fighters (PUSH_SEEN_VALUE) this close to a building of ours (not a turret): an attack
+EXPAND_AGAIN_PASSIVE_SECONDS = 60.0  # against a passive enemy the next expansion this soon after the last
+TANK_VALUE_SHARE_PASSIVE = 0.7       # ...and this share of our combat value in tanks
 PUSH_NEAR_BASE_CELLS = 20          # enemy fighters worth PUSH_SEEN_VALUE this close to a yard of ours = a push
 PUSH_SEEN_VALUE = 1000
 SIEGE_MAX_TURTLE = 6               # against a turtle: about one siege unit per turret, up to this...
@@ -320,6 +331,7 @@ FIELD_WATCH_SEEN_CELLS = 5         # ...each seen once any unit of ours has been
 EXPANSION_ROAM_SECONDS = 480.0     # from 8:00 a second roamer checks the remote fields for their expansions...
 RAID_EXPANSION_SECONDS = 480.0     # ...and a raid at a found expansion goes in force:
 RAID_EXPANSION_SQUAD = 8           # at least this many (army and MIN_DEFENDERS allowing)
+RAID_REMOTE_MIN_CELLS = 25         # raids only at a yard or refinery of theirs this far from their main base (a remote expansion)
 RAID_TARGET_ODDS = 2.0             # a raid goes only where the squad clearly beats the units known there (strength.odds)
 RAID_TURRET_CLEAR_CELLS = 7        # infantry raids keep this far from known enemy turrets (a pillbox reaches ~6)...
 RAID_ROUTE_MAX_RATIO = 2.0         # ...walking round them when the way round is at most this much longer...

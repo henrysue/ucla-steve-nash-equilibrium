@@ -103,11 +103,15 @@ def next_build_orders(view: View, expansion_ore: tuple[int, int] | None = None,
         weap = _available(view, C.WAR_FACTORY)
         cost = view.unit_costs.get(weap or "") or C.KNOWN_COSTS.get(C.WAR_FACTORY, C.DEFAULT_UNIT_COST)
         floating = view.bank_floating
+        passive = view.enemy_passive
         factories = 1
-        if view.has_building(C.SERVICE_DEPOT) and view.game_seconds >= C.SECOND_FACTORY_SECONDS:
+        if view.has_building(C.SERVICE_DEPOT) and (view.game_seconds >= C.SECOND_FACTORY_SECONDS or passive):
             standing = sum(1 for b in view.buildings if b.type == C.WAR_FACTORY and not b.wreck)
-            factories = 2 if (money >= cost or floating) else 1
-            if floating and standing >= 2:
+            yards = sum(1 for b in view.buildings if b.type == C.CONSTRUCTION_YARD and not b.wreck)
+            factories = 2 if (money >= cost or floating or passive) else 1
+            # A third with money floating, or against a passive enemy once two
+            # expansions stand: the tanks to out-build it come from them.
+            if standing >= 2 and (floating or (passive and yards >= 3)):
                 factories = C.MAX_WAR_FACTORIES
         if weap and _count_built_and_queued(view, (C.WAR_FACTORY,)) < min(factories, C.MAX_WAR_FACTORIES):
             return [orders.build(weap)]
@@ -132,7 +136,7 @@ def next_build_orders(view: View, expansion_ore: tuple[int, int] | None = None,
     # advisor reads that our army needs the money (balance "more_army").
     # Behind on army too (52a77fb1 kept adding refineries at 2-3x behind).
     from .brain import behind_on_army
-    short = outgunned(view) or units_first or behind_on_army(view)
+    short = units_first or (not view.enemy_passive and (outgunned(view) or behind_on_army(view)))
 
     # Interrupt 2c: more refineries over time (each comes with a harvester).
     if (not short and money >= C.REFINERY_ADD_FUNDS
@@ -256,8 +260,11 @@ def build_reserve(view: View, units_first: bool = False) -> float:
 
     cost = lambda item: view.unit_costs.get(item) or C.KNOWN_COSTS.get(item, C.DEFAULT_UNIT_COST)  # noqa: E731
     owed = 0.0
-    behind = (units_first and view.game_seconds >= C.BEHIND_AFTER_SECONDS) or behind_on_army(view)
-    short = outgunned(view) or behind
+    # A passive enemy doesn't come for our economy: only the advisor's
+    # "more_army" holds the MCV and refinery money back then.
+    behind = (units_first and view.game_seconds >= C.BEHIND_AFTER_SECONDS) or (
+        not view.enemy_passive and behind_on_army(view))
+    short = behind or (not view.enemy_passive and outgunned(view))
     for p in view.production:
         item = str(p.get("item") or "").lower()
         if p.get("ready") or not item:

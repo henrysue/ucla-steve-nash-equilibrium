@@ -160,6 +160,7 @@ class View:
     # left (harvest.HarvestManager's forecast): expand, no more harvesters.
     ore_running_dry: bool = False
     enemy_turtling: bool = False             # intel: turrets up, army home, no pushes (siege them)
+    enemy_passive: bool = False              # intel: no attack on us for PASSIVE_QUIET_SECONDS (out-expand them)
     # Our scouts finished a round of their base within SCOUT_FRESH_SECONDS.
     enemy_base_scouted: bool = False
     # Where our raid squads hold part of their army: an attack then goes for

@@ -67,7 +67,7 @@ def plan(
     # warning (intel.suspect: one refinery seen early) only adds the warning turret.
     under_attack = mode in (Mode.DEFEND_RUSH, Mode.DEFEND_BASE) or scout.early_push_warning(view) or threat or warning
     # The advisor reads an aggressive enemy: turrets up on the approach (we win on macro).
-    under_attack = under_attack or (getattr(advice, "enemy_style", None) == "aggressive"
+    under_attack = under_attack or (getattr(advice, "enemy_style", None) == "aggressive" and not view.enemy_passive
                                     and getattr(advice, "confidence", 1.0) >= C.ADVISOR_ACT_CONFIDENCE)
     spar_def = sparring.defense(view, under_attack) if sparring is not None else None
     if spar_def is not None:   # sparring: the rusher's none, the turtler's ring
@@ -352,7 +352,8 @@ def ahead_in_queue(view: View, queue: str, item: str) -> str | None:
 
 def tanks_lag(view: View, tank: str | None) -> bool:
     """A main battle tank is offered and tanks hold less than
-    ``TANK_VALUE_SHARE`` of our combat value (queued tanks count)."""
+    ``TANK_VALUE_SHARE`` of our combat value (``TANK_VALUE_SHARE_PASSIVE``
+    against a passive enemy: we out-build it; queued tanks count)."""
     if tank not in C.MAIN_BATTLE_TANKS:
         return False
     cost = lambda item: view.unit_costs.get(item, C.DEFAULT_UNIT_COST)  # noqa: E731
@@ -360,7 +361,8 @@ def tanks_lag(view: View, tank: str | None) -> bool:
     tanks += sum(cost(t) for t in C.TANK_PREFERENCE for _ in range(view.queued_count(t)))
     total = sum(cost(u.type) for u in view.combat_units) + tanks - sum(
         cost(u.type) for u in view.combat_units if u.type in C.VEHICLE_TYPES)
-    return total <= 0 or tanks < C.TANK_VALUE_SHARE * total
+    share = C.TANK_VALUE_SHARE_PASSIVE if view.enemy_passive else C.TANK_VALUE_SHARE
+    return total <= 0 or tanks < share * total
 
 
 def _should_add_rocket(view: View, ratio: int) -> bool:
@@ -569,8 +571,11 @@ def respond(view: View, mode: Mode, scout_id: int | None, reserved: frozenset, h
     """The idle units answer what comes near them, one attack-move per
     target:
 
-    - a poke at the concave (an enemy group within ``RESPOND_RADIUS_CELLS`` of
-      it) draws every idle unit near the group — the concave guards itself;
+    - while the army is home, an enemy group near the concave (within
+      ``RESPOND_RADIUS_CELLS`` of it) draws nobody: the concave fires from its slots (its stance) and a
+      real push is the army's fight (army_contact) — chasing pokes ran our
+      idle units through Sidestep's gap into their massed army for ten
+      minutes (e2bc988e lost 10000 more than it killed that way);
     - anything else — a scout or raiders in the base or at the trucks
       (a small group at the main base may also draw idle units at home), a
       spot we were hit at with no attacker in sight (agent.DamageScan) — draws
@@ -604,6 +609,8 @@ def respond(view: View, mode: Mode, scout_id: int | None, reserved: frozenset, h
     targets: list[tuple[tuple[int, int], bool, list]] = []    # (cell, small group at the main base, the group)
     groups = [g for g in enemy_groups(view) if not any(a.id in army_fight for a in g)]
     for g in sorted(groups, key=lambda g: -_value(view, g)):
+        if mode not in AGGRESSIVE and held is not None and any(dist2(a.cell, held[0]) <= r2 for a in g):
+            continue                                       # at the concave (the army home): its own fire
         centre = _centre(g)
         cell = min(g, key=lambda a: dist2(a.cell, centre)).cell
         small_home = (_value(view, g) <= C.SMALL_RAID_VALUE
@@ -632,17 +639,15 @@ def respond(view: View, mode: Mode, scout_id: int | None, reserved: frozenset, h
         used.update(u.id for u in already)
         near = [u for u in idle if u.id not in used
                 and (dist2(u.cell, cell) <= r2 or (small_home and _at_home(view, u.cell)))]
-        poke = bool(group) and held is not None and any(dist2(a.cell, held[0]) <= r2 for a in group)
-        if not poke:                                       # just enough, nearest first
-            near.sort(key=lambda u: dist2(u.cell, cell))
-            theirs = [a.type for a in group]
-            picked: list = list(already)
-            for u in near:
-                if len(picked) >= C.RESPONSE_MIN_UNITS and (
-                        not theirs or strength.odds(view, [p.type for p in picked], theirs) >= C.RESPOND_ODDS):
-                    break
-                picked.append(u)
-            near = [u for u in picked if u not in already]
+        near.sort(key=lambda u: dist2(u.cell, cell))       # just enough, nearest first
+        theirs = [a.type for a in group]
+        picked: list = list(already)
+        for u in near:
+            if len(picked) >= C.RESPONSE_MIN_UNITS and (
+                    not theirs or strength.odds(view, [p.type for p in picked], theirs) >= C.RESPOND_ODDS):
+                break
+            picked.append(u)
+        near = [u for u in picked if u not in already]
         if not near:
             continue
         ids = [u.id for u in near][:orders.MAX_UNITS_PER_ORDER]
