@@ -151,8 +151,9 @@ class View:
     # Cells of footprints the engine recently moved a building away from
     # (agent.py's placement audit): no candidate spot may cover them.
     failed_cells: frozenset = frozenset()
-    # The most enemy army we saw in the last ENEMY_PEAK_SECONDS, less what we
-    # killed since (agent.py): the fog hides most of it most of the time.
+    # Their army as we believe it (agent.py): the most we saw in the last
+    # ENEMY_PEAK_SECONDS, or what they could have built since we saw them
+    # (ENEMY_GROWTH_SHARE of our own spending), less what we killed since.
     enemy_army_peak: float = 0.0
     enemy_seen_recent: float = 0.0           # the most enemy army actually seen lately (no rebuild guess)
     # The fields our harvesters work have less than EXPAND_LEAD_SECONDS of ore
@@ -167,6 +168,9 @@ class View:
     # The enemy unit types our scouts first saw in the last ENEMY_MIX_SECONDS
     # (intel.recent_mix): their mix, for our counter-mix.
     enemy_mix: tuple = ()
+    # Money beyond the build order's needs has stayed over FLOAT_FUNDS for
+    # FLOAT_SECONDS (agent.py): production can't keep up with the income.
+    bank_floating: bool = False
 
     # -- derived, cheap helpers ----------------------------------------------
 

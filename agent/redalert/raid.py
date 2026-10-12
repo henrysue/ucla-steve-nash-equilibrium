@@ -188,6 +188,12 @@ class Raid:
         size = C.RAID_SQUAD_SIZE_MACRO if getattr(self._advice, "enemy_style", None) == "macro" else C.RAID_SQUAD_SIZE
         # The squad grows with the army: a big army idling at home annoys them more.
         size = max(size, min(C.RAID_SQUAD_MAX, len(fighters) // C.RAID_ARMY_SHARE))
+        # Mid-game, an expansion our scouts found goes in force: the army
+        # doesn't just mass at home while their economy grows.
+        from .expand import enemy_expansions
+
+        if view.game_seconds >= C.RAID_EXPANSION_SECONDS and enemy_expansions(view):
+            size = max(size, C.RAID_EXPANSION_SQUAD)
         if len(fighters) < C.MIN_DEFENDERS + size:
             size = C.RAID_SQUAD_SIZE      # can't spare the bigger party
         size = min(size + self.size_bonus, len(fighters) - C.MIN_DEFENDERS)

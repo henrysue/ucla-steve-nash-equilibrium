@@ -81,11 +81,17 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
   game time, spread over the fields by load (at most 3 per field).
 - **Expansions**: to the natural after the depot (from ~3:45), then every 2
   minutes or sooner when the ore forecast runs dry; up to 3; none after 14:00.
-  The MCV is escorted by the outpost, never the army.
+  The MCV is escorted by the outpost, never the army. While it drives there
+  no order sends our units onto the yard's spot (posts, concave slots, rally
+  points land beside it), and anyone standing on it steps off; the MCV waits
+  10 s for them before trying elsewhere (d2d8dc27: 170 s of shuffling).
 - **Production matches the army**: one infantry queue and one vehicle queue
   (more buildings only speed them up), and the vehicle queue carries tanks,
   harvesters, the MCV and siege units. So a second war factory once the depot
-  stands (from 6:00, its price in hand) and at most 3 barracks.
+  stands (from 6:00, its price in hand) and at most 3 barracks. Money
+  floating — 1000+ beyond the build order's needs for 30 s, the queues can't
+  spend the income — buys the second war factory without its price in hand,
+  then a third, then barracks up to 3 (d2d8dc27 floated 1000-3000 from 11:00).
 - **Behind on army** (odds at most 1/1.3) or outgunned: units first — no money
   held for an MCV, refineries, the depot or the dome. A lost war factory is
   rebuilt first. Broke with no harvester: sell a spare building.
@@ -102,9 +108,12 @@ a turtle about one per turret (3–6) before any attack.
 
 - **0–3 min**: two scouts round the back of their base: their opening. A
   scout still alive after a circuit (these, and every later base check) goes
-  on to look where their army masses (the mouth of their choke) before it
-  returns to its post: their army's size and make-up, and a fresh look for
-  the attack's blind check.
+  on to look where their army masses (the mouth of their choke) and, if
+  nobody is there, on into the front of their base (a turtle's army waits at
+  home) before it returns to its post: their army's size and make-up, and a
+  fresh look for the attack's blind check — which counts only once it saw
+  their fighters or stood in front of their base (d2d8dc27 counted an empty
+  spot and attacked 3250 on an estimate of 250).
 - **Routes**: every scout trip is walked in attack-move legs of 8 steps round
   the chokes, the front of their base (15 cells, 70° either side of their way
   out) and 8 cells round every turret we know; circuits start at the side of
@@ -113,7 +122,10 @@ a turtle about one per turret (3–6) before any attack.
   cut across their front, and the flank picket died five times in the gap).
 - **From 5:00**: pickets on the flanks of their exit (never the centre lane),
   the lane scouts peek at their exit every 45 s, one runs round their base
-  every 2.5 min, a roamer checks remote ore fields for expansions.
+  every 2.5 min, a roamer checks remote ore fields for expansions — from
+  beyond each field's four extreme ore cells, since a yard can stand 12 cells
+  from a big field's centre (d2d8dc27 missed one so). From 8:00 a second
+  roamer joins it. Each expansion found is logged and flagged for the raids.
 - **Rush read**: one refinery with an early war factory or second barracks;
   600 of army seen before 2:30 or 1000 before 4:00; or two scouts lost early.
   Turrets are not army.
@@ -124,10 +136,15 @@ a turtle about one per turret (3–6) before any attack.
 
 `strength.odds`: each side's damage per second against the other's armor mix
 times its hit points (Lanchester); 1.0 is even and it reads like a value
-ratio. Turrets fight in it. Their army is what we saw lately less half our
-kills since — no guess; the part we believe in but can't see counts as a
-mirror of our own mix. Every decision reads it: attack, retreat, meeting a
-push, raids, the base's defense, behind/outgunned.
+ratio. Turrets fight in it. Their army is what we saw lately or, if more,
+what they could have built since: it grows by 0.6 of what we spend on our
+army (both sides have the same money) and loses half our kills; it stops
+growing once their main base is razed and the unseen part fades while our
+army stands in their base and finds nothing. (Seen-only read 1.3-12x low on
+our self-play logs; this is unbiased there with half the error.) The part we
+believe in but can't see counts as a mirror of our own mix. Every decision
+reads it: attack, retreat, meeting a push, raids, the base's defense,
+behind/outgunned. The blind check reads only what was actually seen.
 
 ### 5. The army's one decision each view (first match wins)
 
@@ -191,7 +208,8 @@ An attack goes on until the retreat rule ends it. No mass/attack flip within
 - **Raids**: only at enemy expansions our scouts found; more squads the
   longer a healthy game goes (at most 35% of the fighters); they kill
   defenders first, break off when outmatched, and join the main army's fight
-  as a second prong.
+  as a second prong. From 8:00 a found expansion is raided in force (8+
+  units): the army doesn't just mass while their economy grows.
 - **Retreat**: a plain move to the main turret line; regroup there.
 - **Micro**: focus fire on the weakest enemy fighter within 4 cells; siege
   units shell turrets.

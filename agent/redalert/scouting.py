@@ -11,6 +11,12 @@ about 5 cells, and one ring of 11 missed a second barracks at 1:48 (match
 scout dying back there after seeing the base was worth it. Once round, each
 pulls back to a picket post and is kept for later checks.
 
+The roamer (``p0``, and ``x0`` too from ``EXPANSION_ROAM_SECONDS``) walks
+round the remote ore fields where an enemy expansion can hide, seeing each
+from beyond its four extreme ore cells (:func:`field_points`): an expansion
+found there is remembered (memory.py) and flagged for the raid squads
+(expand.enemy_expansions, raid.py).
+
 From ``MID_PICKET_SECONDS`` up to ``MID_PICKETS`` scouts hold picket posts
 spread left and right across the approach (``PICKET_ALONG`` of the way to
 the enemy, ``PICKET_SPREAD`` sideways): advance warning of a push. Pickets
@@ -43,11 +49,13 @@ class ScoutCorps:
         self._peek_at: dict[str, float] = {}          # role -> when its last look at their exit ended
         self._peeking: set = set()                    # roles out on a look right now
         self._army_check: set = set()                 # roles that, round their base, now look at their army
+        self._look_leg: dict[int, int] = {}           # scout id -> its look's stop (0 their exit, 1 their base)
         self.base_seen_at: float | None = None
         self.army_looked_at: float | None = None      # when a scout last looked where their army masses (look)
         self._sent: dict[int, tuple[int, int]] = {}  # unit id -> waypoint last ordered
         self._start_at: dict[str, float] = {}        # role -> when its circuit may set out (the stagger)
-        self._site_seen: dict[tuple[int, int], float] = {}   # remote ore field -> when a scout last saw it
+        self._site_seen: dict[tuple[int, int], float] = {}   # remote field watch point -> when we last saw it
+        self._roam_to: dict[str, tuple[int, int]] = {}       # roamer role -> the watch point it is walking to
         self._checks = 0                             # mid-game base checks run (they alternate rings)
         self.scouts_lost = 0                         # scouts killed this match
         self._legs: dict = {}                        # unit id -> (destination, its remaining legs)
@@ -83,7 +91,8 @@ class ScoutCorps:
             return ["left", "right"]
         if t < C.MID_PICKET_SECONDS:
             return ["left", "right"]                 # back on their posts after the circuit
-        return ["left", "right"] + [f"p{i}" for i in range(max(0, C.MID_PICKETS - 2))]
+        roamers = ["x0"] if t >= C.EXPANSION_ROAM_SECONDS else []
+        return ["left", "right"] + [f"p{i}" for i in range(max(0, C.MID_PICKETS - 2))] + roamers
 
     def update(self, view: View, taken: set = frozenset()) -> None:
         """Drop dead scouts (remembering where they died), fill empty roles."""
@@ -152,14 +161,14 @@ class ScoutCorps:
                 continue                             # sweeping (above)
             if self.look is not None and not look_done:
                 look_done = True
-                if dist2(u.cell, self.look) <= 36:
+                moves = self._look(view, u)
+                if moves is None:
                     self.look = None                 # seen: a fresh look at them
-                    self.base_seen_at = self.army_looked_at = view.game_seconds
                 else:
-                    out += self._go(view, u, self.look)[0]
+                    out += moves
                     continue
-            if role == "p0" and view.game_seconds >= C.MID_PICKET_SECONDS:
-                site = self._next_remote_site(view, u)
+            if role in ("p0", "x0") and view.game_seconds >= C.MID_PICKET_SECONDS:
+                site = self._next_remote_site(view, u, role)
                 if site is not None:                 # the roamer: remote fields they may have expanded to
                     out += self._go(view, u, site)[0]
                     continue
@@ -326,7 +335,7 @@ class ScoutCorps:
         extra = max(0, C.MID_PICKETS - 2)
         for i in range(extra):
             slots[f"p{i}"] = -1.0 + 2.0 * (i + 1) / (extra + 1)
-        k = slots.get(role, 0.0)
+        k = slots.get("p0" if role == "x0" else role, 0.0)   # the second roamer waits where the first does
         dx, dy = enemy[0] - base[0], enemy[1] - base[1]
         length = (dx * dx + dy * dy) ** 0.5 or 1.0
         px, py = -dy / length, dx / length
@@ -374,15 +383,28 @@ class ScoutCorps:
             points.append(_open_cell(view, (enemy[0] + cx * radius, enemy[1] + cy * radius)))
         return [_reachable(view, q) for q in points]
 
-    def _next_remote_site(self, view: View, u) -> tuple[int, int] | None:
-        """The nearest remote ore field not seen for ``REMOTE_SITE_RECHECK_SECONDS``
-        (match f333a770: neither seat found any of the other's 2-3 expansions)."""
+    def _next_remote_site(self, view: View, u, role: str = "p0") -> tuple[int, int] | None:
+        """The nearest watch point round a remote ore field (:func:`field_points`)
+        that none of our units has seen for ``REMOTE_SITE_RECHECK_SECONDS``
+        and the other roamer isn't walking to (match f333a770: neither seat
+        found any of the other's 2-3 expansions; d2d8dc27: the scouts passed
+        the middle of a field and missed the yard at its far end)."""
         t = view.game_seconds
-        for s in remote_sites(view):
-            if dist2(u.cell, s) <= 36:
-                self._site_seen[s] = t
-        due = [s for s in remote_sites(view) if t - self._site_seen.get(s, -1e9) >= C.REMOTE_SITE_RECHECK_SECONDS]
-        return min(due, key=lambda s: dist2(s, u.cell)) if due else None
+        points = [p for s in remote_sites(view) for p in field_points(view, s)]
+        ours = [a.cell for a in view.units if a.cell is not None and not a.wreck]
+        r2 = C.FIELD_WATCH_SEEN_CELLS ** 2
+        for p in points:
+            if any(dist2(c, p) <= r2 for c in ours):
+                self._site_seen[p] = t
+        taken = {q for r, q in self._roam_to.items() if r != role and r in self.roles}
+        due = [p for p in points if t - self._site_seen.get(p, -1e9) >= C.REMOTE_SITE_RECHECK_SECONDS
+               and p not in taken]
+        nxt = min(due, key=lambda p: dist2(p, u.cell)) if due else None
+        if nxt is None:
+            self._roam_to.pop(role, None)
+        else:
+            self._roam_to[role] = nxt
+        return nxt
 
     # -- internals ---------------------------------------------------------------
 
@@ -433,31 +455,56 @@ class ScoutCorps:
         return self._go(view, u, post)[0] if post else []
 
     def _army_look(self, view: View, role: str, u) -> list[dict] | None:
-        """A scout back from round their base looks where their army masses
-        (scout.enemy_staging: the mouth of the choke on their side): the
-        army's size and make-up, which a lap of the base, kept clear of their
-        front, doesn't see (cb4bfc36 attacked on such a lap into riflemen
-        massed at Yuriko's exit). Done once it is there, or sees their
-        fighters, or gets as near as it can: the look counts (the attack's
-        blind check) when it saw them or stood there. None when done."""
+        """A scout back from round their base looks at their army
+        (:meth:`_look`), then goes back to its post. None when done."""
+        moves = self._look(view, u)
+        if moves is None:
+            self._army_check.discard(role)
+        return moves
+
+    def _look(self, view: View, u) -> list[dict] | None:
+        """A look at their army: first where it masses (scout.enemy_staging:
+        the mouth of the choke on their side), then, if nobody is there, on
+        into the front of their base — a turtle's army waits at home
+        (d2d8dc27: the scout found the open-ground spot empty, the look
+        counted, and the attack met 3250 on an estimate of 250). It counts
+        (``army_looked_at``: the attack's blind check) once the scout sees
+        their fighters, or stands in front of their base and sees none.
+        Walked in legs round the chokes (:meth:`_go`); a stop it can't reach
+        is passed. None when done."""
         from .scout import enemy_staging
 
-        spot = enemy_staging(view)
-        r2 = (C.SCOUT_FLEE_CELLS + 2) ** 2
-        saw = any(a.cell is not None and not a.wreck and a.type not in C.HARVESTER and dist2(a.cell, u.cell) <= r2
-                  for a in view.enemy_units)
-        if spot is None:
-            self._army_check.discard(role)
+        if any(a.cell is not None and not a.wreck and a.type not in C.HARVESTER
+               and dist2(a.cell, u.cell) <= (C.SCOUT_FLEE_CELLS + 2) ** 2 for a in view.enemy_units):
+            return self._looked(view, u)
+        stops = [s for s in (enemy_staging(view), self.base_front(view)) if s is not None]
+        if not stops:
+            self._look_leg.pop(u.id, None)       # nowhere to look: no credit
             return None
-        if saw or dist2(u.cell, spot) <= 36:
-            self._army_check.discard(role)
-            self.base_seen_at = self.army_looked_at = view.game_seconds
+        leg = self._look_leg.get(u.id, 0)
+        while leg < len(stops):
+            if dist2(u.cell, stops[leg]) > 36:
+                moves, arrived = self._go(view, u, stops[leg])
+                if not arrived:
+                    self._look_leg[u.id] = leg
+                    return moves
+            leg += 1                                 # there (or as near as it gets), nobody: the next stop
+        return self._looked(view, u)
+
+    def _looked(self, view: View, u) -> None:
+        self._look_leg.pop(u.id, None)
+        self.base_seen_at = self.army_looked_at = view.game_seconds
+        return None
+
+    def base_front(self, view: View) -> tuple[int, int] | None:
+        """The front of their main base: ``LOOK_BASE_FRONT_CELLS`` from their
+        spawn toward us, where a turtle's army stands."""
+        from .scout import _forward
+
+        enemy, base = enemy_spawn_guess(view), view.base_center
+        if enemy is None or base is None:
             return None
-        moves, arrived = self._go(view, u, spot)
-        if arrived:                                  # as near as it gets, and nothing there to see
-            self._army_check.discard(role)
-            return None
-        return moves
+        return _reachable(view, _forward(view, tuple(enemy), tuple(base), C.LOOK_BASE_FRONT_CELLS, tuple(enemy)))
 
     @staticmethod
     def _claim(view: View, taken: set) -> int | None:
@@ -490,6 +537,42 @@ def _step_toward(cell, target, cells: float) -> tuple[int, int]:
     length = (dx * dx + dy * dy) ** 0.5 or 1.0
     s = min(cells, length)
     return round(cell[0] + dx / length * s), round(cell[1] + dy / length * s)
+
+
+_FIELD_POINTS: dict = {}
+
+
+def field_points(view: View, ore) -> list[tuple[int, int]]:
+    """Where a scout stands to see all round the ore field at ``ore``: beyond
+    its northmost, southmost, westmost and eastmost ore cells,
+    ``FIELD_WATCH_OUT_CELLS`` further out from the field's centre, on ground
+    we can reach. An enemy yard unfolds beside the ore, which on a big field
+    is far from its centre (d2d8dc27: scouts passed (20,30) by the field at
+    (25,23) and never saw the yard at (29,11), 12 cells off)."""
+    from .expand import _ore_components
+    from .scout import _open_cell
+
+    key = (id(view.ore_cells), tuple(ore))
+    hit = _FIELD_POINTS.get(key)
+    if hit is not None and hit[0] is view.ore_cells:
+        return hit[1]
+    comp = next((c for c in _ore_components(view) if tuple(ore) in c), None) or [tuple(ore)]
+    cx, cy = sum(c[0] for c in comp) / len(comp), sum(c[1] for c in comp) / len(comp)
+    out: list[tuple[int, int]] = []
+    # Ties go to the cell nearest the field's middle (not a corner, which
+    # would look the same way as its neighbour).
+    for e in (min(comp, key=lambda c: (c[1], abs(c[0] - cx))), max(comp, key=lambda c: (c[1], -abs(c[0] - cx))),
+              min(comp, key=lambda c: (c[0], abs(c[1] - cy))), max(comp, key=lambda c: (c[0], -abs(c[1] - cy)))):
+        dx, dy = e[0] - cx, e[1] - cy
+        d = (dx * dx + dy * dy) ** 0.5 or 1.0
+        p = _reachable(view, _open_cell(view, (e[0] + dx / d * C.FIELD_WATCH_OUT_CELLS,
+                                               e[1] + dy / d * C.FIELD_WATCH_OUT_CELLS)))
+        if all(dist2(p, q) > C.FIELD_WATCH_SEEN_CELLS ** 2 for q in out):
+            out.append(p)
+    if len(_FIELD_POINTS) > 64:
+        _FIELD_POINTS.clear()
+    _FIELD_POINTS[key] = (view.ore_cells, out)
+    return out
 
 
 def remote_sites(view: View) -> list[tuple[int, int]]:

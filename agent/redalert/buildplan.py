@@ -93,20 +93,28 @@ def next_build_orders(view: View, expansion_ore: tuple[int, int] | None = None,
     # of its kind only speeds it up, so the vehicle queue — tanks, harvesters,
     # the MCV and siege units in one line — is the bottleneck for the pros'
     # ~half-tank army: a second war factory once the service depot stands
-    # (from SECOND_FACTORY_SECONDS, money for it in hand), and barracks only
-    # up to MAX_BARRACKS (they used to reach 5 while tanks lagged and the
-    # infantry was held back for them).
+    # (from SECOND_FACTORY_SECONDS, its price in hand or money floating),
+    # and barracks only up to MAX_BARRACKS (they used to reach 5 while tanks
+    # lagged and the infantry was held back for them). Money floating
+    # (view.bank_floating: the queues can't spend the income) adds a third
+    # war factory, then barracks up to MAX_BARRACKS whatever the schedule.
     money = view.cash + view.ore
     if view.has_building(C.WAR_FACTORY) and not recovering(view):
         weap = _available(view, C.WAR_FACTORY)
         cost = view.unit_costs.get(weap or "") or C.KNOWN_COSTS.get(C.WAR_FACTORY, C.DEFAULT_UNIT_COST)
-        second = (view.has_building(C.SERVICE_DEPOT) and view.game_seconds >= C.SECOND_FACTORY_SECONDS
-                  and money >= cost)
-        if weap and _count_built_and_queued(view, (C.WAR_FACTORY,)) < (C.MAX_WAR_FACTORIES if second else 1):
+        floating = view.bank_floating
+        factories = 1
+        if view.has_building(C.SERVICE_DEPOT) and view.game_seconds >= C.SECOND_FACTORY_SECONDS:
+            standing = sum(1 for b in view.buildings if b.type == C.WAR_FACTORY and not b.wreck)
+            factories = 2 if (money >= cost or floating) else 1
+            if floating and standing >= 2:
+                factories = C.MAX_WAR_FACTORIES
+        if weap and _count_built_and_queued(view, (C.WAR_FACTORY,)) < min(factories, C.MAX_WAR_FACTORIES):
             return [orders.build(weap)]
         rax = _available(view, C.BARRACKS)
         if rax and money >= C.BARRACKS_ADD_FUNDS and not any(view.queued_count(b) for b in C.BARRACKS):
-            if _count_built_and_queued(view, C.BARRACKS) < barracks_target(view):
+            want = C.MAX_BARRACKS if floating else barracks_target(view)
+            if _count_built_and_queued(view, C.BARRACKS) < want:
                 return [orders.build(rax)]
 
     # Interrupt 2d: radar dome for the end game (unlocks siege units).

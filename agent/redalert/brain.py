@@ -177,10 +177,11 @@ def _defend(view: View) -> Mode:
 
 
 def enemy_estimate(view: View) -> float:
-    """Their army's value as we know it, no guess: the most we see or
-    remember now, or saw lately less half our kills since
-    (``enemy_army_peak``). Units only. Decisions add trades (traded_up)
-    and a scout's look before a blind attack (blind_estimate)."""
+    """Their army's value as we believe it: the most we see or remember
+    now, or saw lately, or what they could have built since we last saw it
+    (``enemy_army_peak``: agent.py), less half our kills since. Units only.
+    Decisions add trades (traded_up) and a scout's look before a blind
+    attack (blind_estimate, which reads only what was actually seen)."""
     return max(view.enemy_army_value, view.enemy_army_peak, 0.0)
 
 

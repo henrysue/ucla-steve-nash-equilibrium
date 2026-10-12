@@ -57,6 +57,7 @@ class Expansion:
         self._deploy_at: float | None = None        # when the last deploy was sent...
         self._deploy_cell: tuple[int, int] | None = None   # ...from this cell
         self._bad_spots: set = set()                # cells a deploy was refused at
+        self._blocked_since: float | None = None    # our own units on the yard's spot, since
         self._idle_since: float | None = None       # harvesters idling: the ore is running out
         self._strapped_since: float | None = None   # money under EXPAND_STRAPPED_FUNDS since
         self._even = False                          # trades about even or better (last view)
@@ -78,6 +79,41 @@ class Expansion:
         the whole army escorted the MCV for two minutes and left the main
         open; f333a770 walked it behind both bases)."""
         return self.state == "moving" and getattr(self, "_site_forward", True)
+
+    def keep_out(self) -> frozenset:
+        """The yard's cells and ``EXPAND_KEEP_OUT_CELLS`` round them while the
+        MCV is on its way to deploy: no order of ours sends a unit there
+        (executor; d2d8dc27: two scout posts and the concave stood on the
+        natural's spot and the MCV shuffled between spots for 170 s)."""
+        if self.state != "moving" or self.site is None:
+            return frozenset()
+        x, y, m = self.site[0], self.site[1], C.EXPAND_KEEP_OUT_CELLS
+        return frozenset((x + i, y + j) for i in range(-1 - m, 2 + m) for j in range(-1 - m, 3 + m))
+
+    def clear_orders(self, view: View) -> list[dict]:
+        """Our units (not the MCV) standing on the yard's cells, moved off to
+        the nearest open cell outside :meth:`keep_out` (fighters attack-move,
+        trucks just move). Only once the MCV is near: before that they are
+        just kept from being sent there."""
+        mcv = next((u for u in view.units if u.id == self.mcv_id and u.cell is not None), None)
+        keep = self.keep_out()
+        if mcv is None or not keep or dist2(mcv.cell, self.site) > (C.EXPAND_DEPLOY_RADIUS_CELLS + 4) ** 2:
+            return []
+        foot = set(_yard_cells(self.site))
+        on_it = [u for u in view.units if u.id is not None and u.id != self.mcv_id and u.cell in foot and not u.wreck]
+        if not on_it:
+            return []
+        spot = outside(view, self.site, keep)
+        if spot is None:
+            return []
+        walkers = [u.id for u in on_it if u.type in C.HARVESTER or u.type == C.MCV]
+        fighters = [u.id for u in on_it if u.id not in walkers]
+        out = []
+        if fighters:
+            out.append(orders.attack_move(fighters[:orders.MAX_UNITS_PER_ORDER], list(spot)))
+        if walkers:
+            out.append(orders.move(walkers[:orders.MAX_UNITS_PER_ORDER], list(spot)))
+        return out
 
     def track_site(self, view: View) -> None:
         """Whether the site lies forward (nearer the enemy than our base)."""
@@ -270,12 +306,24 @@ class Expansion:
             self._bad_spots.add(self._deploy_cell)
             self._deploy_at = None
         if not deploy_ok(mcv.cell, view, mcv.id, self._bad_spots):
+            # Only our own units in the way: they step off (clear_orders) and
+            # the MCV waits for them, instead of walking off to another spot
+            # where they stand again.
+            mine = has_room(mcv.cell, view) and mcv.cell not in self._bad_spots and not any(
+                a.cell in set(_yard_cells(mcv.cell)) for a in view.enemy_units if not a.wreck)
+            if mine:
+                if self._blocked_since is None:
+                    self._blocked_since = t
+                if t - self._blocked_since < C.EXPAND_CLEAR_WAIT_SECONDS:
+                    return []
+            self._blocked_since = None
             spot = nearest_deploy_spot(mcv.cell, view, mcv.id, self._bad_spots)
             if spot is None:
                 return []                    # nothing in reach: the move timeout takes over
             self.site = spot
             return [orders.move([mcv.id], list(spot))]
         # The yard unfolds around the MCV's own cell: deploy where it stands.
+        self._blocked_since = None
         self._deploy_at, self._deploy_cell = t, mcv.cell
         return [orders.deploy(mcv.id)]
 
@@ -492,6 +540,28 @@ def deploy_ok(cell, view: View, mcv_id=None, bad=()) -> bool:
     foot = set(_yard_cells(cell))
     return not any(u.id != mcv_id and u.cell in foot and not u.wreck
                    for u in list(view.units) + list(view.enemy_units))
+
+
+def outside(view: View, cell, keep: frozenset) -> tuple[int, int] | None:
+    """The nearest open cell to ``cell`` outside ``keep`` (within
+    ``EXPAND_ROOM_SEARCH_CELLS``), clear of terrain and our buildings."""
+    from .buildplan import _cells
+
+    r = C.EXPAND_ROOM_SEARCH_CELLS
+    taken = set()
+    for b in view.buildings:
+        if b.cell is not None and not b.wreck:
+            taken.update(_cells(b.type, b.cell))
+    near = sorted(((cell[0] + i, cell[1] + j) for i in range(-r, r + 1) for j in range(-r, r + 1)),
+                  key=lambda c: dist2(c, cell))
+    for c in near:
+        if c in keep or c in view.blocked_cells or c in taken:
+            continue
+        if view.bounds is not None and not (view.bounds[0] <= c[0] < view.bounds[0] + view.bounds[2]
+                                            and view.bounds[1] <= c[1] < view.bounds[1] + view.bounds[3]):
+            continue
+        return c
+    return None
 
 
 def nearest_deploy_spot(cell, view: View, mcv_id=None, bad=()) -> tuple[int, int] | None:

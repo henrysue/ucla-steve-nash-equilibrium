@@ -1345,6 +1345,32 @@ def test_a_second_war_factory_once_the_depot_stands():
     assert weap not in buildplan.next_build_orders(_view(_t=400.0, buildings=no_depot, units=_harvs(1), economy=eco))
     poor = dict(eco, ore=1500)
     assert weap not in buildplan.next_build_orders(_view(_t=400.0, buildings=base, units=_harvs(1), economy=poor))
+    # Money floating (the queues can't spend it): no need for its price in hand.
+    floating = dataclasses.replace(_view(_t=400.0, buildings=base, units=_harvs(1), economy=poor), bank_floating=True)
+    assert buildplan.next_build_orders(floating) == [weap]
+
+
+def test_floating_money_adds_a_third_war_factory_then_barracks():
+    """d2d8dc27 floated 1000-3000 from 11:00 with every queue full."""
+    eco = {"cash": 0, "ore": 1500, "resource_capacity": 8000, "power_provided": 600, "power_drained": 100}
+    base = _ECON_BASE + [{"id": 15, "type": "powr"}, {"id": 16, "type": "fix"}, {"id": 17, "type": "weap"},
+                         {"id": 18, "type": "powr"}, {"id": 20, "type": "tent"}]   # 2 war factories, 2 barracks
+    weap, rax = {"cmd": "build", "item": "weap"}, {"cmd": "build", "item": "tent"}
+    v = _view(_t=700.0, buildings=base, units=_harvs(1), economy=eco)
+    assert weap not in buildplan.next_build_orders(v)                          # two stand: enough unless floating
+    assert buildplan.next_build_orders(dataclasses.replace(v, bank_floating=True)) == [weap]
+    three = base + [{"id": 19, "type": "weap"}]
+    v3 = dataclasses.replace(_view(_t=700.0, buildings=three, units=_harvs(1), economy=eco), bank_floating=True)
+    assert buildplan.next_build_orders(v3) == [rax]                            # then the barracks, up to the cap
+
+
+def test_money_floats_only_when_it_stays_beyond_the_build_orders_needs():
+    agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
+    rich = {"cash": 0, "ore": 2500}
+    assert not agent._floating(_view(_t=600.0, buildings=_ECON_BASE, economy=rich))
+    assert not agent._floating(_view(_t=620.0, buildings=_ECON_BASE, economy=rich))
+    assert agent._floating(_view(_t=631.0, buildings=_ECON_BASE, economy=rich))   # FLOAT_SECONDS of it
+    assert not agent._floating(_view(_t=640.0, buildings=_ECON_BASE, economy={"cash": 0, "ore": 300}))
 
 
 def test_even_rich_queues_at_most_two_deep():
@@ -1411,6 +1437,34 @@ def test_expansion_scouts_then_trains_moves_and_deploys(monkeypatch):
     e.update(_exp_view(t=335.0, buildings=yard), Mode.BUILD)
     assert e.state == "idle" and e.sites == [(site[0] + 1, site[1] + 1)]     # done, at the yard's centre
     assert e.refinery_ore(_exp_view(t=336.0, buildings=yard)) is not None    # a refinery by the new ore next
+
+
+def test_our_units_step_off_the_yard_spot_and_nobody_is_sent_onto_it():
+    """d2d8dc27: two scout posts and the concave stood on the natural's spot;
+    the MCV shuffled between spots for 170 s instead of deploying."""
+    e = Expansion()
+    e.state, e.site, e.mcv_id = "moving", (20, 8), 70
+    keep = e.keep_out()
+    assert (20, 8) in keep and (20, 10) in keep and (25, 8) not in keep
+    mcv = {"id": 70, "type": "mcv", "x": 20, "y": 8, "hp": 100}
+    squatter = {"id": 61, "type": "e1", "x": 21, "y": 9, "hp": 100}
+    v = _exp_view(t=330.0, units=[mcv, squatter])
+    clear = e.clear_orders(v)
+    assert clear and clear[0]["units"] == [61] and tuple(clear[0]["to"]) not in keep
+    assert e.orders(v) == []                                                   # the MCV waits for it to step off
+    assert e.orders(_exp_view(t=332.0, units=[mcv])) == [{"cmd": "deploy", "units": [70]}]
+    # Any order of ours aimed at the spot (a post, a concave slot) lands beside it.
+    sent = executor._off_the_yard(v, [ra_orders.attack_move([5], [21, 9]), ra_orders.move([70], [20, 8])], keep, 70)
+    assert tuple(sent[0]["to"]) not in keep and sent[1]["to"] == [20, 8]      # not the MCV's own move
+
+
+def test_the_mcv_tries_another_spot_if_our_units_stay_on_its_spot():
+    e = Expansion()
+    e.state, e.site, e.mcv_id = "moving", (20, 8), 70
+    stuck = [{"id": 70, "type": "mcv", "x": 20, "y": 8, "hp": 100}, {"id": 61, "type": "e1", "x": 21, "y": 9, "hp": 100}]
+    assert e.orders(_exp_view(t=330.0, units=stuck)) == []
+    later = e.orders(_exp_view(t=330.0 + C.EXPAND_CLEAR_WAIT_SECONDS + 1, units=stuck))
+    assert later and later[0]["cmd"] == "move"                                 # waited long enough: elsewhere
 
 
 def test_expansion_aborts_when_the_site_is_contested():
@@ -3698,7 +3752,37 @@ def test_what_we_saw_of_their_army_counts_until_we_kill_it():
     agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
     assert agent._enemy_peak(_view(_t=700.0, military={"visible_enemy_value": 4000, "kills_cost": 20000})) == 4000
     assert agent._enemy_peak(_view(_t=760.0, military={"visible_enemy_value": 1400, "kills_cost": 21000})) == 3500
-    assert agent._enemy_peak(_view(_t=900.0, military={"visible_enemy_value": 1400, "kills_cost": 21000})) == 1400
+    # Out of sight is not gone: past the sighting window it is still there.
+    assert agent._enemy_peak(_view(_t=900.0, military={"visible_enemy_value": 1400, "kills_cost": 21000})) == 3500
+
+
+def test_their_army_grows_unseen_as_ours_does():
+    """d2d8dc27 attacked at 5:18 on an estimate of 250 into a 3250 army: what
+    we spend on our army they could spend on theirs (ENEMY_GROWTH_SHARE)."""
+    agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
+    assert agent._enemy_peak(_view(_t=100.0, military={"army_value": 1000, "visible_enemy_value": 300})) == 300
+    grown = agent._enemy_peak(_view(_t=300.0, military={"army_value": 4000, "deaths_cost": 500}))
+    assert grown == pytest.approx(300 + C.ENEMY_GROWTH_SHARE * 3500)
+    # Our kills come off it; seeing more than we believe raises it.
+    after = agent._enemy_peak(_view(_t=310.0, military={"army_value": 4000, "deaths_cost": 500, "kills_cost": 1000}))
+    assert after == pytest.approx(grown - C.KILL_ARMY_SHARE * 1000)
+    assert agent._enemy_peak(_view(_t=320.0, military={"army_value": 4000, "deaths_cost": 500, "kills_cost": 1000,
+                                                       "visible_enemy_value": 5000})) == 5000
+
+
+def test_the_unseen_army_fades_while_ours_stands_in_their_base_and_stops_growing_when_razed():
+    agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
+    agent._enemy_peak(_view(_t=600.0, military={"army_value": 8000, "visible_enemy_value": 3000}))
+    agent._enemy_peak(_view(_t=800.0, military={"army_value": 9000, "visible_enemy_value": 0}))
+    believed = agent._believed
+    agent._at_their_base = lambda view: True              # our army in their base, nothing there
+    for t in range(810, 1000, 10):
+        agent._enemy_peak(_view(_t=float(t), military={"army_value": 9000}))
+    assert agent._believed < 0.05 * believed
+    agent._at_their_base = lambda view: False
+    agent._hunting = True                                 # their base razed: nothing builds an army
+    agent._enemy_peak(_view(_t=1010.0, military={"army_value": 20000}))
+    assert agent._believed < 0.05 * believed
 
 
 def test_the_advisors_attack_goes_at_even_odds_not_below():
@@ -4059,7 +4143,8 @@ def test_the_estimate_counts_what_they_rebuilt_since_we_saw_them():
                                                  "army_value": 1600, "deaths_cost": 9900}))
     peak = agent._enemy_peak(_view(_t=601.0, military={"visible_enemy_value": 0, "kills_cost": 11900,
                                                         "army_value": 2300, "deaths_cost": 9900}))
-    assert peak == 1200 - 300                                                 # seen, less half our kills: no rebuild guess
+    # seen, less half our kills, plus what they could rebuild while we built 700
+    assert peak == pytest.approx(1200 - 300 + C.ENEMY_GROWTH_SHARE * 700)
 
 
 def test_no_finishing_straight_after_a_retreat():
@@ -4181,9 +4266,50 @@ def test_a_roaming_picket_checks_remote_fields_and_the_raid_goes_there_first():
     corps.roles = {"p0": 30}
     roamer = dataclasses.replace(v, units=read(_raw(units=[{"id": 30, "type": "e1", "x": 20, "y": 20, "hp": 100}])).units)
     o = corps.orders(roamer)
-    assert o and tuple(o[0]["to"]) in sites                                   # off to a remote field, not its post
+    from agent.redalert.scouting import field_points
+    watch = [p for s in sites for p in field_points(v, s)]
+    assert o and tuple(o[0]["to"]) in watch                                   # off round a remote field, not its post
     from agent.redalert import raid as ra_raid
     assert ra_raid._target(v, []) is None                                      # unscouted fields: the scouts' job, no raid
+
+
+def test_a_field_is_checked_all_round_so_a_yard_at_its_far_end_is_seen():
+    """d2d8dc27: scouts passed the near side of a long field and never saw the
+    enemy yard at its far end, 12 cells from its centre."""
+    from agent.redalert.observe import dist2
+    from agent.redalert.scouting import field_points
+    ore = tuple((20 + i, 20 + j) for i in range(4) for j in range(14))        # a field 14 cells long
+    v = dataclasses.replace(_view(_t=400.0, buildings=BASE), ore_cells=ore)
+    points = field_points(v, (21, 27))
+    yard = (21, 15)                                                            # beyond its north end
+    assert any(dist2(p, yard) <= C.FIELD_WATCH_SEEN_CELLS ** 2 for p in points)
+    assert len(points) >= 3                                                    # and its other sides
+
+
+def test_a_second_roamer_checks_the_fields_from_8_00_and_they_split_them():
+    ore = [(4 + i, 40 + j) for i in range(4) for j in range(3)] + [(40 + i, 4 + j) for i in range(4) for j in range(3)]
+    corps = ScoutCorps()
+    assert "x0" not in corps.wanted(_view(_t=400.0))
+    assert "x0" in corps.wanted(_view(_t=500.0))
+    v = dataclasses.replace(_view(_t=500.0, buildings=BASE), ore_cells=tuple(ore))
+    corps.roles = {"p0": 30, "x0": 31}
+    units = read(_raw(units=[{"id": 30, "type": "e1", "x": 20, "y": 20, "hp": 100},
+                             {"id": 31, "type": "e1", "x": 21, "y": 20, "hp": 100}])).units
+    o = corps.orders(dataclasses.replace(v, units=units))
+    dests = {o_["units"][0]: tuple(o_["to"]) for o_ in o}
+    assert dests[30] != dests[31]                                              # not both to the same spot
+
+
+def test_a_found_expansion_is_raided_in_force_from_8_00():
+    from agent.redalert.raid import Raid
+    ore = tuple((40 + i, 4 + j) for i in range(4) for j in range(3))
+    rifles = [{"id": 100 + i, "type": "e3", "x": 10, "y": 10, "hp": 100} for i in range(20)]
+    yard = [{"id": 900, "type": "fact", "x": 41, "y": 8}]                      # their expansion, far from their main
+    for t, want in ((400.0, False), (500.0, True)):
+        v = dataclasses.replace(_view(_t=t, buildings=BASE, units=rifles, visible_enemy_buildings=yard), ore_cells=ore)
+        r = Raid()
+        r.update(v, Mode.BUILD, None)
+        assert (len(r.unit_ids) >= C.RAID_EXPANSION_SQUAD) is want
 
 
 def test_a_fresh_look_at_a_weak_enemy_starts_an_attack():
@@ -5361,8 +5487,15 @@ def test_a_scout_back_from_round_their_base_looks_at_their_army():
     assert o and o[0]["units"] == [30]
     assert corps.army_looked_at is None
     there = [{"id": 30, "type": "e1", "x": spot[0], "y": spot[1], "hp": 100, "idle": True}]
+    front = corps.base_front(v)
     corps.orders(_view(_t=140.0, units=there))
-    assert corps.army_looked_at == 140.0 and "left" not in corps._army_check   # looked: back to its post
+    # Nobody where they mass: not a look yet — on into the front of their
+    # base, where a turtle's army waits (d2d8dc27).
+    assert corps.army_looked_at is None and "left" in corps._army_check
+    assert corps._legs[30][0] == tuple(front)
+    inside = [{"id": 30, "type": "e1", "x": front[0], "y": front[1], "hp": 100, "idle": True}]
+    corps.orders(_view(_t=160.0, units=inside))
+    assert corps.army_looked_at == 160.0 and "left" not in corps._army_check   # looked: back to its post
     corps._army_check.add("left")
     seen = [{"id": 900, "type": "e1", "x": 31, "y": 41, "hp": 100}]           # their fighters in sight on the way
     corps.orders(_view(_t=150.0, units=here, visible_enemies=seen))

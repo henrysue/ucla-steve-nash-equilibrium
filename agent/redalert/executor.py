@@ -52,6 +52,10 @@ def plan(
     placed = buildplan.placement_orders(
         view, getattr(advice, "defense_at", None), job["ore"] if job else None, place_def, depleted, home,
         expansion_site=job["site"] if job else None, clearing=clearing)
+    # The expansion's yard spot while its MCV drives there: whoever stands on
+    # it steps off, and no order sends anyone onto it (_off_the_yard).
+    keep_out = expansion.keep_out() if hasattr(expansion, "keep_out") else frozenset()
+    placed = placed + (expansion.clear_orders(view) if hasattr(expansion, "clear_orders") else [])
     # Units stepping off a building's spot sit out the army's orders this view
     # (the army code would walk them straight back).
     clearing_ids = {i for o in placed if o.get("cmd") in ("move", "attack_move") for i in o.get("units") or ()}
@@ -85,7 +89,29 @@ def plan(
     # outpost, not the army); it edges forward while an attack is confirmed.
     out += _army_orders(view, mode, scout_id, reserved=frozenset(raid_ids) | clearing_ids | responders, advice=advice,
                         flank_via=flank_via, stage_override=probe, hunt=hunt, hunt_points=hunt_points, fan=fan)
-    return _keep_clear(out, placed, clearing_ids)
+    return _off_the_yard(view, _keep_clear(out, placed, clearing_ids), keep_out,
+                         getattr(expansion, "mcv_id", None))
+
+
+def _off_the_yard(view: View, out: list[dict], keep: frozenset, mcv_id) -> list[dict]:
+    """Every order sending our units (or a rally point) into ``keep`` — the
+    expansion's yard spot while its MCV drives there — sent to the nearest
+    cell outside it instead: scout posts, concave slots and rally points
+    near a natural would otherwise stand on it (d2d8dc27)."""
+    if not keep:
+        return out
+    from .expand import outside
+
+    fixed = []
+    for o in out:
+        to = o.get("to")
+        if (o.get("cmd") in ("move", "attack_move", "rally") and isinstance(to, list) and len(to) == 2
+                and tuple(to) in keep and o.get("units") != [mcv_id]):
+            spot = outside(view, tuple(to), keep)
+            if spot is not None:
+                o = {**o, "to": list(spot)}
+        fixed.append(o)
+    return fixed
 
 
 def _keep_clear(out: list[dict], placed: list[dict], clearing_ids: set) -> list[dict]:

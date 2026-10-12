@@ -96,7 +96,9 @@ ROCKET_RATIO_CREDIT_SWITCH = 2500
 BARRACKS_SCHEDULE = ((240.0, 2), (330.0, 3))  # after the service depot (each extra one only speeds the one infantry queue)
 MAX_BARRACKS = 3
 BARRACKS_ADD_FUNDS = 600
-MAX_WAR_FACTORIES = 2              # the second once the service depot stands: the vehicle queue carries the tanks
+MAX_WAR_FACTORIES = 3              # the second once the service depot stands, the third only while money floats
+FLOAT_FUNDS = 1000                 # money beyond what the build order needs (buildplan.build_reserve)...
+FLOAT_SECONDS = 30.0               # ...held this long: the queues can't spend the income, more production
 
 # -- end game: radar dome and siege units against turtled bases ---------------------------------
 DOME_AFTER_SECONDS = 420.0         # pros build the dome ~7:00-8:30
@@ -178,7 +180,16 @@ UNDER_ATTACK_FRESH_TICKS = 250     # an under_attack event counts for 10 s
 # -- attacking -----------------------------------------------------------------------------------
 ENEMY_PEAK_SECONDS = 180.0         # their army: the most we saw of it this recently, less half what we killed since
 SCOUT_FRESH_SECONDS = 45.0         # a scout round of their base this recent is a fresh look (not blind)
+LOOK_BASE_FRONT_CELLS = 6          # a look that finds their exit empty goes on to this far in front of their spawn
 KILL_ARMY_SHARE = 0.5              # a past sighting loses this share of our kills since (the rest were buildings and trucks)
+# What they could have built since: their army grows by this share of what we
+# spend on ours (army value + losses), unseen. On our self-play logs since the
+# "no guess" estimate (545fd344 .. d2d8dc27) it read 1.3-12x low, biased
+# -0.6 to -1.0 in log terms; with 0.6 the bias is about 0 and the error halved.
+ENEMY_GROWTH_SHARE = 0.6
+BELIEF_LOOK_CELLS = 10             # this many of our army units (BELIEF_LOOK_UNITS) this close to their base...
+BELIEF_LOOK_UNITS = 3
+BELIEF_DECAY_SECONDS = 30.0        # ...and the unseen part of their army fades over this (it isn't there)
 ATTACK_ARMY_EDGE = 1.3             # our army / estimated enemy army (brain.enemy_estimate) needed to attack...
 ESCALATED_ARMY_EDGE = 1.15         # ...lowered after ESCALATE_AFTER_SECONDS (1.0 attacked at parity and retreated within seconds: ef66403c)...
 CATCH_UP_ARMY_EDGE = 1.0           # ...and to this when behind at the end
@@ -302,6 +313,11 @@ RAID_LATE_COOLDOWN_SECONDS = 12.0  # healthy and past 6:00: a squad re-forms thi
 RAID_SPREAD_CELLS = 12             # each squad's target this far from the other squads' targets
 RAID_JOIN_FIGHT_CELLS = 25         # an extra squad joins the main army's fight only from this close
 REMOTE_SITE_RECHECK_SECONDS = 120.0  # a remote ore field checked by a picket or the raid is skipped this long
+FIELD_WATCH_OUT_CELLS = 3          # a field is checked from beyond its 4 extreme ore cells, this far out...
+FIELD_WATCH_SEEN_CELLS = 5         # ...each seen once any unit of ours has been this close (about its sight)
+EXPANSION_ROAM_SECONDS = 480.0     # from 8:00 a second roamer checks the remote fields for their expansions...
+RAID_EXPANSION_SECONDS = 480.0     # ...and a raid at a found expansion goes in force:
+RAID_EXPANSION_SQUAD = 8           # at least this many (army and MIN_DEFENDERS allowing)
 RAID_EXPANSION_MAX_DEFENSES = 1    # raids skip targets with more defenses than this
 RAID_THREAT_RADIUS_CELLS = 7       # enemy fighters this close to the raid squad are defending: fight them first...
 RAID_OUTMATCH_ODDS = 1.0           # ...unless the squad's odds against them are under this: then it breaks off
@@ -396,6 +412,8 @@ EXPAND_SCOUT_TIMEOUT_SECONDS = 120.0
 EXPAND_TRAIN_TIMEOUT_SECONDS = 150.0
 EXPAND_DEPLOY_RADIUS_CELLS = 2
 EXPAND_DEPLOY_RETRY_SECONDS = 3.0
+EXPAND_CLEAR_WAIT_SECONDS = 10.0   # our units on the yard's spot get this long to step off before the MCV tries elsewhere
+EXPAND_KEEP_OUT_CELLS = 1          # while the MCV drives there, nobody of ours is sent within this of the yard's cells
 EXPAND_MOVE_TIMEOUT_SECONDS = 90.0 # then deploy where it stands...
 EXPAND_GIVE_UP_SECONDS = 30.0      # ...then abandon it
 EXPAND_STUCK_RADIUS_CELLS = 8      # stopped this close after EXPAND_STUCK_AFTER_SECONDS = arrived
@@ -447,7 +465,7 @@ TRANSFORM_RADIUS_CELLS = 4         # an enemy MCV this close to a remembered yar
 HOME_RAID_RADIUS_CELLS = 10        # a group this close to the main base (buildings, trucks) also draws the idle units at home...
 SMALL_RAID_VALUE = 1500            # ...and a group worth at most this is the idle units' job, more is the army's
 RUSH_MIN_VALUE = 600               # in the opening, enemies at our base worth less are scouts, not a rush
-SECOND_FACTORY_SECONDS = 360.0     # a second war factory from this (service depot up, its price in hand)
+SECOND_FACTORY_SECONDS = 360.0     # a second war factory from this (service depot up, its price in hand or money floating)
 STALL_FORGET_CELLS = 10            # ...forget remembered buildings this close to the army...
 STALL_IGNORE_ADVICE_SECONDS = 60.0 # ...and ignore the advisor's army target this long (the hunter leads)
 

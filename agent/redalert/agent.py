@@ -64,6 +64,11 @@ class RedAlertAgent:
         self._commander = Commander()   # the army's one decision each view (commander.py)
         self._failed_cells: dict = {}   # cell -> game time the engine moved a building off it
         self._enemy_seen: list = []     # (game s, enemy army seen, our kills then): brain.enemy_estimate
+        self._believed = 0.0            # their army as we believe it, unseen growth included (_believe)
+        self._believed_mark: tuple | None = None   # (our army spending, our kills, game s) at the last view
+        self._hunting = False           # their main base is razed (last view): they build no more army
+        self._float_low_at: float | None = None   # when spare money was last under FLOAT_FUNDS
+        self._expansions_flagged: list = []   # enemy expansions found (each logged once)
         # The batch play_action answers next; refused order key -> blocked
         # until (clock); army (cmd, destination) -> (last sent, unit ids).
         self._last_sent: list[dict] = []
@@ -145,6 +150,7 @@ class RedAlertAgent:
             self._enemy_army_seen_at = view.game_seconds
         view = dataclasses.replace(view, enemy_army_peak=self._enemy_peak(view),
                                    enemy_seen_recent=max((r[1] for r in self._enemy_seen), default=0.0),
+                                   bank_floating=self._floating(view),
                                    ore_running_dry=self._harvest.running_dry(view),
                                    enemy_base_scouted=(seen_at is not None
                                                        and view.game_seconds - seen_at <= C.SCOUT_FRESH_SECONDS))
@@ -161,6 +167,7 @@ class RedAlertAgent:
         threat = self._patrol.alarm(view) or self._intel.rushing(view)
         # What the scouts saw for the first time: the log and the console.
         self._log_sightings(view)
+        self._flag_expansions(view)
         for raid in self._raid.drain():                 # raids that ended last view: the post-game analysis
             self._matchlog.note("raid_result", raid)
         # sparring (TEST ONLY): against ourselves in a test match, one seat
@@ -179,7 +186,7 @@ class RedAlertAgent:
             # build order to stand, ~3 minutes, so the scouts' look at their
             # base went unread).
             advice = self._poll_advisor(view)
-        hunting = self._hunter.hunting(view)
+        hunting = self._hunting = self._hunter.hunting(view)
         self._break_stall(view)
         rushing = spar is not None and spar.skip_confirm
         cheese = self._commander.cheese_since
@@ -754,7 +761,66 @@ class RedAlertAgent:
         t = view.game_seconds
         self._enemy_seen.append((t, view.enemy_army_value, view.kills_cost))
         self._enemy_seen = [r for r in self._enemy_seen if t - r[0] <= C.ENEMY_PEAK_SECONDS]
-        return max(0.0, max(seen - C.KILL_ARMY_SHARE * (view.kills_cost - kills) for _, seen, kills in self._enemy_seen))
+        seen = max(0.0, max(seen - C.KILL_ARMY_SHARE * (view.kills_cost - kills) for _, seen, kills in self._enemy_seen))
+        return self._believe(view, max(seen, view.enemy_army_value))
+
+    def _flag_expansions(self, view) -> None:
+        """Each enemy expansion found (expand.enemy_expansions), logged and
+        printed once: the raid squads' targets."""
+        for cell in _enemy_expansions(view):
+            if all((cell[0] - c[0]) ** 2 + (cell[1] - c[1]) ** 2 > C.EXPAND_CLUSTER_CELLS ** 2
+                   for c in self._expansions_flagged):
+                self._expansions_flagged.append(cell)
+                self._matchlog.note("expansion_found", {"t": round(view.game_seconds), "cell": list(cell)})
+                self._log(f"[redalert] {view.game_seconds:.0f}s enemy expansion found at {list(cell)}: a raid target")
+
+    def _believe(self, view, floor: float) -> float:
+        """Their army as we believe it: never less than ``floor`` (what we see
+        and saw lately), and between sightings it grows as ours does — by
+        ``ENEMY_GROWTH_SHARE`` of what we spend on our army — less
+        ``KILL_ARMY_SHARE`` of our kills. Both sides start with the same money
+        and mine the same kind of fields; what we didn't see they still
+        built (d2d8dc27 attacked at 5:18 on an estimate of 250 into 3250, and
+        later called 3-4x odds that were 1.3x). It stops growing once their
+        main base is razed, and the unseen part fades over
+        ``BELIEF_DECAY_SECONDS`` while our army stands in their base and
+        doesn't find it."""
+        spent = view.army_value + view.deaths_cost
+        if self._believed_mark is not None:
+            spent0, kills0, t0 = self._believed_mark
+            if not self._hunting:
+                self._believed += C.ENEMY_GROWTH_SHARE * max(0.0, spent - spent0)
+            self._believed -= C.KILL_ARMY_SHARE * max(0.0, view.kills_cost - kills0)
+            if self._believed > floor and self._at_their_base(view):
+                self._believed -= (self._believed - floor) * min(1.0, (view.game_seconds - t0) / C.BELIEF_DECAY_SECONDS)
+        self._believed_mark = (spent, view.kills_cost, view.game_seconds)
+        self._believed = max(self._believed, floor, 0.0)
+        return self._believed
+
+    def _at_their_base(self, view) -> bool:
+        """``BELIEF_LOOK_UNITS`` of our army (not scouts) within
+        ``BELIEF_LOOK_CELLS`` of their spawn or a yard of theirs we know."""
+        from .observe import enemy_spawn_guess
+
+        spots = [b.cell for b in list(view.enemy_buildings) + list(view.known_enemy_buildings)
+                 if b.type == C.CONSTRUCTION_YARD and b.cell is not None and not b.wreck]
+        spawn = enemy_spawn_guess(view)
+        if spawn is not None:
+            spots.append(tuple(spawn))
+        scouts, r2 = set(self._patrol.unit_ids), C.BELIEF_LOOK_CELLS ** 2
+        near = sum(1 for u in view.combat_units if u.cell is not None and u.id not in scouts
+                   and any((u.cell[0] - s[0]) ** 2 + (u.cell[1] - s[1]) ** 2 <= r2 for s in spots))
+        return near >= C.BELIEF_LOOK_UNITS
+
+    def _floating(self, view) -> bool:
+        """Money beyond what the build order needs (buildplan.build_reserve)
+        has stayed at ``FLOAT_FUNDS`` or more for ``FLOAT_SECONDS``: the
+        queues can't spend the income (d2d8dc27 floated 1000-3000 from 11:00
+        with every queue full, and its second war factory, waiting for its
+        price in hand, came at 12:13)."""
+        if self._float_low_at is None or view.cash + view.ore - buildplan.build_reserve(view) < C.FLOAT_FUNDS:
+            self._float_low_at = view.game_seconds
+        return view.game_seconds - self._float_low_at >= C.FLOAT_SECONDS
 
     def _audit_placements(self, view) -> None:
         """Log where each placed building came up against where it was asked

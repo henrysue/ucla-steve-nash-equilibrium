@@ -24,6 +24,8 @@ import re
 from collections import Counter
 from pathlib import Path
 
+from . import config as C
+
 ANALYST_MODEL = "claude-opus-5-5"
 TIMEOUT_SECONDS = 90.0
 
@@ -40,7 +42,10 @@ and can set posture (attack/hold), expansion timing, balance (more army / more e
 targets and turret side.
 
 From the digest (samples every 15 s, our mode changes, what our scouts saw first and when, the \
-advisor's reads, our raids and attacks with their trades, buildings lost, the result):
+advisor's reads, our raids and attacks with their trades, buildings lost, the result). "bank" is \
+cash plus stored ore (both spendable). Judge our unit mix by value (army_makeup's \
+ours_tank_value_share: tanks and siege units' share of our army's value), not by head count — \
+one tank costs as much as eleven riflemen:
 - playstyle: rush, turtle, macro, standard or a mix — in a phrase, with the evidence.
 - opening: their build and timings as far as we saw them (refineries, barracks, war factory, \
 turrets, first push).
@@ -91,6 +96,16 @@ def _rows(path) -> list[dict]:
     return out
 
 
+def _value_share(units: Counter) -> dict:
+    """Our army's value and the share of it in tanks and siege units (d2d8dc27:
+    the analysis read 37 riflemen and 8 tanks as "far under half tanks"; by
+    value they were 60%)."""
+    value = {k: n * C.KNOWN_COSTS.get(k, C.DEFAULT_UNIT_COST) for k, n in units.items()}
+    total = sum(value.values())
+    heavy = sum(v for k, v in value.items() if k in C.TANK_PREFERENCE or k in C.SIEGE_UNITS)
+    return {"ours_value": round(total), "ours_tank_value_share": round(heavy / total, 2) if total else None}
+
+
 def digest(path) -> dict:
     """The match log, cut down to what a coach reads (a few KB): who and
     where, a 15 s timeline, our mode changes, first sightings, the advisor's
@@ -107,8 +122,8 @@ def digest(path) -> dict:
                          r.get("raid_squad"), len(r.get("expansions_done") or [])])
         pos = r.get("positions") or {}
         if pos and (r.get("t") or 0) % 60 < 15:              # army make-ups once a minute
-            armies.append({"t": r.get("t"),
-                           "ours": dict(Counter(u[0] for u in pos.get("units") or [])),
+            ours = Counter(u[0] for u in pos.get("units") or [])
+            armies.append({"t": r.get("t"), "ours": dict(ours), **_value_share(ours),
                            "theirs_in_sight": dict(Counter(e[0] for e in pos.get("enemies") or []))})
     advice, last = [], None
     for r in rows:
