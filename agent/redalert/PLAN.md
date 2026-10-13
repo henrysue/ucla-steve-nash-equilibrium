@@ -276,7 +276,10 @@ An attack goes on until the retreat rule ends it. No mass/attack flip within
   doesn't fit goes first next batch; lost orders are sent again.
 - **Defense, one handler** (`executor.respond`, `executor._army_home`):
   - **The army at home**: a fight in contact with it or the main base → it
-    attacks when the odds are 1.25+, else holds. A push seen in our half,
+    attacks when the odds are 1.25+ (meeting them in the open 8-14 cells off, before contact,
+    with 6+ units and no choke between: in a concave — three attack-moves, the centre just
+    short of their middle, the wings at their flanks, our units split by where they stand; the
+    attack's march meets their army the same way when the fight there is at least even), else holds. A push seen in our half,
     or defending → it holds too. Where it holds: the concave at the choke
     while they are still out in front of it (9cada749 left it for the base
     at 3:27 and 10:29, and the push took the buildings anyway); with no

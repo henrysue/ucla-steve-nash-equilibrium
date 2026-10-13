@@ -453,6 +453,19 @@ def _army_orders(
             units = combat[:orders.MAX_UNITS_PER_ORDER]
             if waiting and not units:
                 return waiting
+            # Their army ahead in the open, a fight we take: meet it in a
+            # concave rather than marching into it as a column.
+            marching = [u for u in view.combat_units if u.id in set(units) and u.cell is not None]
+            if marching:
+                cx = sum(u.cell[0] for u in marching) / len(marching)
+                cy = sum(u.cell[1] for u in marching) / len(marching)
+                r2 = C.CONCAVE_ENGAGE_MAX_CELLS ** 2
+                ahead = [a for a in view.enemy_units if a.cell is not None and not a.wreck
+                         and a.type not in C.HARVESTER and dist2(a.cell, (round(cx), round(cy))) <= r2]
+                if ahead and strength.odds(view, [u.type for u in marching], [a.type for a in ahead]) >= 1.0:
+                    concave = _concave_engage(view, marching, ahead)
+                    if concave:
+                        return waiting + concave
             if flank_via:
                 # The route's waypoints (round the chokes, a flank point), then on to the target.
                 route = [flank_via] if isinstance(flank_via[0], int) else list(flank_via)
@@ -778,6 +791,9 @@ def _army_home(view: View, mode: Mode, scout_id: int | None = None, reserved: fr
             theirs.update({a.id: a for a in push[2] if a.id is not None})
         if strength.odds(view, [u.type for u in fighters], [a.type for a in theirs.values()]) >= bar:
             mem["engaged_until"] = t + C.ENGAGE_HOLD_SECONDS
+            concave = _concave_engage(view, fighters, contact)    # in the open, before contact: a concave
+            if concave:
+                return concave
             base = view.base_center or centre
             target = min(contact, key=lambda a: dist2(a.cell, base)).cell
             return [orders.attack_move([u.id for u in fighters][:orders.MAX_UNITS_PER_ORDER], list(target))]
@@ -805,6 +821,47 @@ def _army_home(view: View, mode: Mode, scout_id: int | None = None, reserved: fr
             return _form(view, fighters, point, facing)
     held = scout.concave_point(view)       # at the choke's mouth when there is one
     return _form(view, fighters, held[0], held[1]) if held is not None else []
+
+
+def _concave_engage(view: View, fighters, foes) -> list[dict] | None:
+    """Engage their army in a concave: three attack-moves, not a blob — the
+    centre at just short of their middle, the wings at their flanks
+    (``CONCAVE_ENGAGE_WING_CELLS`` either side), our units split by where
+    they stand across the line to them so the groups don't cross. More guns
+    in range at once (a blob's back ranks walk in one by one), less splash,
+    and the wings hit their sides. Only meeting them in the open before
+    contact (their centre ``CONCAVE_ENGAGE_MIN_CELLS`` to
+    ``CONCAVE_ENGAGE_MAX_CELLS`` from ours), with
+    ``CONCAVE_ENGAGE_MIN_UNITS`` or more, and not in a choke corridor (no room:
+    a column into their concave). None otherwise: the usual attack-move."""
+    from .terrain import choke_zone
+
+    cells = [u for u in fighters if u.cell is not None]
+    foe_cells = [a.cell for a in foes if a.cell is not None]
+    if len(cells) < C.CONCAVE_ENGAGE_MIN_UNITS or not foe_cells:
+        return None
+    ours = (sum(u.cell[0] for u in cells) / len(cells), sum(u.cell[1] for u in cells) / len(cells))
+    theirs = (sum(c[0] for c in foe_cells) / len(foe_cells), sum(c[1] for c in foe_cells) / len(foe_cells))
+    dx, dy = theirs[0] - ours[0], theirs[1] - ours[1]
+    d = (dx * dx + dy * dy) ** 0.5
+    if not C.CONCAVE_ENGAGE_MIN_CELLS <= d <= C.CONCAVE_ENGAGE_MAX_CELLS:
+        return None
+    zone = choke_zone(view)
+    mid = (round((ours[0] + theirs[0]) / 2), round((ours[1] + theirs[1]) / 2))
+    if any(tuple(round(v) for v in p) in zone for p in (ours, theirs, mid)):
+        return None
+    ux, uy = dx / d, dy / d                        # toward them
+    px, py = -uy, ux                               # across
+    w = C.CONCAVE_ENGAGE_WING_CELLS
+    points = [(theirs[0] - px * w, theirs[1] - py * w),          # one wing, at their flank
+              (theirs[0] - ux * 2, theirs[1] - uy * 2),          # the centre, just short of their middle
+              (theirs[0] + px * w, theirs[1] + py * w)]          # the other wing
+    points = [scout._open_cell(view, (round(x), round(y))) for x, y in points]
+    side = sorted(cells, key=lambda u: (u.cell[0] - ours[0]) * px + (u.cell[1] - ours[1]) * py)
+    n = len(side)
+    groups = [side[: n // 3], side[n // 3: n - n // 3], side[n - n // 3:]]
+    return [orders.attack_move([u.id for u in g][:orders.MAX_UNITS_PER_ORDER], list(p))
+            for g, p in zip(groups, points) if g]
 
 
 def _hold_point(view: View, threat, fallback=None):

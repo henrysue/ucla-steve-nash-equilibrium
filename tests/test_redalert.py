@@ -3868,7 +3868,9 @@ def test_the_massing_army_fights_a_push_it_beats_and_holds_the_line_otherwise():
            [{"id": 910 + i, "type": "1tnk", "x": 17, "y": 18, "hp": 100} for i in range(2)]
     strong = [{"id": 100 + i, "type": "3tnk", "x": 11, "y": 11, "hp": 100} for i in range(8)]
     o = executor._army_orders(_view(_t=500.0, buildings=BASE, units=strong, visible_enemies=push), Mode.BUILD)
-    assert o == [{"cmd": "attack_move", "units": [100 + i for i in range(8)], "to": [17, 18]}]
+    assert all(x["cmd"] == "attack_move" for x in o)                            # at them (in a concave)...
+    assert sorted(u for x in o for u in x["units"]) == [100 + i for i in range(8)]  # ...everyone
+    assert all((x["to"][0] - 17.7) ** 2 + (x["to"][1] - 18) ** 2 <= 7 ** 2 for x in o)
     rifles = [{"id": 100 + i, "type": "e1", "x": 11, "y": 11, "hp": 100} for i in range(10)]
     weak = _view(_t=500.0, buildings=BASE, units=rifles, visible_enemies=push)    # riflemen vs armor: lose in the open
     line = scout.home_line(weak, (18, 18))
@@ -4575,7 +4577,8 @@ def test_the_army_fights_a_push_at_the_main_base_and_readies_for_one_at_an_expan
     army = [{"id": 100 + i, "type": "3tnk", "x": 11, "y": 11, "hp": 100} for i in range(20)]
     main_push = [{"id": 900 + i, "type": "3tnk", "x": 16, "y": 4, "hp": 100} for i in range(8)]
     o = executor._army_orders(_view(_t=700.0, buildings=BASE, units=army, visible_enemies=main_push), Mode.BUILD)
-    assert len(o) == 1 and o[0]["to"] == [16, 4] and len(o[0]["units"]) == 20   # at the main base: fight it
+    assert sum(len(x["units"]) for x in o) == 20 and all(x["cmd"] == "attack_move" for x in o)   # fight it, all
+    assert all((x["to"][0] - 16) ** 2 + (x["to"][1] - 4) ** 2 <= 7 ** 2 for x in o)   # at the main base
     scout._INTERCEPT.update(at=None, facing=None, group=[], seen=-1e9)
     yard = BASE + [{"id": 80, "type": "proc", "x": 30, "y": 8}]
     far_push = [{"id": 900 + i, "type": "3tnk", "x": 28, "y": 10, "hp": 100} for i in range(8)]   # at the expansion
@@ -6618,3 +6621,33 @@ def test_as_the_soviets_more_of_the_army_goes_into_heavy_tanks():
     assert executor.tanks_lag(soviet, "3tnk")                                          # under 65%: tanks first
     allied = _view(units=[dict(t, type="2tnk") for t in tanks] + rifles, available_production=["2tnk", "e1"])
     assert not executor.tanks_lag(allied, "2tnk")                                      # over 50%: enough
+
+
+def test_meeting_their_army_in_the_open_we_engage_in_a_concave_not_a_blob():
+    """Three attack-moves: the centre just short of their middle, the wings
+    at their flanks; our units split by where they stand, so groups don't
+    cross. Not in contact, not with a handful, not in a choke corridor."""
+    ours = [{"id": 100 + i, "type": "2tnk", "x": 20 + (i % 6), "y": 30 + (i // 6), "hp": 100} for i in range(12)]
+    foes = [{"id": 900 + i, "type": "e1", "x": 33 + (i % 3), "y": 31, "hp": 100} for i in range(6)]
+    v = dataclasses.replace(_view(units=ours, visible_enemies=foes), bounds=(0, 0, 64, 64))
+    fighters = [u for u in v.combat_units]
+    o = executor._concave_engage(v, fighters, v.enemy_units)
+    assert o and len(o) == 3 and all(x["cmd"] == "attack_move" for x in o)
+    assert sorted(u for x in o for u in x["units"]) == [100 + i for i in range(12)]
+    ys = [x["to"][1] for x in o]
+    assert ys[0] < ys[1] < ys[2] and ys[2] - ys[0] >= 2 * C.CONCAVE_ENGAGE_WING_CELLS - 2   # a line across them
+    assert o[1]["to"][0] < 34                                                   # the centre just short of them
+    top = {u["id"] for u in ours if u["y"] == 30}
+    assert set(o[0]["units"]) <= top | {u["id"] for u in ours if u["y"] == 31}   # the wing from its own side
+    close = [dict(u, x=30) for u in foes]                                       # in contact already: no
+    assert executor._concave_engage(v, fighters, read(_raw(visible_enemies=close)).enemy_units) is None
+    assert executor._concave_engage(v, fighters[:4], v.enemy_units) is None     # a handful: no
+    walled = dataclasses.replace(v, blocked_cells=frozenset())
+    import agent.redalert.terrain as terrain_mod
+    gap = frozenset((x, y) for x in range(26, 31) for y in range(29, 33))       # a choke between them
+    real = terrain_mod.choke_zone
+    terrain_mod.choke_zone = lambda view: gap                                   # ...no concave through it
+    try:
+        assert executor._concave_engage(walled, fighters, v.enemy_units) is None
+    finally:
+        terrain_mod.choke_zone = real
