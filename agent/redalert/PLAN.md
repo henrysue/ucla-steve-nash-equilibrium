@@ -127,6 +127,9 @@ a turtle about one per turret (3–6) before any attack.
 
 - **0–3 min**: two scouts round the back of their base: their opening —
   the second 30 s after the first, and on into the centre of their base.
+  They go wide: out along a flank bowed 45% of the base-to-base distance,
+  in from 8 cells beyond the ring at the side of their base, the outer ring
+  16 cells round it (the early pairs died in the middle lanes at 1:00-1:30).
   What they see there in the first 4 minutes (riflemen and every unit type
   counted by unit, the buildings present) goes to the advisor as
   scouting.base_report (daa0e4d5 believed 1220 at 2:51 against a real
@@ -337,7 +340,11 @@ advisor's posture is a vote that counts only within 15% of a bar
 instead of retreating), its "hold" stops one up to 15% above it (holding an
 attack, pulling back from a fight). Beyond the band the numbers decide either
 way; behind at the end or overwhelming, a hold doesn't count. The advisor is
-shown each bar, our number and its band (`situation.decisions`).
+shown each bar, our number and its band (`situation.decisions`), and the
+enemy buildings our attacks destroyed (`counters.enemy_buildings_destroyed`:
+by type, value, yards and refineries, when the last fell — memory.py counts a
+building gone as a wreck or while we look at its spot): fd154ee2's advisor
+called an attack that killed 4850 for 3050 "a costly all-in loss" and held.
 
 ### 6b. No getting stuck, no flip-flopping (the October audit)
 

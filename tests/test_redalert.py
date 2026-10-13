@@ -3350,8 +3350,9 @@ def test_two_early_scouts_round_the_back_of_their_base_left_and_right():
     right = corps.circuit(v, -1, C.CIRCUIT_INNER_CELLS)
     assert left[0] != right[0]                                              # one each side
     d = lambda p: ((p[0] - 40) ** 2 + (p[1] - 40) ** 2) ** 0.5             # noqa: E731
-    assert all(12 <= d(p) <= 16 for p in left[1:])                          # the outer ring...
-    assert all(5 <= d(p) <= 9 for p in right[1:])                           # ...and the inner one, through the base
+    assert 20 <= d(left[1]) <= 28 and 13 <= d(right[1]) <= 19               # in from wide at the side...
+    assert all(14 <= d(p) <= 18 for p in left[2:])                          # ...the outer ring...
+    assert all(5 <= d(p) <= 9 for p in right[2:])                           # ...and the inner one, through the base
     side = lambda p: (p[0] - 40) - (p[1] - 40)                              # noqa: E731  (which side of the base line)
     for route in (left, right):
         assert any((p[0] - 4) ** 2 + (p[1] - 4) ** 2 > 2 * 36 ** 2 for p in route)   # round the back...
@@ -6221,3 +6222,29 @@ def test_the_advisor_sees_the_base_report():
     agent._poll_advisor(read(_raw(_t=120.0, buildings=BASE)))
     report = captured["scouting"]["base_report"]
     assert report["riflemen"] == 2 and report["units"] == {"e1": 2, "e3": 1} and report["buildings"] == {"tent": 1}
+
+
+def test_enemy_buildings_we_destroy_are_counted_for_the_advisor():
+    """fd154ee2: the advisor called an attack that killed 4850 for 3050 "a
+    costly all-in loss"; it now sees what our attacks destroyed."""
+    from agent.redalert.memory import EnemyMemory
+    mem = EnemyMemory()
+    blds = [{"id": 70, "type": "proc", "x": 40, "y": 40}, {"id": 71, "type": "fact", "x": 44, "y": 40},
+            {"id": 72, "type": "powr", "x": 30, "y": 30}]
+    mem.update(_view(_t=400.0, visible_enemy_buildings=blds))
+    assert mem.destroyed["total"] == 0
+    ours = [{"id": 30, "type": "3tnk", "x": 41, "y": 41, "hp": 100}]
+    mem.update(_view(_t=420.0, units=ours, visible_enemy_buildings=[dict(blds[1], wreck=True)]))   # one a wreck,
+    report = mem.destroyed                                                     # one gone under our tank's nose
+    assert report["total"] == 2 and report["by_type"] == {"proc": 1, "fact": 1}
+    assert report["yards_and_refineries"] == 2 and report["last_at"] == 420 and report["value"] > 0
+    mem.update(_view(_t=430.0))                                                # the power plant: out of sight, kept
+    assert mem.destroyed["total"] == 2 and any(b.type == "powr" for b in mem.buildings)
+    mem.forget_near((30, 30), 5)                                               # a stale memory dropped: not a kill
+    assert mem.destroyed["total"] == 2
+    agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
+    agent._memory = mem
+    captured = {}
+    agent._advisor = type("A", (), {"poll": lambda self, view, situation: captured.update(situation)})()
+    agent._poll_advisor(read(_raw(_t=440.0, buildings=BASE)))
+    assert captured["counters"]["enemy_buildings_destroyed"]["total"] == 2

@@ -335,7 +335,8 @@ CATCH_UP_REMAINING_SECONDS = 180.0      # behind or level this late: attack rega
 
 # -- squads: scout, raids, home guard, garrison ---------------------------------------------------
 SCOUT_INSET_CELLS = 8              # patrol ring this far inside the map edge
-SCOUT_FLANK_FRACTION = 0.30        # the scout's path bows out sideways this share of the base-to-base distance
+SCOUT_FLANK_FRACTION = 0.45        # the scout's path bows out sideways this share of the base-to-base distance (wide:
+                                   # the early pairs died in the middle lanes at 1:00-1:30, daa0e4d5 lost 4 by 3:06)
 SQUAD_CLAIM_RADIUS_CELLS = 14      # guards and garrisons take only units this close to home, never from the field
 EARLY_PUSH_WINDOW_SECONDS = 360.0  # an early push: before 6:00, known enemy army of at least...
 EARLY_PUSH_MIN_VALUE = 1500        # ...this value
@@ -403,7 +404,8 @@ MID_PICKETS = 4                    # ...this many...
 PICKET_ALONG = 0.45                # ...this far toward the enemy...
 PICKET_SPREAD = 0.35               # ...spread this share of the base-to-base distance to each side
 BASE_CHECK_SECONDS = 150.0         # a picket runs round their base again this often
-CIRCUIT_OUTER_CELLS = 14           # the rounds of their base: the left scout this far from their spawn...
+CIRCUIT_OUTER_CELLS = 16           # the rounds of their base: the left scout this far from their spawn...
+CIRCUIT_ENTRY_CELLS = 8            # ...coming in from wide at their base's side, this much beyond its ring
 CIRCUIT_INNER_CELLS = 7            # ...the right scout this far (through the base): a scout sees ~5 cells
 CIRCUIT_DEGREES = (90, 125, 160, 195, 230)   # from its side round the back onto the other side: never across the front
 SCOUT_LEG_CELLS = 8                # scouts walk in legs this long, round the chokes and the front of their base...

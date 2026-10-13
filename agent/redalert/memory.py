@@ -16,6 +16,9 @@ Forgetting:
   looking at that spot and it is not there (moved, or destroyed).
 - Buildings otherwise stay remembered for the whole match — at the cell we
   last saw them, refreshed each time we see them again (same id).
+- A building dropped as a wreck, or gone while we look at its spot, counts
+  as destroyed (:attr:`EnemyMemory.destroyed`: by type, with its value and
+  when) — what our attacks did to their base, for the advisor.
 - A construction yard that packs up into an MCV gets a new id: an enemy MCV
   seen beside a remembered yard means the yard has moved, so the yard is
   dropped and the MCV followed; a new yard seen beside a remembered MCV means
@@ -40,6 +43,7 @@ class Memory:
 class EnemyMemory:
     def __init__(self) -> None:
         self._known: dict[int, Memory] = {}
+        self._destroyed: list[tuple[float, str, float]] = []   # (when, type, value) of enemy buildings destroyed
 
     def update(self, view: View) -> None:
         now = view.game_seconds
@@ -49,7 +53,9 @@ class EnemyMemory:
                 if actor.id is None:
                     continue
                 if actor.wreck:
-                    self._known.pop(actor.id, None)
+                    gone = self._known.pop(actor.id, None)
+                    if gone is not None and gone.building:
+                        self._note_destroyed(view, gone.actor.type)
                     continue
                 visible.add(actor.id)
                 self._known[actor.id] = Memory(actor, now, building)   # refreshed: the cell we see now
@@ -64,6 +70,8 @@ class EnemyMemory:
             looked = mem.actor.cell is not None and any(dist2(c, mem.actor.cell) <= r2 for c in lookers)
             if expired or looked:
                 del self._known[actor_id]
+                if looked and mem.building:
+                    self._note_destroyed(view, mem.actor.type)      # we look at its spot: it is gone
 
     def _follow_transforms(self, view: View, visible: set) -> None:
         """A yard that packed up (MCV seen beside it) or an MCV that deployed
@@ -78,6 +86,23 @@ class EnemyMemory:
                 del self._known[actor_id]      # it packed up and drives off as that MCV
             elif not mem.building and mem.actor.type == C.MCV and any(dist2(c, mem.actor.cell) <= r2 for c in yards):
                 del self._known[actor_id]      # it deployed into that yard
+
+    def _note_destroyed(self, view: View, kind: str) -> None:
+        cost = view.unit_costs.get(kind) or C.KNOWN_COSTS.get(kind, C.DEFAULT_UNIT_COST)
+        self._destroyed.append((view.game_seconds, kind, float(cost)))
+
+    @property
+    def destroyed(self) -> dict:
+        """Enemy buildings we destroyed: how many, by type, their value, the
+        economy among them (yards and refineries), and when the last fell."""
+        by_type: dict = {}
+        for _, kind, _ in self._destroyed:
+            by_type[kind] = by_type.get(kind, 0) + 1
+        economy = sum(1 for _, kind, _ in self._destroyed if kind in (C.CONSTRUCTION_YARD, C.REFINERY))
+        return {"total": len(self._destroyed), "by_type": by_type,
+                "value": round(sum(v for _, _, v in self._destroyed)),
+                "yards_and_refineries": economy,
+                "last_at": round(self._destroyed[-1][0]) if self._destroyed else None}
 
     def forget_near(self, cell, radius: float) -> int:
         """Drop remembered buildings within ``radius`` of ``cell`` (the army

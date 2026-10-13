@@ -503,9 +503,11 @@ class ScoutCorps:
         return min(ok, key=lambda c: dist2(c, cell) + 0.25 * dist2(c, base)) if ok else cell
 
     def circuit(self, view: View, side: int, radius: float = C.CIRCUIT_OUTER_CELLS) -> list[tuple[int, int]]:
-        """Waypoints out along one flank, round that side of the enemy base at
-        ``radius`` from their spawn — from its side (``CIRCUIT_DEGREES`` start
-        at 90: never across the front) past the back onto the other side."""
+        """Waypoints out along one flank (bowed ``SCOUT_FLANK_FRACTION`` wide),
+        in from wide at the side of their base (``CIRCUIT_ENTRY_CELLS`` beyond
+        the ring), round that side at ``radius`` from their spawn — from its
+        side (``CIRCUIT_DEGREES`` start at 90: never across the front) past the
+        back onto the other side."""
         from .scout import _along, _open_cell
 
         base, enemy = view.base_center, enemy_spawn_guess(view)
@@ -518,6 +520,10 @@ class ScoutCorps:
         mid = _along(base, enemy, 0.5)
         bow = C.SCOUT_FLANK_FRACTION * length
         points = [_open_cell(view, (mid[0] + px * bow, mid[1] + py * bow))]
+        # In from wide, level with the side of their base, then onto the ring
+        # (the scouts died cutting in through the middle lanes).
+        wide = radius + C.CIRCUIT_ENTRY_CELLS
+        points.append(_open_cell(view, (enemy[0] + px * wide, enemy[1] + py * wide)))
         for deg in C.CIRCUIT_DEGREES:
             a = math.radians(deg)
             cx = ux * math.cos(a) + px * math.sin(a)

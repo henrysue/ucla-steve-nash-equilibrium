@@ -596,6 +596,7 @@ class RedAlertAgent:
                 "attack_results": list(self._attack_results),
                 "counters": {"kills": round(view.kills_cost), "deaths": round(view.deaths_cost),
                              "units_lost": self._damage.units_lost, "buildings_lost": self._damage.buildings_lost,
+                             "enemy_buildings_destroyed": self._memory.destroyed,
                              "scouts_lost": self._patrol.scouts_lost, "sightings": self._intel.sighted},
                 "confirming_attack": self._commander.confirming,
                 "massing_point": list(scout.choke_cell(view) or []) or None,
