@@ -201,6 +201,7 @@ when the raid squad is drawing their army away.
 - raid_target_id / raid_target_cell: the raid squad's harvester (a visible harvester's id) or a \
 cell to sweep, at an enemy expansion (18+ cells from their main base; their main field is never \
 raided). It kills any defenders first.
+  army_target and the raid targets become orders: every time you change one, those units recalculate their pathfinding. Pick one and leave them to do it; change it only when the target is gone or the situation has really changed.
 - defense_at: [x, y] the side of our base the next turret should face (the enemy's approach).
 - army_stance: the waiting (massing) army's stance — "defend" (fire at what comes in range, hold \
 the line: the default), "attack_anything" (go after any enemy in sight: when they poke at the \

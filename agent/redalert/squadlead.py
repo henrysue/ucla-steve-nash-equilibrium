@@ -43,6 +43,8 @@ the squad (its units, health and cells), its mission, and the enemies near it. C
 - "hold": stay and fight where it is.
 - "retreat": pull back toward home, fighting what it meets (when the squad would just die: outnumbered, badly hurt).
 
+Every time you issue an order your units will recalculate their pathfinding. Issue an order and leave them to do it: keep the same action and target from one call to the next unless the situation has really changed.
+
 Kill the high-value target the squad can actually win against; avoid defended spots; keep the \
 squad alive — a dead squad scores nothing. One short line of reasoning. Be decisive.\
 """
