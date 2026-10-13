@@ -604,6 +604,7 @@ class RedAlertAgent:
                 "our_unit_value": round(brain.our_unit_value(view)),
                 "enemy_unit_value_known": round(brain.enemy_unit_value(view)),
                 "army_odds": round(min(brain.army_odds(view), 99.0), 2),   # by strength (1.0 = even)
+                "decisions": self._decision_bars(view),   # each rules bar and where its posture counts
                 "enemy_army_last_seen_seconds_ago": (round(view.game_seconds - self._enemy_army_seen_at)
                                                      if self._enemy_army_seen_at is not None else None),
                 "enemy_turrets_known": len(executor.enemy_defenses(view)),
@@ -888,6 +889,22 @@ class RedAlertAgent:
         known = [b for b in list(view.enemy_buildings) + list(view.known_enemy_buildings) if not b.wreck]
         return brain._overwhelming(view) and (
             hunting or (brain.beaten(view) and len(known) <= C.FAN_MAX_KNOWN_BUILDINGS))
+
+    def _decision_bars(self, view) -> dict:
+        """For the advisor: each rules bar, our number against it, and the band
+        where its posture decides (brain.advised)."""
+        band = C.ADVISOR_BAND
+
+        def bar(value, at, floor=0.0):
+            return {"ours": round(min(value, 99.0), 2), "bar": round(at, 2),
+                    "your_attack_fires_from": round(max(floor, at * (1 - band)), 2),
+                    "your_hold_stops_below": round(at * (1 + band), 2)}
+
+        out = {"attack": bar(brain.attack_odds(view), brain.attack_bar(view), C.ADVISOR_ATTACK_EDGE),
+               "strike_overall": bar(brain.army_odds(view), C.STRIKE_MIN_EDGE)}
+        if self._mode is Mode.ALL_IN:
+            out["keep_attacking"] = bar(brain.army_odds(view), C.RETREAT_ARMY_EDGE)
+        return out
 
     def _passive(self, view) -> bool:
         """The passive read (intel.passive) — ended at once when a push builds:

@@ -189,7 +189,7 @@ behind/outgunned. The blind check reads only what was actually seen.
 6. **ATTACK** when the odds against their army plus the turrets at the target
    reach the bar: 1.3, 1.15 after 7:00, 1.2 with a 15000+ army (at parity the
    defender wins: d1615ac6 lost 6800 for 3950 at 1.05), 1.0 behind
-   at the end or on the advisor's "attack". Or at once after the main army
+   at the end. Or at once after the main army
    clearly won a fight (1500+ net and 1.5x in 2 minutes) when at least even.
    - **Look first**: knowing little of them (under half our army seen lately,
      and no fresh look where their army masses — the mouth of the choke on
@@ -294,6 +294,17 @@ An attack goes on until the retreat rule ends it. No mass/attack flip within
 - **Turrets**: a line on the base's front edge straight toward the enemy
   (side by side across that line, within 35° of it, never behind the base);
   when it is full, no more are built until the base grows that way.
+
+### 6a. The advisor's vote: near the bars only
+
+Every rules bar is a ratio (odds), so it scales with any army and map. The
+advisor's posture is a vote that counts only within 15% of a bar
+(`brain.advised`): its "attack" fires an action up to 15% below the bar
+(starting an attack — never under 1.0x —, striking an expansion, fighting on
+instead of retreating), its "hold" stops one up to 15% above it (holding an
+attack, pulling back from a fight). Beyond the band the numbers decide either
+way; behind at the end or overwhelming, a hold doesn't count. The advisor is
+shown each bar, our number and its band (`situation.decisions`).
 
 ### 6b. No getting stuck, no flip-flopping (the October audit)
 

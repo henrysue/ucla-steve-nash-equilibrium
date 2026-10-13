@@ -221,7 +221,9 @@ PUSH_ARMY_VALUE = 3000             # ...and push only with a real army built (un
 EARLY_ATTACK_SECONDS = 180.0       # before this (and a war factory), attack only when overwhelming
 MODE_MIN_DWELL_SECONDS = 40.0      # no BUILD <-> ALL_IN flip faster than this
 OVERWHELMING_ODDS = 2.5            # odds this good: finish them; the model's "hold" can't stop it; a turtle may be attacked
-ADVISOR_ATTACK_EDGE = 1.0          # the advisor's "attack" posture starts an attack at these odds (never blind)
+ADVISOR_ATTACK_EDGE = 1.0          # the advisor's "attack" never goes below these odds (never blind)
+ADVISOR_BAND = 0.15                # the advisor's posture decides within this share of a rules bar (brain.advised):
+                                   # "attack" fires an action up to 15% below its bar, "hold" stops it up to 15% above
 ADVISOR_HOLD_MAX_SECONDS = 90.0    # its "hold" delays an attack the rules call by at most this, then the rules go
 TARGET_PRIORITY = (("powr", "apwr"), ("fact", "weap", "tent", "barr"), ("proc",))  # first to last
 ATTACK_FOCUS_RADIUS_CELLS = 10     # priority applies among buildings this close to the nearest

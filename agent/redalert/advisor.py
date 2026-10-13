@@ -176,12 +176,16 @@ Never over-index: a big bank with a small army and a big army on 4 harvesters ar
 and so is "more_army" all game.
 
 YOUR CALLS (null or "default"/"auto" = the engine decides; each works inside the plan's limits):
-- posture: "attack" starts an attack at even odds (1.0x) instead of the engine's bar — never on a \
+- posture: your vote on the engine's decisions, counted only NEAR each bar (situation.decisions \
+lists every bar, our number and your band): "attack" fires an action up to 15% below its bar \
+(starting an attack, striking an expansion, fighting on instead of retreating), "hold" stops one up \
+to 15% above it; beyond the band the numbers decide either way. So call it when our number sits in \
+your band and you see what the numbers miss. "attack" never goes under 1.0x odds, never on a \
 blind estimate (a scout looks first) and never into turrets the army can't break. Not on a stale \
 estimate either: when situation.enemy_army_last_seen_seconds_ago is over 60, what we know of their \
 army is old and they have rebuilt (a rusher trains riflemen nonstop) — hold until a look; "hold" keeps \
-massing (ignored when we clearly outnumber them or are behind at the end) and only DELAYS an attack \
-the engine calls: after 90 s of holding against its call the engine attacks anyway. Holding is not \
+massing (ignored above its band, when we clearly outnumber them or are behind at the end) and \
+only DELAYS an attack the engine calls: after 90 s of holding against its call the engine attacks anyway. Holding is not \
 free: a turtle or macro player out-builds a waiting army. Use them for what the \
 numbers miss (their army is out of position, a counter-push is coming). Keep a posture 30+ seconds: \
 flip-flopping marches the army out and back.

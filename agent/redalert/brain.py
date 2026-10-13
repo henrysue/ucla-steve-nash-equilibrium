@@ -85,20 +85,19 @@ def choose_mode(
     # the same way (strength.odds); their turrets at the target fight too
     # (attack_odds); the retreat rule below reads the armies.
     edge = army_odds(view)
-    threshold = _attack_threshold(view)
-    if model_pref is Mode.ALL_IN:
-        # The advisor sees what the numbers miss (their army out of position):
-        # its "attack" goes at parity — still never blind (commander) nor
-        # into turrets we can't break.
-        threshold = min(threshold, C.ADVISOR_ATTACK_EDGE)
-    strike = attack_odds(view)
+    # The advisor's posture decides near each bar (advised: within
+    # ADVISOR_BAND), not past it: it sees what the numbers miss (their army
+    # out of position) but reads the same fog-blind figures (08560d9b: "a
+    # strong army value lead" at 3900 vs a real 5000-6000). Never blind
+    # (commander), never into turrets we can't break, never under parity.
+    vote = vote_of(model_pref)
     # Through a choke they can hold (no way round): a column walks out of it
     # into their concave, which our fight model doesn't price — a higher bar,
     # unless the siege units come to shell it from out of its reach
     # (e2bc988e attacked through Sidestep's gap at 1.2x and lost 2050 for 200).
-    choke = (C.CHOKE_ATTACK_FACTOR if terrain.choke_between(view)
-             and len(view.units_of(C.SIEGE_UNITS)) < C.SIEGE_ATTACK_MIN and not _overwhelming(view) else 1.0)
-    threshold *= choke
+    threshold = attack_bar(view)
+    choke = threshold / max(1e-9, _attack_threshold(view))
+    strike = attack_odds(view)
     # Unseen enemy makes the edge infinite, so also require a real army: never
     # trickle units one at a time into the enemy base.
     cooling_down = retreated_at is not None and view.game_seconds - retreated_at < C.RETREAT_COOLDOWN_SECONDS
@@ -114,8 +113,9 @@ def choose_mode(
     # the target included, is at least even; else the bar on what we know.
     # (The turrets are in the odds: match 654f1b2e attacked a mixed army into
     # three flame towers three times.)
-    can_attack = ((strike >= threshold or (traded_up and strike >= choke)) and _has_real_army(view) and built
-                  and not cooling_down and regrown)
+    # (Its "hold" acts in one place, below, with the exceptions that override it.)
+    can_attack = ((advised(strike, threshold, max(vote, 0), floor=C.ADVISOR_ATTACK_EDGE) or (traded_up and strike >= choke))
+                  and _has_real_army(view) and built and not cooling_down and regrown)
     # A turtle waits for the siege: SIEGE_ATTACK_MIN siege units, or an army
     # that overwhelms army and turrets together (efefdca8: two attacks into
     # the ring, 8200 and 8650 lost) — not even when behind at the end.
@@ -141,7 +141,10 @@ def choose_mode(
     retreat_edge = edge
     if distraction:
         retreat_edge = max(edge, strength.army_odds(view, (), distraction[0], distraction[1]))
-    if prev_mode in AGGRESSIVE and (retreat_edge < floor or losing_trades):
+    # Near the line the advisor's posture decides (its "attack" fights on a
+    # little below it, its "hold" pulls back a little above it); losing the
+    # trades still ends it.
+    if prev_mode in AGGRESSIVE and (not advised(retreat_edge, floor, vote) or losing_trades):
         return Mode.RETREAT
     # Committed: an attack under way goes on until the retreat rule calls it
     # off — not back to massing when the estimate dips under the attack bar
@@ -173,7 +176,7 @@ def choose_mode(
     # (d1615ac6: raids killed its harvesters for two minutes while the army,
     # 14850 against a believed 18900, sat at home).
     if (not can_attack and not early and built and not cooling_down and regrown and _has_real_army(view)
-            and edge >= C.STRIKE_MIN_EDGE and expansion_strike(view) is not None):
+            and advised(edge, C.STRIKE_MIN_EDGE, max(vote, 0)) and expansion_strike(view, max(vote, 0)) is not None):
         can_attack = True
     # The turtle gate holds for every way in (a distraction or a strike set
     # it back on: the audit — the efefdca8 case the gate is there for).
@@ -188,14 +191,46 @@ def choose_mode(
     # support: its "attack" calls read the same fog-blind figures (08560d9b:
     # "a strong army value lead" at 3900 vs a real 5000-6000). It never
     # overrides the safety rails above.
+    # Its "hold" stops an attack only near the bar (advised above): a clear
+    # edge, behind at the end or overwhelming goes regardless.
     overwhelming = enemy_estimate(view) > 0 and edge >= C.OVERWHELMING_ODDS
-    if model_pref is Mode.BUILD and not ((overwhelming or behind_late) and can_attack):
+    if (model_pref is Mode.BUILD and policy_choice is Mode.ALL_IN
+            and not (overwhelming or behind_late
+                     or (enemy_estimate(view) > 0 and strike >= threshold * (1 + C.ADVISOR_BAND)))):
         return Mode.BUILD
 
     return policy_choice
 
 
-def expansion_strike(view: View) -> tuple[int, int] | None:
+def advised(value: float, bar: float, vote: int, floor: float = 0.0) -> bool:
+    """Whether an action whose number is ``value`` against the rules' ``bar``
+    goes, with the advisor's ``vote`` (+1 its "attack", -1 its "hold", 0
+    none) deciding only near the bar: within ``ADVISOR_BAND`` below it a yes
+    fires it (never under ``floor``), within ``ADVISOR_BAND`` above it a no
+    stops it; beyond the band the numbers decide. Bars are ratios (odds),
+    so the band scales with any army and any map."""
+    if vote > 0 and value >= max(floor, bar * (1 - C.ADVISOR_BAND)):
+        return True
+    if vote < 0 and value < bar * (1 + C.ADVISOR_BAND):
+        return False
+    return value >= bar
+
+
+def vote_of(model_pref) -> int:
+    """The advisor's posture as a vote: +1 attack, -1 hold, 0 none."""
+    return 1 if model_pref is Mode.ALL_IN else -1 if model_pref is Mode.BUILD else 0
+
+
+def attack_bar(view: View) -> float:
+    """The odds an attack needs (:func:`_attack_threshold`), times
+    ``CHOKE_ATTACK_FACTOR`` through a choke with no way round unless the
+    siege comes."""
+    choke = (C.CHOKE_ATTACK_FACTOR if terrain.choke_between(view)
+             and len(view.units_of(C.SIEGE_UNITS)) < C.SIEGE_ATTACK_MIN and not _overwhelming(view) else 1.0)
+    return _attack_threshold(view) * choke
+
+
+def expansion_strike(view: View, vote: int = 0) -> tuple[int, int] | None:
     """The remote expansion of theirs (raid.remote_expansions) nearest our
     base that our whole army beats by ``STRIKE_LOCAL_ODDS`` — against the
     turrets and the units we know there, not their whole army — or None.
@@ -214,7 +249,7 @@ def expansion_strike(view: View) -> tuple[int, int] | None:
         there += [a.type for a in list(view.enemy_units) + list(view.known_enemy_units)
                   if a.type not in C.HARVESTER and a.type != C.MCV and a.cell is not None and not a.wreck
                   and dist2(a.cell, cell) <= r_u]
-        if not there or strength.odds(view, ours, there) >= C.STRIKE_LOCAL_ODDS:
+        if not there or advised(strength.odds(view, ours, there), C.STRIKE_LOCAL_ODDS, vote):
             return tuple(cell)
         return None                               # the nearest is too strong: not further afield
     return None

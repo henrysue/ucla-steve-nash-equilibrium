@@ -991,7 +991,7 @@ def test_model_hold_only_delays_an_attack_the_rules_call():
 
     def at(t):
         v = dataclasses.replace(_view(_t=t, buildings=BASE + [{"id": 12, "type": "weap"}],
-                                      military={"army_value": 6000, "visible_enemy_value": 3000}),
+                                      military={"army_value": 3600, "visible_enemy_value": 3000}),
                                 enemy_base_scouted=True)
         return c.decide(v, model_pref=Mode.BUILD)
 
@@ -3827,9 +3827,11 @@ def test_the_unseen_army_fades_while_ours_stands_in_their_base_and_stops_growing
 
 
 def test_the_advisors_attack_goes_at_even_odds_not_below():
-    v = _view(_t=300.0, buildings=BASE, military={"army_value": 3000, "visible_enemy_value": 2800})
-    assert brain.choose_mode(v, cheese_since=None) is Mode.BUILD                          # 1.07: under the bar
-    assert brain.choose_mode(v, cheese_since=None, model_pref=Mode.ALL_IN) is Mode.ALL_IN  # its call: even will do
+    v = _view(_t=300.0, buildings=BASE, military={"army_value": 3000, "visible_enemy_value": 2550})
+    assert brain.choose_mode(v, cheese_since=None) is Mode.BUILD                          # 1.18: under the 1.3 bar
+    assert brain.choose_mode(v, cheese_since=None, model_pref=Mode.ALL_IN) is Mode.ALL_IN  # within 15%: its call goes
+    far = _view(_t=300.0, buildings=BASE, military={"army_value": 3000, "visible_enemy_value": 2800})
+    assert brain.choose_mode(far, cheese_since=None, model_pref=Mode.ALL_IN) is Mode.BUILD  # 1.07: past its band
     worse = _view(_t=300.0, buildings=BASE, military={"army_value": 3000, "visible_enemy_value": 3300})
     assert brain.choose_mode(worse, cheese_since=None, model_pref=Mode.ALL_IN) is Mode.BUILD
 
@@ -6032,3 +6034,26 @@ def test_beaten_with_a_handful_of_buildings_left_the_army_fans_out():
     many = [{"id": 200 + i, "type": "powr", "x": 2 + 3 * i, "y": 44, "hp": 100} for i in range(C.FAN_MAX_KNOWN_BUILDINGS + 1)]
     big = dataclasses.replace(v, enemy_buildings=read(_raw(visible_enemy_buildings=many)).enemy_buildings)
     assert not agent._finishing(big, hunting=False)                            # a whole base still stands: together
+
+
+def test_the_advisors_posture_decides_only_near_each_bar():
+    """One rule for every threshold (brain.advised): within ADVISOR_BAND below
+    a bar its "attack" fires the action, within ADVISOR_BAND above its "hold"
+    stops it; beyond the band the numbers decide."""
+    bar = 1.3
+    assert brain.advised(1.31, bar, 0) and not brain.advised(1.29, bar, 0)            # no vote: the bar
+    assert brain.advised(bar * (1 - C.ADVISOR_BAND) + 0.01, bar, 1)                    # just inside: its yes goes
+    assert not brain.advised(bar * (1 - C.ADVISOR_BAND) - 0.01, bar, 1)                # past the band: no
+    assert not brain.advised(bar * (1 + C.ADVISOR_BAND) - 0.01, bar, -1)               # its no holds near the bar...
+    assert brain.advised(bar * (1 + C.ADVISOR_BAND) + 0.01, bar, -1)                   # ...not a clear edge
+    assert not brain.advised(1.02, 1.15, 1, floor=1.05)                                # never under the floor
+
+
+def test_near_the_retreat_line_the_advisor_decides_whether_to_fight_on():
+    v = _view(_t=600.0, buildings=BASE, military={"army_value": 3000, "visible_enemy_value": 3900})   # 0.77, under 0.8
+    kw = dict(cheese_since=None, prev_mode=Mode.ALL_IN, attack_seconds=30.0)
+    assert brain.choose_mode(v, **kw) is Mode.RETREAT
+    assert brain.choose_mode(v, model_pref=Mode.ALL_IN, **kw) is Mode.ALL_IN           # its "attack": fight on
+    w = _view(_t=600.0, buildings=BASE, military={"army_value": 3000, "visible_enemy_value": 3450})   # 0.87, over 0.8
+    assert brain.choose_mode(w, **kw) is Mode.ALL_IN
+    assert brain.choose_mode(w, model_pref=Mode.BUILD, **kw) is Mode.RETREAT           # its "hold": pull back
