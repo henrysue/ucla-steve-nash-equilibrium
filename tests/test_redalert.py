@@ -6057,3 +6057,11 @@ def test_near_the_retreat_line_the_advisor_decides_whether_to_fight_on():
     w = _view(_t=600.0, buildings=BASE, military={"army_value": 3000, "visible_enemy_value": 3450})   # 0.87, over 0.8
     assert brain.choose_mode(w, **kw) is Mode.ALL_IN
     assert brain.choose_mode(w, model_pref=Mode.BUILD, **kw) is Mode.RETREAT           # its "hold": pull back
+
+
+def test_trading_up_is_no_reason_to_counterattack():
+    """9cada749: in at 8:22 at 1.06 after trading 15250 for 10800, out 31 s
+    later; their next push took the war factory, refineries and depot."""
+    even = _view(_t=500.0, buildings=BASE + [{"id": 12, "type": "weap"}],
+                 military={"army_value": 3300, "visible_enemy_value": 3000})                 # 1.1
+    assert brain.choose_mode(even, cheese_since=None, traded_up=True) is Mode.BUILD

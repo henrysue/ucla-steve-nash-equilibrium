@@ -114,7 +114,11 @@ def choose_mode(
     # (The turrets are in the odds: match 654f1b2e attacked a mixed army into
     # three flame towers three times.)
     # (Its "hold" acts in one place, below, with the exceptions that override it.)
-    can_attack = ((advised(strike, threshold, max(vote, 0), floor=C.ADVISOR_ATTACK_EDGE) or (traded_up and strike >= choke))
+    # Trading up is no reason to go in: the counterattack after a won
+    # defense went at about even and lost the army to their next push
+    # (9cada749: in at 8:22 at 1.06 after trading 15250 for 10800, out 31 s
+    # later; their 10:29 push took the war factory, refineries and depot).
+    can_attack = (advised(strike, threshold, max(vote, 0), floor=C.ADVISOR_ATTACK_EDGE)
                   and _has_real_army(view) and built and not cooling_down and regrown)
     # A turtle waits for the siege: SIEGE_ATTACK_MIN siege units, or an army
     # that overwhelms army and turrets together (efefdca8: two attacks into

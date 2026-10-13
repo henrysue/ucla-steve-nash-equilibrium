@@ -367,3 +367,24 @@ def test_an_attack_from_our_concave_takes_the_lane_not_the_corridor(path):
     d2 = lambda a, b: (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2                     # noqa: E731
     deep = [c for c in walked if c in zone and d2(c, point) > 64 and d2(c, enemy) > 20 ** 2]
     assert len(deep) <= 4, deep[:8]
+
+
+@pytest.mark.parametrize("path", FIXTURES, ids=[p.stem for p in FIXTURES])
+def test_a_push_is_held_at_the_concave_at_the_choke_until_it_gets_inside(path):
+    """9cada749 (Sidestep): at 3:27 and 10:29 the army left the concave at
+    the choke for the base when a push came, and the push took the buildings
+    anyway. It holds the choke; only a push already inside is met at home."""
+    from agent.redalert import executor
+
+    fx = _load(path)
+    view = _view(fx, fx["states"][1], path.stem)
+    base = tuple(fx["base_center"])
+    coming = scout.enemy_staging(view) or tuple(fx["enemy_spawn"])
+    point, _ = executor._hold_point(view, coming)
+    if scout.choke_stage(view) is None:                                           # open ground: the base's line
+        assert point == scout.home_line(view, coming)
+        return
+    assert point == scout.concave_point(view)[0]                                  # out in front: the choke
+    inside = min(view.buildings, key=lambda b: (b.cell[0] - base[0]) ** 2 + (b.cell[1] - base[1]) ** 2).cell
+    point, _ = executor._hold_point(view, inside)
+    assert point == scout.home_line(view, inside)                                 # inside: at home

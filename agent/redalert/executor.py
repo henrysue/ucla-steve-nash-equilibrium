@@ -744,20 +744,38 @@ def _army_home(view: View, mode: Mode, scout_id: int | None = None, reserved: fr
             base = view.base_center or centre
             target = min(contact, key=lambda a: dist2(a.cell, base)).cell
             return [orders.attack_move([u.id for u in fighters][:orders.MAX_UNITS_PER_ORDER], list(target))]
-        line = scout.home_line(view, centre)
-        if line is not None:
-            return _form(view, fighters, line, centre, everyone=True)
+        point, facing = _hold_point(view, centre)
+        if point is not None:
+            return _form(view, fighters, point, facing, everyone=True)
     push = scout.incoming_push(view)
     if push is not None:
-        point, facing, _ = push
+        point, facing = _hold_point(view, push[1], fallback=push[0])
         return _form(view, fighters, point, facing, everyone=True)
     if defending:
-        line = scout.home_line(view)
-        return _form(view, fighters, line, enemy_spawn_guess(view), everyone=True) if line is not None else []
+        point, facing = _hold_point(view, enemy_spawn_guess(view))
+        return _form(view, fighters, point, facing, everyone=True) if point is not None else []
     if stage_override is not None:                 # edging forward to confirm an attack: everyone goes
         return _form(view, fighters, stage_override, enemy_spawn_guess(view), everyone=True)
     held = scout.concave_point(view)       # at the choke's mouth when there is one
     return _form(view, fighters, held[0], held[1]) if held is not None else []
+
+
+def _hold_point(view: View, threat, fallback=None):
+    """Where the army holds against ``threat`` it doesn't attack: the concave
+    at the choke (scout.concave_point) while the threat is still out in front
+    of it — the defender's ground, the enemy coming through the gap into
+    every unit's fire (9cada749 left it for the base at 3:27 and 10:29 and
+    the push took the buildings anyway) — else, with no choke or the enemy
+    already inside (nearer our base than the concave), the main base's line
+    facing it (scout.home_line). (point, facing); point None with neither."""
+    base = view.base_center
+    held = scout.concave_point(view) if scout.choke_stage(view) is not None else None   # a real choke only
+    if held is not None and (threat is None or base is None
+                             or dist2(threat, base) >= dist2(held[0], base)):
+        return held[0], held[1]
+    point = fallback if fallback is not None else (scout.home_line(view, threat) if threat is not None
+                                                   else scout.home_line(view))
+    return point, threat
 
 
 def _form(view: View, fighters, point, facing, everyone: bool = False) -> list[dict]:

@@ -189,8 +189,9 @@ behind/outgunned. The blind check reads only what was actually seen.
 6. **ATTACK** when the odds against their army plus the turrets at the target
    reach the bar: 1.3, 1.15 after 7:00, 1.2 with a 15000+ army (at parity the
    defender wins: d1615ac6 lost 6800 for 3950 at 1.05), 1.0 behind
-   at the end. Or at once after the main army
-   clearly won a fight (1500+ net and 1.5x in 2 minutes) when at least even.
+   at the end. Trading up is no reason to go in (9cada749 went in at 1.06
+   after trading 15250 for 10800, was out in 31 s, and their next push took
+   the war factory, refineries and depot).
    - **Look first**: knowing little of them (under half our army seen lately,
      and no fresh look where their army masses — the mouth of the choke on
      their side; a lap round their base doesn't count), a scout looks first
@@ -226,9 +227,13 @@ An attack goes on until the retreat rule ends it. No mass/attack flip within
   doesn't fit goes first next batch; lost orders are sent again.
 - **Defense, one handler** (`executor.respond`, `executor._army_home`):
   - **The army at home**: a fight in contact with it or the main base → it
-    attacks when the odds are 1.25+, else holds the main base's turret line
-    (`scout.home_line`: just behind our turret nearest them). A push seen in
-    our half → it gets ready at that line facing it. Otherwise the concave
+    attacks when the odds are 1.25+, else holds. A push seen in our half,
+    or defending → it holds too. Where it holds: the concave at the choke
+    while they are still out in front of it (9cada749 left it for the base
+    at 3:27 and 10:29, and the push took the buildings anyway); with no
+    choke, or once they are inside (nearer our base than the concave), the
+    main base's turret line (`scout.home_line`: just behind our turret
+    nearest them). Otherwise the concave
     holds the choke on their road in (a passage 7 cells or narrower, 10+ cells
     out and under 45% of the way to them): its kill point on the choke's mouth
     on our side, so the whole arc fires on them as they come through; with no
