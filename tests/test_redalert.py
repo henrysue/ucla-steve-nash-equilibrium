@@ -5848,3 +5848,21 @@ def test_the_army_strikes_a_remote_expansion_it_clearly_beats():
     assert brain.expansion_strike(g) is None                                    # defended: no strike
     far_behind = dataclasses.replace(v, enemy_army_peak=40000.0)
     assert brain.choose_mode(far_behind, cheese_since=None) is Mode.BUILD       # outnumbered overall: no
+
+
+def test_a_reached_advisor_target_hands_the_attack_back_to_the_rules():
+    """d1615ac6: the advisor's point (40, 53), 9 cells from their flame tower,
+    stayed the target after the army got there; it stood 60 s at 10150
+    against 2350 while they rebuilt."""
+    agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
+    agent._mode = Mode.ALL_IN
+    base_advice = ra_advisor.parse_advice(_ANSWER, _view(), 0.0)
+    tower = [{"id": 90, "type": "ftur", "x": 31, "y": 51, "hp": 100}]
+    far = [{"id": 30 + i, "type": "3tnk", "x": 60, "y": 60, "hp": 100} for i in range(5)]
+    there = [dict(u, x=40, y=53) for u in far]
+    pick = dataclasses.replace(base_advice, army_target=(40, 53))
+    v = _view(_t=550.0, units=far, visible_enemy_buildings=tower)
+    assert agent._army_advice(pick, False, v).army_target == (40, 53)          # on its way: the advisor's point
+    w = _view(_t=560.0, units=there, visible_enemy_buildings=tower)
+    assert agent._army_advice(pick, False, w).army_target is None              # reached: the rules lead on
+    assert agent._army_advice(pick, False, _view(_t=575.0, units=there, visible_enemy_buildings=tower)).army_target is None

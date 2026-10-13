@@ -265,7 +265,9 @@ An attack goes on until the retreat rule ends it. No mass/attack flip within
   (from our concave the corridor is short and every lane looks long). A new
   route from where it stands when the target moves 12+ cells or the route runs out short of it (at most every
   15 s); the advisor's target stays for the attack while anything of theirs
-  stands by it. Only within 15 cells of the target does it spread into three
+  stands by it — until the army reaches it, when the rules lead on to their
+  buildings for 30 s (d1615ac6 stood 60 s on a reached point by their flame
+  towers, 10150 against 2350, while they rebuilt). Only within 15 cells of the target does it spread into three
   groups in a semi-concave, and only to points it walks to without a detour.
   Stragglers wait to go 6 together; no flank before 10:00 unless far ahead.
   Scouts and raid squads walk in legs too.

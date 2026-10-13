@@ -742,7 +742,11 @@ class RedAlertAgent:
         finish a razed enemy (the rules walk onto each remembered building,
         which clears stale ones) or after a stall. During an attack its first
         target stays while anything of theirs stands by it (b9145367: a new
-        target every 6 s re-aimed half the army mid-march)."""
+        target every 6 s re-aimed half the army mid-march) — until the army
+        reaches it: then the rules lead on to their buildings for
+        ``ADVICE_REACHED_IGNORE_SECONDS`` (d1615ac6: a reached point 9 cells
+        from their flame tower kept the army standing there for 60 s, 10150
+        against 2350, while they rebuilt)."""
         import dataclasses
 
         if self._mode is not Mode.ALL_IN:
@@ -752,6 +756,13 @@ class RedAlertAgent:
         if hunting or view.game_seconds < self._ignore_advice_until:
             return dataclasses.replace(advice, army_target=None)
         if self._mode is Mode.ALL_IN:
+            target = self._latched_target or tuple(advice.army_target)
+            army = [u.cell for u in view.combat_units if u.cell is not None
+                    and u.id not in {*self._patrol.unit_ids, *self._raid.unit_ids, *self._garrison.unit_ids}]
+            if army and dist2(_army_cell(army), target) <= C.ADVICE_TARGET_REACHED_CELLS ** 2:
+                self._latched_target = None
+                self._ignore_advice_until = view.game_seconds + C.ADVICE_REACHED_IGNORE_SECONDS
+                return dataclasses.replace(advice, army_target=None)
             kept = self._latched_target
             if kept is not None and executor._advised_target(view, dataclasses.replace(advice, army_target=kept)):
                 return dataclasses.replace(advice, army_target=kept)
