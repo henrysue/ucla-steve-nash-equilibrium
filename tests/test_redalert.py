@@ -6740,3 +6740,22 @@ def test_a_squad_lead_mostly_watches_and_steps_in_only_when_idle_or_for_a_priori
     assert squadlead.should_apply(busy, ids, on("attack", 90), 85)                    # a harvester over a building
     idle = _view(units=[dict(u, idle=True) for u in _raid_army()], visible_enemies=[harv])
     assert squadlead.should_apply(idle, ids, on("move", cell=(30, 30)), 90)           # idle: its call
+
+
+def test_squad_leads_can_be_kept_to_one_seat_for_an_a_b_match(monkeypatch):
+    closed = []
+    lead = type("L", (), {"close": lambda self: closed.append(1)})()
+
+    def agent():
+        return RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0,
+                             squad_lead_factory=lambda log, on_directive=None: {"raid": lead, "garrison": lead})
+
+    monkeypatch.setenv("REDALERT_SQUAD_LEADS_SEAT", "1")
+    with_leads, without = agent(), agent()
+    with_leads._leads_for_seat(dataclasses.replace(CTX, seat_position=1), None)
+    without._leads_for_seat(dataclasses.replace(CTX, seat_position=None), "Multi0")       # from the observation
+    assert with_leads._leads and without._leads == {} and len(closed) == 2
+    monkeypatch.delenv("REDALERT_SQUAD_LEADS_SEAT")
+    both = agent()
+    both._leads_for_seat(dataclasses.replace(CTX, seat_position=0), None)
+    assert both._leads                                                                     # unset: every seat

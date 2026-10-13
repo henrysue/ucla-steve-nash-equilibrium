@@ -127,6 +127,7 @@ class RedAlertAgent:
         self._last_plan: tuple[str, str] | None = None
         # Haiku squad leads for the raid squad and the garrison ({} = rules only).
         self._leads = squad_lead_factory(self._log, on_directive=self._matchlog.squad) if squad_lead_factory else {}
+        self._leads_seat_checked = False   # REDALERT_SQUAD_LEADS_SEAT: the leads on one seat only (an A/B match)
 
     # -- the hot path ---------------------------------------------------------
 
@@ -189,6 +190,7 @@ class RedAlertAgent:
         # sparring (TEST ONLY): against ourselves in a test match, one seat
         # plays a fixed archetype (rusher / turtler / macro), without the advisor.
         spar = self._sparring.resolve(context, raw.get("your_seat"))
+        self._leads_for_seat(context, raw.get("your_seat"))
         if spar is None and not self._opponents and self._sparring.opponent:   # sparring: TEST ONLY
             # Against our sparring partner: profile and analyse it like a
             # tournament opponent (the tournament path, rehearsed in self-play).
@@ -276,6 +278,7 @@ class RedAlertAgent:
             "hunting": hunting,
             "sparring": spar.name if spar is not None else None,   # sparring: TEST ONLY
             "models": "on" if (self._advisor is not None or self._leads) else "off",
+            "squad_leads": bool(self._leads),
             "active_base": self._active_base(view),
             "harvester_acts": dict(Counter(h.act for h in view.units_of(C.HARVESTER) if h.act)),
             "unstuck": self._unstick.unstuck,
@@ -932,6 +935,29 @@ class RedAlertAgent:
         known = [b for b in list(view.enemy_buildings) + list(view.known_enemy_buildings) if not b.wreck]
         return brain._overwhelming(view) and (
             hunting or (brain.beaten(view) and len(known) <= C.FAN_MAX_KNOWN_BUILDINGS))
+
+    def _leads_for_seat(self, context, your_seat) -> None:
+        """``REDALERT_SQUAD_LEADS_SEAT=<k>``: only seat k keeps its squad leads
+        — one side with them, one without, in a self-play A/B match (both
+        seats' workers share the environment). Settled once the seat is known."""
+        if self._leads_seat_checked or not self._leads:
+            return
+        want = os.environ.get("REDALERT_SQUAD_LEADS_SEAT", "").strip()
+        if not want.isdigit():
+            self._leads_seat_checked = True
+            return
+        seat = getattr(context, "seat_position", None)
+        if seat is None and your_seat is not None:
+            digits = "".join(ch for ch in str(your_seat) if ch.isdigit())
+            seat = int(digits) if digits else None
+        if seat is None:
+            return                                   # not known yet: ask again next view
+        self._leads_seat_checked = True
+        if int(want) != int(seat):
+            for lead in self._leads.values():
+                lead.close()
+            self._leads = {}
+            self._log(f"[redalert] squad leads off on this seat ({seat}): REDALERT_SQUAD_LEADS_SEAT={want}")
 
     def _snipe_orders(self, view, spar) -> list[dict]:
         """The harvester snipe's run and its training (snipe.py); its kills,

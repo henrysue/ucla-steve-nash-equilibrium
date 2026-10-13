@@ -20,7 +20,9 @@ missing, stale or failed answer means the squad's own rules play. Safety
 rails win: squads are released to the army in defense and retreat modes by
 their own logic (raid.py, guard.py).
 
-Configuration: ``REDALERT_SQUAD_LEADS=off`` disables them;
+Configuration: ``REDALERT_SQUAD_LEADS=on`` enables them (off by default);
+``REDALERT_SQUAD_LEADS_SEAT=<k>`` keeps them on seat k only (a self-play A/B
+match: one side with them, one without);
 ``REDALERT_SQUAD_MODEL`` picks the model (default ``claude-haiku-5-5``).
 """
 

@@ -51,6 +51,8 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
   the fight in front of the squad (defenders, outmatched) stays the rules' call. A lead mostly
   watches: its call replaces the rules' orders only when the squad is idle (half its units) or
   it retargets to a higher-priority enemy (their fighters, then harvesters, then buildings).
+  `REDALERT_SQUAD_LEADS_SEAT=<k>` keeps them on seat k only: an A/B self-play match (the match
+  log's samples say which seat had them: `squad_leads`).
 - **Logs**: `matchlog.py` writes a JSONL and a summary per match to
   `matchlogs/` (samples every 15 s, mode changes, refusals, advice, attacked
   spots, the outbox, first sightings — kind "scouted" — with a "What the scouts
