@@ -329,6 +329,23 @@ def _enemy_side(view: View):
     return None
 
 
+def approach_cell(view: View):
+    """Where a frontal attack reaches our base: the cell about
+    ``APPROACH_RING_CELLS`` from it that is the shortest walk from the enemy
+    spawn — the road in, not the straight line across cliffs. The first
+    turret faces it (it catches units sent in one by one). Falls back to the
+    enemy side."""
+    from .terrain import walk_distances
+
+    base, enemy = view.base_center, _enemy_side(view)
+    if base is None or enemy is None or not view.blocked_cells:
+        return enemy
+    walk = walk_distances(view, [tuple(enemy)], C.APPROACH_MAX_STEPS)
+    r = C.APPROACH_RING_CELLS
+    ring = [c for c in walk if (r - 1) ** 2 <= dist2(c, base) <= (r + 1) ** 2]
+    return min(ring, key=lambda c: (walk[c], dist2(c, enemy))) if ring else enemy
+
+
 def _along(a, b, fraction: float) -> tuple[int, int]:
     return (round(a[0] + (b[0] - a[0]) * fraction), round(a[1] + (b[1] - a[1]) * fraction))
 
@@ -376,6 +393,10 @@ class Hunter:
                 and view.kills_cost > view.deaths_cost):
             self._razed = True               # stays on while they rebuild a building or two
         return self._razed
+
+    def target(self, view: View) -> tuple[int, int] | None:
+        points = self.targets(view, 1)
+        return points[0] if points else None
 
     def targets(self, view: View, k: int) -> list[tuple[int, int]]:
         """Up to ``k`` unchecked search points: the enemy spawn first while it
@@ -495,13 +516,10 @@ _LINE: dict = {}
 
 
 def _defensive_line(view: View, yard, threat) -> tuple[int, int] | None:
-    """2 cells behind our turret nearest ``threat`` (one of the main base's:
-    within ``DEFENSE_MAIN_RADIUS_CELLS`` of ``yard``, so a turret out by the
-    war factory counts and the line isn't pulled back to the buildings),
-    else 2 cells in front of our building nearest it, else part of the way
-    out from the yard toward it."""
+    """2 cells behind our turret nearest ``threat`` (within the build radius
+    of ``yard``), else 2 cells in front of our building nearest it, else part
+    of the way out from the yard toward it."""
     r2 = C.BUILD_RADIUS_CELLS ** 2
-    t2 = C.DEFENSE_MAIN_RADIUS_CELLS ** 2
 
     def step(frm, to, cells):
         dx, dy = to[0] - frm[0], to[1] - frm[1]
@@ -509,8 +527,7 @@ def _defensive_line(view: View, yard, threat) -> tuple[int, int] | None:
         return round(frm[0] + dx / d * cells), round(frm[1] + dy / d * cells)
 
     mine = [b for b in view.buildings if b.cell is not None and not b.wreck and dist2(b.cell, yard) <= r2]
-    towers = [b.cell for b in view.buildings if b.type in C.TURRETS and b.cell is not None and not b.wreck
-              and dist2(b.cell, yard) <= t2]
+    towers = [b.cell for b in mine if b.type in C.TURRETS]
     if towers:
         tower = min(towers, key=lambda c: dist2(c, threat))
         return step(tower, yard, 2)

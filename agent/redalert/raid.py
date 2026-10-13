@@ -148,11 +148,11 @@ class Raid:
         if state != "clear" and value >= C.DISTRACTION_MIN_VALUE:
             self._drawing = (view.game_seconds, frozenset(a.id for a in threats), value, _centroid(threats))
         if state == "outmatched":
-            # Fall back to the army fighting (an attack-move): a plain move
-            # gave every chaser free shots (a4a78f76's retreat lost 1400).
+            # Break off with a plain move (an attack-move stops to shoot every
+            # chaser and never gets away), back to the army.
             from .scout import choke_cell
             back = choke_cell(view) or view.base_center
-            return [orders.attack_move(ids, list(back))] if back else []
+            return [orders.move(ids, list(back))] if back else []
         if state == "fight":
             weakest = min(threats, key=lambda a: (a.hp if a.hp else 100, dist2(a.cell, _centroid(members))))
             return [orders.attack(ids, weakest.id)]

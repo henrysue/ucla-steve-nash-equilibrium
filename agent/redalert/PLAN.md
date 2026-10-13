@@ -72,28 +72,18 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
 
 ### 1. Economy
 
-- **Opening**: the standard double refinery — power by the yard (so the
-  refinery sits against the ore), barracks (early infantry against
-  harassment), refinery, refinery (two free trucks: income far faster than
-  buying trucks), war factory, its money set aside — but the war factory waits
-  for an army worth 2000 (1.5x the opening's ~1300) or 2:30, whichever comes
-  first, so the barracks keeps training for the push at ~3:00 (2fe84e1f: the
-  barracks idled 1:05-2:37 saving for it, 6 infantry met a 15-unit push at
-  3:16 and lost the war factory). Not against a passive enemy. Then power
-  to stay green, the service depot (main battle tanks, the MCV to expand)
-  and a third refinery, unless outgunned; more barracks after those (dvoid's
-  guide: depot, power, 3 barracks, a fourth refinery for the first
-  expansion). Tech — the depot and the radar dome — goes at the back of the
-  base, as far from the enemy as it reaches, so it can't be sniped. Under a
-  rush read everything goes into units —
+- **Opening**: power, barracks, refinery, refinery, power, war factory (the
+  pros' double refinery), its money set aside. Then the service depot (it
+  unlocks the main battle tanks) and a third refinery, unless outgunned; more
+  barracks only after those. Under a rush read everything goes into units —
   except a lost war factory's rebuild and the harvesters in production.
 - **Harvesters**: refineries + 2, at most 3 per refinery. **Refineries** by
   game time, spread over the fields by load (at most 3 per field), each
   beside the first field with room whose trucks walk to its ore in 6 steps;
   with none such (the base boxed in round its fields), no refinery now
   (d2d8dc27 on Shadowfiend paid 2000 for one 10 steps from its ore).
-- **Expansions**: to the natural after the depot (from ~3:45), then every
-  75 s or sooner when the ore forecast runs dry; up to 3; none after 14:00.
+- **Expansions**: to the natural after the depot (from ~3:45), then every 2
+  minutes or sooner when the ore forecast runs dry; up to 3; none after 14:00.
   Against a passive enemy (below): from 3:00 and every minute, whatever our
   army odds or the advisor's "wait", and refineries keep coming.
   The MCV is escorted by the outpost, never the army. While it drives there
@@ -113,14 +103,12 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
 
 ### 2. The army's make-up
 
-About 40% of the combat value in main battle tanks (70% against a passive enemy,
+Half the combat value in main battle tanks (70% against a passive enemy,
 with the second war factory at the depot and a third once two expansions
 stand: we out-build it) (the strongest offered, never
 light tanks once better ones exist), riflemen and rockets 3:1 shifting to 1:1
 as their armor grows — judged from the enemy units our scouts saw in the last
-3 minutes, not just those in sight. Siege units (V2s / artillery) once the
-dome offers them, at about a fifth of combat value (up to 4), and once enemy
-turrets are known; against
+3 minutes, not just those in sight. Siege units once enemy turrets are known; against
 a turtle about one per turret (3–6) before any attack.
 
 ### 3. Information
@@ -149,8 +137,7 @@ a turtle about one per turret (3–6) before any attack.
   their base (never across the front); posts and looks stand outside those
   places (82bdca3e: the left scout's road ran through the gap, the right one
   cut across their front, and the flank picket died five times in the gap).
-- **From 5:00**: pickets on the flanks of their exit (never the centre lane;
-  one killed at its post is replaced after 60 s, at the same post),
+- **From 5:00**: pickets on the flanks of their exit (never the centre lane),
   the lane scouts peek at their exit every 45 s, one runs round their base
   every 2.5 min, a roamer checks remote ore fields for expansions — from
   beyond each field's four extreme ore cells, since a yard can stand 12 cells
@@ -197,24 +184,13 @@ behind/outgunned. The blind check reads only what was actually seen.
 3. **FINISH**: their base razed, or we dominate (2x their kills and 5000 up)
    with odds of 2.5+.
 4. **PROTECT LEAD**: the last 2 minutes with a real lead.
-5. **RETREAT**: decided early in a fight, never in the middle of one. In
-   the first 12 s from contact: odds under 0.8, or losing the trades (unless
-   the fight in contact is won where it is, 1.0x+). After that the army
-   fights it out, unless that fight is hopeless (under 0.5x, their turrets
-   in it counted). Breaking off
-   mid-fight gave every chaser free shots: a4a78f76 lost 1500 for 300
-   hitting war factories at 5:40, retreated at 5000 vs 4000 and lost 1400
-   more on the way out. Marching, before contact, only under 0.5 turns it
-   round. 10 s out of contact ends a fight; the next contact opens a new
-   window.
+5. **RETREAT**: our attack is losing (odds under 0.8, or losing the trades
+   after the first 15 s).
 6. **ATTACK** when the odds against their army plus the turrets at the target
-   reach the bar — only when much stronger: 1.6, 1.4 after 7:00 or with a
-   15000+ army (at parity the defender wins: d1615ac6 lost 6800 for 3950 at
-   1.05), 1.0 behind at the end. Or at once after the main army clearly won
-   a fight (1500+ net and 1.5x in 2 minutes) at 1.3+. The plan is defend,
-   expand, out-mass: 5a03e4d2 out-built the rusher (5 refineries to 2 by
-   14:00) but went into its base at 7:30 after trading up, lost 8800 to its
-   units and 3 pillboxes, and lost the game to its next push.
+   reach the bar: 1.3, 1.15 after 7:00, 1.2 with a 15000+ army (at parity the
+   defender wins: d1615ac6 lost 6800 for 3950 at 1.05), 1.0 behind
+   at the end. Or at once after the main army
+   clearly won a fight (1500+ net and 1.5x in 2 minutes) when at least even.
    - **Look first**: knowing little of them (under half our army seen lately,
      and no fresh look where their army masses — the mouth of the choke on
      their side; a lap round their base doesn't count), a scout looks first
@@ -250,22 +226,13 @@ An attack goes on until the retreat rule ends it. No mass/attack flip within
   doesn't fit goes first next batch; lost orders are sent again.
 - **Defense, one handler** (`executor.respond`, `executor._army_home`):
   - **The army at home**: a fight in contact with it or the main base → it
-    attacks when the odds are 1.25+ — against the whole push as last seen
-    (held 20 s), not the few of it in sight (2fe84e1f at 3:51 went at two of
-    a 15-unit push by its war factory and lost everyone) — else holds the
-    main base's turret line (`scout.home_line`: just behind our turret
-    nearest them). A push seen in
-    our half → it gets ready at that line facing it. Before 5:00 it waits
-    at that line, by its turret (5a03e4d2: the 3:20 rush passed the forward
-    concave and killed the war factory and depot on the flank); not against
-    a passive enemy. Otherwise the concave
+    attacks when the odds are 1.25+, else holds the main base's turret line
+    (`scout.home_line`: just behind our turret nearest them). A push seen in
+    our half → it gets ready at that line facing it. Otherwise the concave
     holds the choke on their road in (a passage 7 cells or narrower, 10+ cells
     out and under 45% of the way to them): its kill point on the choke's mouth
     on our side, so the whole arc fires on them as they come through; with no
-    such choke, at the massing point. Rally points are at the massing point,
-    but at the army's line while their units stand there, a push is coming
-    or we defend: new units join the army, not walk out one by one into
-    theirs (2fe84e1f at 4:05).
+    such choke, at the massing point. Rally points stay at the massing point.
   - **Only our half**: the army's own fight and the idle units' answers
     count only enemies on our half of the map, and a spot we were hit at
     only by our buildings or trucks — their concave at the far mouth of a
@@ -276,17 +243,11 @@ An attack goes on until the retreat rule ends it. No mass/attack flip within
     fire on what comes in range, and a real push is the army's fight above
     (e2bc988e chased pokes through Sidestep's gap into their massed army
     for ten minutes and lost 10000 more than it killed).
-  - **A push is never answered in packets**: a group worth more than a
-    small raid, or any of a push in progress, draws no idle units — it is
-    the army's fight, whole.
   - **Everything else** — a small group, a raid on the
     trucks, a spot we were hit at with no attacker in sight
     (`under_attack`/`unit_lost` events, vanished units) → the idle units
-    within 12 cells (and, for a small group at the main base — by its
-    buildings or trucks or within 16 cells of a yard — the idle units at
-    home, sent after it by id so a walking scout isn't lost: 2fe84e1f's
-    second scout shot our power plant and trucks for 40 s), just enough to
-    win clearly — counting the units already sent at
+    within 12 cells (and, for a small group at the main base, the idle units
+    at home), just enough to win clearly — counting the units already sent at
     it for 20 s or until they get there (c1c37a10: a lone scout drew two more
     every view until the whole concave stood at the back of the base).
   - **Expansions**: the outpost (2 infantry, the engine's guard order), one
@@ -327,19 +288,12 @@ An attack goes on until the retreat rule ends it. No mass/attack flip within
   clearly win (2x) against the turrets and units there. Raids that lose
   800+ net stop new squads for 2 minutes (c1c37a10: four raids into
   pillboxes lost 7300 for 1950).
-- **Retreat**: an attack-move to the main turret line — 2 cells behind our
-  turret nearest the enemy, any of the main base's (within 16 cells of the
-  yard, so one out by the war factory counts) — firing at the chasers;
-  regroup there. A raid squad that is outmatched falls back to the
-  army the same way.
-- **Micro**: focus fire on the weakest enemy fighter within 4 cells, or 7 in
-  an attack, so units hitting a building turn onto the defenders shooting
-  them; siege units shell turrets.
-- **Turrets**: the first beside the war factory on its outward side (away
-  from the base centre), unless a threat or the advisor names the side; the
-  rest a line on the base's front edge straight toward the enemy (side by
-  side across that line, within 35° of it, never behind the base); when it
-  is full, no more are built until the base grows that way.
+- **Retreat**: a plain move to the main turret line; regroup there.
+- **Micro**: focus fire on the weakest enemy fighter within 4 cells; siege
+  units shell turrets.
+- **Turrets**: a line on the base's front edge straight toward the enemy
+  (side by side across that line, within 35° of it, never behind the base);
+  when it is full, no more are built until the base grows that way.
 
 ### 6a. The advisor's vote: near the bars only
 
@@ -376,8 +330,9 @@ has hysteresis:
   ends it at once); a new squad's route starts fresh.
 - Rules agree: one remote-expansion definition (25+ cells) for raids, the
   strike and the attack's first target; the turtle gate holds for every way
-  into an attack; the retreat window counts from first contact, not from the call (a strike
-  at 0.75-0.8 overall used to retreat while still marching); a distraction attack is judged on the odds
+  into an attack; an attack's 15 s before the 0.8 retreat line applies count
+  from first contact, not from the call (a strike at 0.75-0.8 overall used to
+  retreat while still marching); a distraction attack is judged on the odds
   it started on; "a way round"
   means the same ratio for the choke bar and the march; no forward expansion
   starts mid-attack; the follow-up's refinery needs a spot its trucks walk
@@ -430,8 +385,7 @@ yard.
   6b457914 charged 22 rushers with 9 units).
 - The massing army must answer what shoots it (3bd6e450, 08560d9b); idle units
   answer, units with orders keep them.
-- Retreat early or not at all, and fall back fighting: a4a78f76 broke off
-  mid-fight with a plain move at 5:54 and lost 1400 more to the chasers.
+- Retreat with a plain move: an attack-move stops to shoot every chaser.
 - The concave: ranks within rifle range of a kill point 2 cells in front, at
   most 6 slot orders a view (3bd6e450's 16-cell line couldn't all fire;
   52a77fb1's per-unit orders overflowed the batch).

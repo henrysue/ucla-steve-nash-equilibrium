@@ -27,7 +27,7 @@ ROCKET = "e3"
 # tanks). Pro replays: heavy/medium tanks in every game, light tanks never.
 TANK_PREFERENCE = ("3tnk", "2tnk", "4tnk", "1tnk")
 MAIN_BATTLE_TANKS = ("3tnk", "2tnk", "4tnk")
-TANK_VALUE_SHARE = 0.4             # a balanced mix: about 40% of combat value in tanks (with infantry and siege)
+TANK_VALUE_SHARE = 0.5             # pros keep 45-55% of combat value in tanks: below this, tanks come first
 ENEMY_MIX_SECONDS = 180.0          # their army's make-up: the unit types our scouts saw this recently
 HARVESTER = ("harv",)
 SIEGE_UNITS = ("v2rl", "arty")     # Soviet V2 / Allied artillery: outrange defenses
@@ -52,24 +52,16 @@ KNOWN_COSTS = {                    # the skill guide's prices, when the rules gi
     "pbox": 600, "hbox": 750, "gun": 800, "ftur": 600, "tsla": 1200, "agun": 800, "sam": 700,
 }
 
-# -- opening: the standard double refinery (a repeated id = one more of it) --
-# Power by the yard (the refinery then sits against the ore), barracks (early
-# infantry against harassment), two refineries (two free trucks: income far
-# faster than buying trucks), war factory; then power to stay green and the
-# service depot, then the MCV to expand (dvoid's guide adds a third refinery,
-# more barracks and a fourth refinery for the first expansion). The replays:
-# refineries at 1:00 / 1:38, war factory 2:40. The advisor waits until it
-# stands (unless a rush is read).
+# -- opening: the pros' double refinery into the war factory (a repeated id = one more of it) --
+# The replays: refineries at 1:00 / 1:38, war factory 2:40. The advisor waits
+# until it stands (unless a rush is read).
 BUILD_ORDER = (
-    POWER_PLANT, BARRACKS, REFINERY, REFINERY,   # power, infantry, the two free trucks
-    WAR_FACTORY,                                 # vehicles
+    POWER_PLANT, BARRACKS, REFINERY, REFINERY,   # economy + infantry
+    POWER_PLANT, WAR_FACTORY,                    # power + war factory
 )
-# Then, unless outgunned (units first): power, the service depot (main battle
-# tanks and the expansion MCV) and the third refinery.
-FOLLOW_UP = (POWER_PLANT, SERVICE_DEPOT, REFINERY)
-OPENING_ARMY_VALUE = 2000          # the war factory waits for an army worth this (1.5x the opening's ~1300)...
-OPENING_ARMY_SECONDS = 150.0       # ...until this at the latest (2fe84e1f: the barracks idled 1:05-2:37 saving for
-                                   # it, 6 infantry met a 15-unit push at 3:16 and lost the war factory)
+# Then, unless outgunned (units first): the third refinery and the service
+# depot (tanks and the expansion MCV).
+FOLLOW_UP = (SERVICE_DEPOT, REFINERY)   # the depot first: it unlocks the main battle tanks (and the MCV)
 WAR_FACTORY_REBUILD_AFTER_SECONDS = 180.0   # past the opening, a lost (or missing) war factory is rebuilt first...
 OPTIONAL_BUILDINGS = ("dome", "fix", "kenn", "silo")   # ...cancelling any of these ahead of it in the Building queue
 POWER_MARGIN = 25                  # build power when provided - drained falls below this
@@ -113,8 +105,6 @@ DOME_AFTER_SECONDS = 420.0         # pros build the dome ~7:00-8:30
 DOME_ADD_FUNDS = 1000
 SIEGE_MIN_ENEMY_DEFENSES = 1       # siege units only once we know of enemy defenses
 SIEGE_MAX = 4
-SIEGE_VALUE_SHARE = 0.2            # with the dome up, siege units are kept at about this share of combat value (the mix:
-                                   # infantry, siege, and tanks at TANK_VALUE_SHARE once the depot offers them)
 SIEGE_TARGET_RADIUS_CELLS = 10     # siege units fire on known defenses this close first
 TURTLE_DEFENSES = 2                # this many known enemy defenses: lean on tanks over infantry
 # The turtle read (intel.EnemyIntel.turtling): this many ground turrets known,
@@ -168,13 +158,13 @@ EMPTY_CELLS = {"proc": ((0, 0), (2, 0)), "fix": ((0, 0), (2, 0), (0, 2), (2, 2))
 CENTRE_OFFSETS = {"proc": (1, 1), "fact": (1, 1)}
 
 # -- defenses and repairs ----------------------------------------------------------------------
-STANDING_DEFENSES = 1              # once the war factory is up: beside it, on its outward side (factory_guard_spot)
-FACTORY_GUARD_CELLS = 5            # a turret this close to the war factory guards it
+STANDING_DEFENSES = 1              # once the war factory is up
 MAX_DEFENSES = 3                   # only while under attack...
 DEFENSE_ADD_FUNDS = 600            # ...and each beyond the first only with this much money
 DEFENSE_LINE_OFFSETS = (0, -3, 3, -6, 6)   # turret slots: cells across the line from the base straight to the enemy
 DEFENSE_CONE_DEGREES = 35.0        # turrets stand within this of that line (when a spot is free there)
 APPROACH_RING_CELLS = 12           # the approach: the cell this far from the base that is the shortest walk from the enemy
+APPROACH_MAX_STEPS = 400
 CHOKE_MAX_WIDTH = 11               # a choke: the enemy's walking path this narrow (cells across, cliffs to cliffs)...
 CHOKE_MIN_CELLS = 4                # ...between this far...
 CHOKE_MAX_CELLS = 16               # ...and this far from one of our yards (building range): its first tower watches it
@@ -217,20 +207,14 @@ EXPANSION_LOOK_AFTER_SECONDS = 240.0   # a new enemy expansion found after this 
 BELIEF_LOOK_CELLS = 10             # this many of our army units (BELIEF_LOOK_UNITS) this close to their base...
 BELIEF_LOOK_UNITS = 3
 BELIEF_DECAY_SECONDS = 30.0        # ...and the unseen part of their army fades over this (it isn't there)
-ATTACK_ARMY_EDGE = 1.6             # our army / estimated enemy army (brain.enemy_estimate) needed to attack their base:
-                                   # much stronger only — defend, expand, out-mass (5a03e4d2 went in at 7:30 after
-                                   # trading up, lost 8800 to their units and 3 pillboxes, and the rusher won)...
-ESCALATED_ARMY_EDGE = 1.4          # ...lowered after ESCALATE_AFTER_SECONDS (1.0 attacked at parity and retreated within seconds: ef66403c)...
+ATTACK_ARMY_EDGE = 1.3             # our army / estimated enemy army (brain.enemy_estimate) needed to attack...
+ESCALATED_ARMY_EDGE = 1.15         # ...lowered after ESCALATE_AFTER_SECONDS (1.0 attacked at parity and retreated within seconds: ef66403c)...
 CATCH_UP_ARMY_EDGE = 1.0           # ...and to this when behind at the end
 BIG_ARMY_VALUE = 15000             # an army this big pushes at...
-BIG_ARMY_EDGE = 1.4                # ...this edge (c7a982ac: two 20k+ armies idled 10 minutes at ~1.1; but
+BIG_ARMY_EDGE = 1.2                # ...this edge (c7a982ac: two 20k+ armies idled 10 minutes at ~1.1; but
                                    # d1615ac6 attacked 25150 into 24700 at 1.05 and lost 6800 for 3950: at
                                    # parity the defender's concave, turrets and short reinforcement win)
 TRADE_WIN_MIN = 1000               # an attack that has killed this much more than it lost keeps going
-TRADED_UP_ATTACK_EDGE = 1.3        # having just traded clearly up, attack at these odds (not at parity: 5a03e4d2)
-EARLY_HOME_DEFENSE_SECONDS = 300.0  # before this the army waits at the main base's line, by its turret, not the
-                                   # forward concave (5a03e4d2: the 3:20 rush passed the concave 12 cells out and
-                                   # killed the war factory and depot on the flank)
 ESCALATE_AFTER_SECONDS = 420.0
 MIN_ATTACK_ARMY_VALUE = 1500       # never attack with less...
 PUSH_ARMY_VALUE = 3000             # ...and push only with a real army built (unless behind at the end)
@@ -293,9 +277,7 @@ ENEMY_CLUSTER_CELLS = 10           # enemy buildings this close together are one
 
 # -- retreating ------------------------------------------------------------------------------------
 RETREAT_ARMY_EDGE = 0.8            # retreat below this edge while attacking...
-RETREAT_EARLY_EDGE = 0.5           # ...marching (no contact yet) or mid-fight only below this (mid-fight: the fight in contact)
-RETREAT_WINDOW_SECONDS = 12.0      # the retreat is decided this long from first contact; after it the army fights it out
-ENGAGEMENT_GAP_SECONDS = 10.0      # this long out of contact ends a fight: the next contact opens a new window
+RETREAT_EARLY_EDGE = 0.5           # ...but in the first MIN_ENGAGEMENT_SECONDS only below this (contact reveals their army)
 REINFORCE_GAP_CELLS = 14           # in an attack, units this far behind the front wait at the massing point...
 REINFORCE_GROUP_UNITS = 6          # ...until this many can go together (no trickling through a choke one by one)
 REINFORCE_HOLD_CELLS = 8           # only units still this close to the massing point wait: none is ever sent back
@@ -332,7 +314,7 @@ TRADE_WINDOW_SECONDS = 30.0        # ...or when, since the attack began (at most
 TRADE_LOSS_MIN = 1000              # we lost at least this,
 TRADE_LOSS_ARMY_SHARE = 0.25       # and this share of the army (the bigger of at the start and now),
 TRADE_LOSS_RATIO = 1.3             # and more than this times what we killed (08560d9b bled out at 1.33),
-MIN_ENGAGEMENT_SECONDS = 15.0      # after at least this long into the attack (the first volley always costs)
+MIN_ENGAGEMENT_SECONDS = 15.0      # after at least this long in the fight
 REGROUPED_SHARE = 0.7              # retreat ends when this share is back...
 REGROUP_RADIUS_CELLS = 8           # ...within this of the staging point
 RETREAT_COOLDOWN_SECONDS = 60.0    # no new attack this soon after a retreat
@@ -399,7 +381,6 @@ MAIN_FIGHT_RADIUS_CELLS = 9        # enemies this close to the main army: it is 
 SCOUT_FLEE_CELLS = 6               # the scout backs off from enemy fighters this close
 SCOUT_FLEE_HOLD_SECONDS = 20.0     # a picket that backed off stays back this long (not straight back to the enemy)
 SCOUT_SEEN_CELLS = 9               # a scout on a look or a peek turns back once it sees their fighters this close
-SCOUT_REPLACE_SECONDS = 60.0       # a picket killed at its post isn't replaced for this long (not fed to what killed it)
 SCOUT_BACKOFF_LOSSES = 3           # this many scouts lost...
 SCOUT_BACKOFF_WINDOW_SECONDS = 120.0   # ...this recently: no looks or peeks...
 SCOUT_BACKOFF_SECONDS = 90.0       # ...for this long after the last (5a4bc83f lost 58 scouts, the left one every ~30 s)
@@ -464,7 +445,7 @@ EXPAND_MIN_FIGHTERS = 8            # no expansion MCV with fewer fighters (08560
 EXPAND_MCV_ARMY_VALUE = 2000       # ...or less army than this (the count includes the scouts: c4caa45e flipped at 8)
 EXPAND_MAX_EXPANSIONS = 3
 EXPAND_MAX_FAILURES = 2
-EXPAND_AGAIN_AFTER_SECONDS = 75.0           # next expansion this long after the last (expand rapidly, out-mass)...
+EXPAND_AGAIN_AFTER_SECONDS = 120.0          # next expansion this long after the last...
 EXPAND_EVEN_TRADE_BAND = 2000               # ...and with kills - losses within this, the advisor's "wait" doesn't hold it
 # The ore forecast (harvest.HarvestManager): the observation has no live ore,
 # so a field holds about ORE_VALUE_PER_CELL x its ore cells at the start (ore
@@ -522,8 +503,6 @@ HARVESTER_SETTLE_SECONDS = 30.0    # a moved harvester stays put at least this l
 
 # -- units: micro, movement, stances --------------------------------------------------------------
 FOCUS_RADIUS_CELLS = 4             # focus fire on the weakest enemy fighter this close (about weapon range); the target sticks
-FOCUS_RADIUS_ATTACK_CELLS = 7      # ...this close in an attack (units on a building turn onto the fighters shooting them)
-LOCAL_FIGHT_ODDS = 1.0             # losing the trades doesn't call a retreat while the fight in contact is won at these odds
 STUCK_SECONDS = 10.0               # an ordered unit that hasn't moved this long gets a stop
 ENGAGED_RADIUS_CELLS = 7           # ...unless an enemy is this close
 # The concave: ranks on arcs round a kill point FORMATION_FOCUS_AHEAD cells in
@@ -547,7 +526,6 @@ ATTACK_STALL_SECONDS = 40.0        # attacking with no kills and nothing in sigh
 TRANSFORM_RADIUS_CELLS = 4         # an enemy MCV this close to a remembered yard: the yard packed up
 HOME_RAID_RADIUS_CELLS = 10        # a group this close to the main base (buildings, trucks) also draws the idle units at home...
 SMALL_RAID_VALUE = 1500            # ...and a group worth at most this is the idle units' job, more is the army's
-BASE_INTRUDER_CELLS = 16           # ...as is one this close to a yard of ours (a scout walking round the back of the base)
 RUSH_MIN_VALUE = 600               # in the opening, enemies at our base worth less are scouts, not a rush
 SECOND_FACTORY_SECONDS = 360.0     # a second war factory from this (service depot up, its price in hand or money floating)
 STALL_FORGET_CELLS = 10            # ...forget remembered buildings this close to the army...
