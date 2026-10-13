@@ -146,8 +146,9 @@ a turtle about one per turret (3–6) before any attack.
   nobody is there, on into the front of their base (a turtle's army waits at
   home) before it returns to its post: their army's size and make-up, and a
   fresh look for the attack's blind check — which counts only once it saw
-  their fighters or stood in front of their base (d2d8dc27 counted an empty
-  spot and attacked 3250 on an estimate of 250).
+  at least half of what we believe of their army, or stood in front of their
+  base (d2d8dc27 counted an empty spot and attacked 3250 on an estimate of
+  250; 1da6311e counted a glimpse of 1450 of a real 9750).
 - **See and turn back**: a look or a peek ends the moment the scout sees
   their fighters (9 cells) and it backs off; a look counts only if it saw
   them or stood in front of their base — an empty exit isn't a look. After
@@ -240,7 +241,12 @@ in the last minute) as evidence beside the estimate; it never changes it.
      riflemen massed at their exit).
    - **Never**: before 3:00 and a war factory, a new attack while the MCV
      travels, within 60 s of a retreat, into a turtle without 3 siege units
-     (unless the odds are 2.5+).
+     (unless the odds are 2.5+), nor against a tank timing push (intel.tank_push)
+     until our army has beaten a push of theirs (commander.push_beaten:
+     traded up), unless 2.5+ or behind at the end — defend first (1da6311e
+     attacked Yuriko at 6:34 on a believed 3370 and met ~9750). Under that
+     read their unseen army grows by all of what we spend on ours, not 0.6.
+     While behind or against it, the army doesn't edge forward to confirm.
    - **Strike an expansion**: a remote expansion of theirs our army beats 2x
      (its turrets and the units we know there) is attacked even short of the
      whole-army bar, if we are at least 0.75x their whole army — they must
@@ -272,7 +278,10 @@ An attack goes on until the retreat rule ends it. No mass/attack flip within
     at 3:27 and 10:29, and the push took the buildings anyway); with no
     choke, or once they are inside (nearer our base than the concave), the
     main base's turret line (`scout.home_line`: just behind our turret
-    nearest them). Otherwise the concave
+    nearest them). Behind on army (odds under 1), the waiting army holds
+    there too — the concave at a choke, else the turret line — not out at
+    the massing point (1da6311e on Shadowfiend: caught 22 cells out at 9:29
+    by a push we knew was bigger). Otherwise the concave
     holds the choke on their road in (a passage 7 cells or narrower, 10+ cells
     out and under 45% of the way to them): its kill point on the choke's mouth
     on our side, so the whole arc fires on them as they come through; with no

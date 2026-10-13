@@ -172,7 +172,8 @@ class RedAlertAgent:
         view = dataclasses.replace(view, enemy_turtling=self._intel.turtling(view),
                                    enemy_mix=self._intel.recent_mix(view, C.ENEMY_MIX_SECONDS),
                                    enemy_passive=self._passive(view),
-                                   enemy_tank_push=self._intel.tank_push(view))
+                                   enemy_tank_push=self._intel.tank_push(view),
+                                   tank_push_pending=self._intel.tank_push(view) and not self._commander.push_beaten)
         self._patrol.update(view, taken={*self._raid.unit_ids, *self._garrison.unit_ids})
         if self._patrol.alarm(view):
             self._intel.scouts_lost(view)
@@ -405,6 +406,10 @@ class RedAlertAgent:
         """While an attack call waits for confirmation: a point a little way
         from the massing point toward the target, where the army edges to see."""
         if self._confirm_at is None:
+            return None
+        # Not while behind or against a tank push not yet beaten: the army
+        # stays where it fights best (1da6311e edged 15 cells out at 5:54).
+        if view.tank_push_pending or brain.army_odds(view) < 1.0:
             return None
         stage = scout.choke_cell(view)
         target = executor.route_goal(view)
@@ -890,7 +895,10 @@ class RedAlertAgent:
                 # Scaled down by what we destroyed of their income and
                 # production (memory.growth_scale): they can't build as we do
                 # without refineries, trucks and factories.
-                share = min(C.ENEMY_GROWTH_SHARE, self._field_share(view)) * self._memory.growth_scale(view)
+                # A tank timing push (intel.tank_push): they put nearly
+                # everything into the army (1da6311e: ~9750 against our 5450).
+                grow = C.TANK_PUSH_GROWTH_SHARE if self._intel.tank_push(view) else C.ENEMY_GROWTH_SHARE
+                share = min(grow, self._field_share(view)) * self._memory.growth_scale(view)
                 self._believed += share * max(0.0, spent - spent0)
             self._believed -= C.KILL_ARMY_SHARE * max(0.0, view.kills_cost - kills0)
             if self._believed > floor and self._at_their_base(view):

@@ -188,6 +188,13 @@ def choose_mode(
             and len(view.units_of(C.SIEGE_UNITS)) < C.SIEGE_ATTACK_MIN
             and strike < C.OVERWHELMING_ODDS):
         can_attack = False
+    # Against a tank timing push, defend first: no attack until our army has
+    # beaten a push of theirs (commander.push_beaten), unless overwhelming or
+    # behind at the end (1da6311e attacked Yuriko at 6:34 on a believed 3370,
+    # met ~9750 and lost 2800 for nothing).
+    if (can_attack and prev_mode not in AGGRESSIVE and view.tank_push_pending
+            and strike < C.OVERWHELMING_ODDS and not _catching_up(view)):
+        can_attack = False
     policy_choice = Mode.ALL_IN if can_attack else Mode.BUILD
 
     # The model may hold an attack back — but not when we clearly outnumber

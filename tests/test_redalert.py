@@ -6452,3 +6452,77 @@ def test_a_disguised_game_is_not_saved_to_the_opponents_history(monkeypatch, tmp
     monkeypatch.setattr(postgame, "launch", lambda *a, **k: True)
     agent.on_match_end(types.SimpleNamespace(raw={"result": {"your_return": 1}}, final_result=None), CTX)
     assert saved == [("YurikoRed",)]
+
+
+def test_against_a_tank_push_we_defend_first_until_we_beat_one():
+    """1da6311e: Yuriko's war factory seen at 2:42, yet the army attacked at
+    6:34 on a believed 3370 and met ~9750."""
+    v = _view(_t=394.0, buildings=BASE + [{"id": 12, "type": "weap"}],
+              military={"army_value": 5450, "visible_enemy_value": 3400})                    # 1.6x believed
+    assert brain.choose_mode(v, cheese_since=None) is Mode.ALL_IN
+    pending = dataclasses.replace(v, enemy_tank_push=True, tank_push_pending=True)
+    assert brain.choose_mode(pending, cheese_since=None) is Mode.BUILD                         # defend first
+    crushing = dataclasses.replace(pending, enemy_army_value=2000.0)                          # 2.7x
+    assert brain.choose_mode(crushing, cheese_since=None) is Mode.ALL_IN                       # unless overwhelming
+    beaten = dataclasses.replace(pending, tank_push_pending=False)
+    assert brain.choose_mode(beaten, cheese_since=None) is Mode.ALL_IN                         # their push beaten
+    from agent.redalert.commander import Commander
+    c = Commander()
+    assert not c.push_beaten
+    c.traded_up = lambda view, squad_ids=frozenset(): True
+    c.decide(v)
+    assert c.push_beaten
+
+
+def test_against_a_tank_push_we_believe_they_put_everything_into_the_army():
+    def grown(first_seen):
+        agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
+        agent._intel.first_seen = dict(first_seen)
+        agent._believe(_view(_t=300.0, military={"army_value": 1000}), 0.0)
+        return agent._believe(_view(_t=390.0, military={"army_value": 6000}), 0.0)
+
+    normal, pushed = grown({}), grown({"weap": 162})
+    assert pushed > 1.4 * normal                                                               # 1.0 vs 0.6 of ours
+
+
+def test_a_glimpse_of_their_army_is_not_a_look():
+    """1da6311e: a look that saw 1450 of a real 9750 (we believed 3370)
+    cleared the blind check; a glimpse now goes on to their base front."""
+    corps = ScoutCorps()
+    u = type("U", (), {"id": 30, "cell": (30, 30), "idle": True})()
+    two = [{"id": 80, "type": "2tnk", "x": 31, "y": 30, "hp": 100}, {"id": 81, "type": "e3", "x": 30, "y": 31, "hp": 100}]
+    v = dataclasses.replace(_view(_t=393.0, units=[{"id": 30, "type": "e1", "x": 30, "y": 30, "hp": 100}],
+                                  visible_enemies=two), enemy_army_peak=3370.0)
+    corps._look(v, u)
+    assert corps.army_looked_at is None                                                       # a glimpse: walk on
+    big = dataclasses.replace(v, enemy_army_peak=2000.0)
+    assert corps._look(big, u) is None and corps.army_looked_at == 393.0                      # half or more: a look
+
+
+def test_behind_on_army_the_waiting_army_holds_by_the_turrets_not_out_at_the_massing_point():
+    """1da6311e on Shadowfiend: the massing point is 22 cells out; Yuriko's
+    bigger push caught the army there at 9:29 (9550 lost for 5000)."""
+    blds = BASE + [{"id": 30, "type": "pbox", "x": 9, "y": 9}]
+    army = [{"id": 100 + i, "type": "e1", "x": 13, "y": 13, "hp": 100, "idle": True} for i in range(8)]
+    many = [{"id": 200 + i, "type": "e1", "x": 13, "y": 13, "hp": 100, "idle": True} for i in range(40)]
+    ahead = _view(_t=500.0, buildings=blds, units=many, military={"army_value": 4000, "visible_enemy_value": 1000})
+    held = scout.concave_point(ahead)[0]
+    up = executor._army_orders(ahead, Mode.BUILD)
+    assert up and all((x["to"][0] - held[0]) ** 2 + (x["to"][1] - held[1]) ** 2 <= 8 ** 2 for x in up)   # ahead: out front
+    behind = _view(_t=500.0, buildings=blds, units=army, military={"army_value": 4000, "visible_enemy_value": 6000})
+    line = scout.home_line(behind)
+    o = executor._army_orders(behind, Mode.BUILD)
+    assert o and all((x["to"][0] - line[0]) ** 2 + (x["to"][1] - line[1]) ** 2 <= 6 ** 2 for x in o)   # by the turret
+    assert all((x["to"][0] - held[0]) ** 2 + (x["to"][1] - held[1]) ** 2 > 2 ** 2 for x in o)
+
+
+def test_no_edging_forward_while_behind_or_against_an_unbeaten_tank_push():
+    agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
+    agent._confirm_at = 380.0
+    v = _view(_t=385.0, buildings=BASE, military={"army_value": 5000, "visible_enemy_value": 2000},
+              visible_enemy_buildings=[{"id": 90, "type": "fact", "x": 40, "y": 40}])
+    assert agent._probe_point(v) is not None
+    assert agent._probe_point(dataclasses.replace(v, tank_push_pending=True)) is None
+    behind = _view(_t=385.0, buildings=BASE, military={"army_value": 5000, "visible_enemy_value": 7000},
+                   visible_enemy_buildings=[{"id": 90, "type": "fact", "x": 40, "y": 40}])
+    assert agent._probe_point(behind) is None

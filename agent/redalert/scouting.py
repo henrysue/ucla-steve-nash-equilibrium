@@ -643,13 +643,18 @@ class ScoutCorps:
         their fighters, or stands in front of their base and sees none.
         Walked in legs round the chokes (:meth:`_go`); a stop it can't reach
         is passed. None when done."""
+        from .brain import enemy_estimate
         from .scout import enemy_staging
 
-        if any(a.cell is not None and not a.wreck and a.type not in C.HARVESTER
-               and dist2(a.cell, u.cell) <= C.SCOUT_SEEN_CELLS ** 2 for a in view.enemy_units):
+        near = [a for a in view.enemy_units if a.cell is not None and not a.wreck and a.type not in C.HARVESTER
+                and dist2(a.cell, u.cell) <= C.SCOUT_SEEN_CELLS ** 2]
+        cost = lambda k: view.unit_costs.get(k) or C.KNOWN_COSTS.get(k, C.DEFAULT_UNIT_COST)  # noqa: E731
+        if near and sum(cost(a.type) for a in near) >= C.LOOK_MIN_SHARE * enemy_estimate(view):
             # Their army seen: the look counts, and the scout turns back (its
             # post's flee rule) — walking on through their army fed a scout
-            # every ~30 s (5a4bc83f). An empty spot goes on to their base front.
+            # every ~30 s (5a4bc83f). An empty spot goes on to their base front;
+            # so does a glimpse of a few (LOOK_MIN_SHARE: 1da6311e's look saw
+            # 1450 of a real 9750, and the attack went in).
             self._look_saw.add(u.id)
             return self._looked(view, u)
         if self.backing_off(view):

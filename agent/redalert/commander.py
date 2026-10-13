@@ -39,6 +39,7 @@ class Commander:
         self._army_trades = [0.0, 0.0]            # kills and deaths while the main army was in a fight
         self._last_trades: tuple[float, float] | None = None
         self._contact = False                     # the main army was in a fight last view
+        self.push_beaten = False                   # the main army clearly won a fight (traded_up) this match
         self.cheese_since: float | None = None    # threat window (brain.update_cheese_since)
         self.retreated_at: float | None = None
         self.retreat_army: float | None = None    # army value at the last retreat
@@ -72,6 +73,8 @@ class Commander:
         prev = self.mode
         losing = self.losing_trades(view)
         up = self.traded_up(view, squad_ids)
+        if up:
+            self.push_beaten = True                # a tank push read no longer holds the army home
         # A base race: our attack is winning, so it goes on while their push
         # hits our base (the home units still fight it). In the opening a
         # rush always calls the army home.

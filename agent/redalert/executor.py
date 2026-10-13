@@ -788,6 +788,16 @@ def _army_home(view: View, mode: Mode, scout_id: int | None = None, reserved: fr
         return _form(view, fighters, point, facing, everyone=True) if point is not None else []
     if stage_override is not None:                 # edging forward to confirm an attack: everyone goes
         return _form(view, fighters, stage_override, enemy_spawn_guess(view), everyone=True)
+    # Behind on army, it waits where it fights best (_hold_point: the concave
+    # at a choke, else the main base's turret line), not out at the massing
+    # point: on open ground that is 20+ cells out (1da6311e on Shadowfiend:
+    # caught there at 9:29 by a push we knew was bigger, 9550 lost for 5000).
+    from .brain import army_odds
+
+    if not view.enemy_passive and army_odds(view) < 1.0:
+        point, facing = _hold_point(view, enemy_spawn_guess(view))
+        if point is not None:
+            return _form(view, fighters, point, facing)
     held = scout.concave_point(view)       # at the choke's mouth when there is one
     return _form(view, fighters, held[0], held[1]) if held is not None else []
 

@@ -102,6 +102,11 @@ TANK_PUSH_DEPOT_SECONDS = 240.0    # ...or their service depot before this...
 TANK_PUSH_TANK_SECONDS = 330.0     # ...or their main battle tanks before this (Yuriko yuriko-vs-abu: war factory
                                    # 2:39, depot 3:20, tanks from 4:10, the push 4:30-5:30)
 TANK_PUSH_HOLD_SECONDS = 600.0     # the read holds until this
+TANK_PUSH_GROWTH_SHARE = 1.0       # under the read their unseen army grows by this x our army spending (Yuriko puts
+                                   # nearly everything into it: ~9750 against our 5450 at 6:55, 1da6311e)
+LOOK_MIN_SHARE = 0.5               # a scout's look counts on sight of their army only when it sees at least this
+                                   # share of what we believe (1da6311e: a glimpse of 1450 of a real 9750 cleared the
+                                   # blind check and the attack went in)
 ARMY_CHECK_SECONDS = 200.0         # a scout looks at their army now (after the early circuits): its make-up for the advisor
 ROCKET_RATIO_CREDIT_SWITCH = 2500
 BARRACKS_SCHEDULE = ((240.0, 2), (330.0, 3))  # after the service depot (each extra one only speeds the one infantry queue)
