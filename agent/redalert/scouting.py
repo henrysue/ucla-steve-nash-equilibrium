@@ -44,6 +44,11 @@ class ScoutCorps:
         self._last_check = float("-inf")
         self._last_cell: dict[int, tuple[int, int]] = {}
         self._lost: list[tuple[float, tuple[int, int], bool]] = []   # (time, cell, was circling)
+        self._report_units: dict = {}                 # enemy unit id -> type, seen in their base early
+        self._report_buildings: dict = {}             # enemy building id (or cell) -> type, seen in their base early
+        self._report_at: float | None = None          # when the base report last changed
+        self._centre_at: float | None = None          # when the second scout reached their base centre
+        self._into_centre: str | None = None          # the role walking into their base centre
         self.visit: tuple[int, int] | None = None    # a one-off look (our expansion site)
         self.look: tuple[int, int] | None = None     # where their army masses, before a blind attack
         self._peek_at: dict[str, float] = {}          # role -> when its last look at their exit ended
@@ -84,6 +89,47 @@ class ScoutCorps:
                 self._army_check.add(role)
                 return True
         return False
+
+    @property
+    def base_report(self) -> dict | None:
+        """What our scouts saw in their base early (within
+        ``BASE_REPORT_CELLS`` of its centre, before
+        ``BASE_REPORT_UNTIL_SECONDS``): riflemen and every unit type counted
+        by unit, the buildings present by type, and when the second scout
+        stood in its centre. For the advisor. None before anything is seen."""
+        if self._report_at is None:
+            return None
+        units: dict = {}
+        for kind in self._report_units.values():
+            units[kind] = units.get(kind, 0) + 1
+        buildings: dict = {}
+        for kind in self._report_buildings.values():
+            buildings[kind] = buildings.get(kind, 0) + 1
+        return {"riflemen": units.get(C.RIFLE, 0), "units": units, "buildings": buildings,
+                "as_of": round(self._report_at),
+                "reached_their_base_centre_at": None if self._centre_at is None else round(self._centre_at)}
+
+    def _note_base(self, view: View) -> None:
+        """Count what is seen in their base early (:attr:`base_report`)."""
+        if view.game_seconds >= C.BASE_REPORT_UNTIL_SECONDS:
+            return
+        centre = _their_centre(view)
+        if centre is None:
+            return
+        r2 = C.BASE_REPORT_CELLS ** 2
+        seen = False
+        for a in view.enemy_units:
+            if a.cell is not None and not a.wreck and a.id is not None and dist2(a.cell, centre) <= r2 \
+                    and self._report_units.get(a.id) != a.type:
+                self._report_units[a.id] = a.type
+                seen = True
+        for b in view.enemy_buildings:
+            key = b.id if b.id is not None else b.cell
+            if b.cell is not None and not b.wreck and dist2(b.cell, centre) <= r2 and key not in self._report_buildings:
+                self._report_buildings[key] = b.type
+                seen = True
+        if seen:
+            self._report_at = view.game_seconds
 
     def backing_off(self, view: View) -> bool:
         """``SCOUT_BACKOFF_LOSSES`` scouts lost within
@@ -165,6 +211,7 @@ class ScoutCorps:
         out: list[dict] = []
         units = {u.id: u for u in view.units if u.id is not None}
         visit_done = look_done = False
+        self._note_base(view)
         if search:
             out += self._sweep(view, units, list(search))
         for role, uid in self.roles.items():
@@ -521,6 +568,13 @@ class ScoutCorps:
         if inner is None:
             inner = role == "right"
         route = self.circuit(view, side, C.CIRCUIT_INNER_CELLS if inner else C.CIRCUIT_OUTER_CELLS)
+        # The second scout, round the back of their base, then into its
+        # centre: riflemen and buildings counted for the advisor (base_report).
+        centre = _their_centre(view)
+        if (route and role == "right" and centre is not None and self.base_seen_at is None
+                and view.game_seconds < C.EARLY_SCOUT_END_SECONDS):
+            route = route + [centre]
+            self._into_centre = role
         if route:
             self._route[role] = route
             self._circling.add(role)
@@ -540,6 +594,9 @@ class ScoutCorps:
             if not arrived:
                 return moves
             route.pop(0)                             # there (or as near as it gets): the next waypoint
+        if role == self._into_centre:                # stood in their base centre (or as near as it got)
+            self._centre_at = view.game_seconds
+            self._into_centre = None
         self._circling.discard(role)                 # round the back: info gathered...
         self.base_seen_at = view.game_seconds
         self._army_check.add(role)                   # ...and, still alive, a look at their army
@@ -696,3 +753,14 @@ def remote_sites(view: View) -> list[tuple[int, int]]:
     return [ore for _, centre, ore in _ore_fields(view)
             if dist2(centre, enemy) >= far2 and dist2(centre, base) >= far2
             and all(dist2(centre, y) > 100 for y in yards)]
+
+
+def _their_centre(view: View):
+    """Their base's centre: their construction yard nearest their spawn when
+    we know one, else the spawn we guess."""
+    spawn = enemy_spawn_guess(view)
+    yards = [b.cell for b in list(view.enemy_buildings) + list(view.known_enemy_buildings)
+             if b.type == C.CONSTRUCTION_YARD and b.cell is not None and not b.wreck]
+    if yards and spawn is not None:
+        return min(yards, key=lambda c: dist2(c, spawn))
+    return tuple(spawn) if spawn is not None else None

@@ -164,6 +164,7 @@ CENTRE_OFFSETS = {"proc": (1, 1), "fact": (1, 1)}
 # -- defenses and repairs ----------------------------------------------------------------------
 STANDING_DEFENSES = 1              # once the war factory is up: out in front of it (factory_guard_spot)
 FACTORY_GUARD_CELLS = 5            # a turret this close to the war factory guards it
+FACTORY_ORE_CLEAR_CELLS = 4        # the first war factory (at the back of the base) stays this far off any ore
 MAX_DEFENSES = 3                   # only while under attack...
 DEFENSE_ADD_FUNDS = 600            # ...and each beyond the first only with this much money
 DEFENSE_LINE_OFFSETS = (0, -3, 3, -6, 6)   # turret slots: cells across the line from the base straight to the enemy
@@ -410,7 +411,11 @@ SCOUT_FRONT_CELLS = 15             # ...the front: this far from their spawn...
 SCOUT_FRONT_DEGREES = 70.0         # ...this far either side of their way out toward us...
 SCOUT_TURRET_CELLS = 8             # ...and this far round every enemy turret we know
 SCOUT_MAX_DETOUR = 3.0             # the way round may be this much longer than the straight road
-CIRCUIT_STAGGER_SECONDS = 10.0     # the right scout sets out this long after the left
+CIRCUIT_STAGGER_SECONDS = 30.0     # the right scout sets out this long after the left: it sees their base later
+                                   # (daa0e4d5 believed 1220 at 2:51 against a real 4300) and then walks into its
+                                   # centre, counting riflemen and buildings (ScoutCorps.base_report)
+BASE_REPORT_CELLS = 14             # the base report counts enemy units and buildings this close to their base centre...
+BASE_REPORT_UNTIL_SECONDS = 240.0  # ...seen before this
 CIRCUIT_ARRIVED_CELLS = 3
 SCOUT_SNAP_CELLS = 6               # a post or waypoint walled in by terrain moves to a reachable cell this close
 SCOUT_WALK_STEPS = 250             # (walking steps searched from our base)

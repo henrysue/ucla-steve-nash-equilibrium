@@ -501,6 +501,19 @@ def placement_cell(view: View, item: str, defense_at: tuple[int, int] | None = N
     flank = _blend(side, enemy, C.PRODUCTION_FORWARD_BIAS)
     if item in C.BARRACKS:
         return grow_spot(view, flank, item, near=home)
+    if item == C.WAR_FACTORY and home is None and not view.has_building(C.WAR_FACTORY):
+        # The first war factory at the back, as far from the enemy as the
+        # base reaches: out on the flank it was the first building their
+        # push reached, lost at 3:39-3:49 in four of five games against the
+        # rusher (daa0e4d5: the northernmost building, where it came in).
+        # Off the ore (4+ cells: the refineries' and the natural expansion's
+        # ground; on Sidestep the farthest spot was the natural's yard site)
+        # and with open ground where its units come out (below it).
+        far = enemy_spawn_guess(view)
+        spots = [s for s in legal_spots(view, item) if _factory_exit_open(view, s)
+                 and not any(dist2(s, o) < C.FACTORY_ORE_CLEAR_CELLS ** 2 for o in view.ore_cells)]
+        if spots and far is not None:
+            return max(spots, key=lambda s: (dist2(s, far), -dist2(s, base)))
     if item in (C.WAR_FACTORY, C.SERVICE_DEPOT):
         return grow_spot(view, flank, item, near=home)
     if item in (C.POWER_PLANT, C.ADV_POWER_PLANT, C.SILO, C.RADAR_DOME, C.KENNEL):
@@ -926,6 +939,22 @@ def _watch_spot(view: View, item: str, base, near=None) -> tuple[int, int] | Non
         return None                    # it has its watch tower
     spots = [s for s in legal_spots(view, item, near) if dist2(s, watch) <= r2]
     return _pick(view, item, spots, lambda s: dist2(s, watch)) if spots else None
+
+
+def _factory_exit_open(view: View, spot) -> bool:
+    """The ``EXIT_CLEAR_ROWS`` rows below a war factory at ``spot`` (where
+    its units come out) are on the map, open ground and free of buildings."""
+    w, h = _footprint(C.WAR_FACTORY)
+    rows = [(x, y) for x in range(spot[0], spot[0] + w) for y in range(spot[1] + h, spot[1] + h + C.EXIT_CLEAR_ROWS)]
+    if view.bounds is not None:
+        bx, by, bw, bh = view.bounds
+        if any(not (bx <= x < bx + bw and by <= y < by + bh) for x, y in rows):
+            return False
+    taken = set(view.blocked_cells)
+    for b in view.buildings:
+        if b.cell is not None and not b.wreck:
+            taken.update(_cells(b.type, b.cell))
+    return not any(c in taken for c in rows)
 
 
 def factory_guard_spot(view: View, item: str = "pbox") -> tuple[int, int] | None:

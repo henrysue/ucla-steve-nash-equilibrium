@@ -121,7 +121,10 @@ engine won't raid their main base's edge.
 
 EARLY GAME (you are consulted from the first second): situation.scouting is what our scouts \
 have seen — buildings_known, first_seen (enemy type -> game second), recent_sightings, the rules' \
-own read and our scouts alive/lost. Predict their posture from it as soon as our scouts reach \
+own read and our scouts alive/lost — and base_report: what our scouts saw in their base in the \
+first 4 minutes (riflemen and every unit type counted by unit, the buildings present by type), \
+with the second scout walking round the back of their base into its centre 30 s after the first \
+(reached_their_base_centre_at). Many riflemen and one refinery there is a rush coming. Predict their posture from it as soon as our scouts reach \
 their base (~1:00-1:40), and say in plan when and from where you expect their first push. Tells:
   rush: one refinery by 1:40, a second barracks or an early war factory, 5+ riflemen in front of \
   their base before 2:00, our scouts killed on the way in;

@@ -612,6 +612,7 @@ class RedAlertAgent:
                                "drawing_their_army": self._raid.distracting(view)},
                 "scouts": dict(self._patrol.roles),
                 "scouting": {**self._intel.report(view),
+                             "base_report": self._patrol.base_report,
                              "scouts_alive": dict(self._patrol.roles),
                              "scouts_lost": [{"t": round(t), "cell": list(c)} for t, c, _ in self._patrol._lost]},
                 "intel": {"enemy_opening": self._intel.opening(),

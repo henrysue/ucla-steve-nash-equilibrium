@@ -1068,12 +1068,24 @@ def test_power_goes_to_the_back_and_off_the_ore_side():
     assert x < 10
 
 
-def test_war_factory_and_depot_go_to_the_side_off_the_ore_not_into_the_front():
-    wx, wy = buildplan.placement_cell(_layout_view(), "weap")
-    assert (wy - 10) > (wx - 10)               # the side away from the ore (north-east)
-    assert (wx - 10) + (wy - 10) >= 0          # not behind the base
-    stage = scout.choke_cell(_layout_view())
-    assert (wx + 1 - stage[0]) ** 2 + (wy + 1 - stage[1]) ** 2 > 3 ** 2   # off the army's massing point
+def test_the_first_war_factory_goes_at_the_back_and_a_second_to_the_side():
+    """daa0e4d5: the war factory, our northernmost building, was where the
+    rusher's push came in and fell at 3:40 — lost at 3:39-3:49 in four of
+    five games against it. The first goes as far from the enemy as the
+    base reaches; a second (and the depot) to the side, off the ore."""
+    v = _layout_view()
+    wx, wy = buildplan.placement_cell(v, "weap")
+    from agent.redalert.observe import enemy_spawn_guess
+    far = enemy_spawn_guess(v)
+    assert all((wx - far[0]) ** 2 + (wy - far[1]) ** 2 >= (s[0] - far[0]) ** 2 + (s[1] - far[1]) ** 2
+               for s in buildplan.legal_spots(v, "weap"))
+    one = dataclasses.replace(v, buildings=v.buildings + read(_raw(buildings=[{"id": 99, "type": "weap", "x": wx,
+                                                                                "y": wy}])).buildings)
+    sx, sy = buildplan.placement_cell(one, "weap")
+    assert (sy - 10) > (sx - 10)               # the side away from the ore (north-east)
+    assert (sx - 10) + (sy - 10) >= 0          # not behind the base
+    stage = scout.choke_cell(one)
+    assert (sx + 1 - stage[0]) ** 2 + (sy + 1 - stage[1]) ** 2 > 3 ** 2   # off the army's massing point
 
 
 def test_placement_keeps_a_gap_instead_of_cramming():
@@ -3352,7 +3364,8 @@ def test_two_early_scouts_round_the_back_of_their_base_left_and_right():
     o = corps.orders(dataclasses.replace(v, enemy_units=read(_raw(visible_enemies=near)).enemy_units))
     assert [x["units"] for x in o] == [[30]]                                # the right waits: staggered
     assert tuple(o[0]["to"]) == corps._legs[30][1][0] and o[0]["cmd"] == "attack_move"
-    later = dataclasses.replace(_view(_t=71.0, units=rifles), enemy_units=read(_raw(visible_enemies=near)).enemy_units)
+    later = dataclasses.replace(_view(_t=61.0 + C.CIRCUIT_STAGGER_SECONDS, units=rifles),
+                                enemy_units=read(_raw(visible_enemies=near)).enemy_units)
     o = corps.orders(later)
     assert {x["units"][0] for x in o} == {30, 31}                            # both on their rounds: no backing off
     assert all(x["cmd"] == "attack_move" for x in o)
@@ -6163,3 +6176,48 @@ def test_the_army_judges_a_fight_at_home_against_the_whole_push_not_the_few_in_s
         assert not any(x["cmd"] == "attack_move" and tuple(x["to"]) in {(14, 6), (15, 6)} for x in o)   # held at the line
     finally:
         scout._INTERCEPT.update(at=None, facing=None, group=[], seen=-1e9)
+
+
+def test_the_second_scout_walks_into_their_base_centre_and_reports_what_it_saw():
+    """daa0e4d5 believed 1220 at 2:51 against a real 4300: the second scout
+    goes 30 s after the first, round the back of their base and into its
+    centre, counting riflemen and buildings for the advisor."""
+    corps = ScoutCorps()
+    rifles = [{"id": 30 + i, "type": "e1", "x": 5, "y": 5, "hp": 100, "idle": True} for i in range(3)]
+    v = dataclasses.replace(_view(_t=60.0, units=rifles), bounds=(0, 0, 96, 96))   # enemy spawn guess (40, 40)
+    corps.update(v)
+    assert corps._start_at["right"] - corps._start_at["left"] == C.CIRCUIT_STAGGER_SECONDS
+    assert corps._route["right"][-1] == (40, 40)                                   # round the back, then the centre
+    assert corps._route["left"][-1] != (40, 40)
+    assert corps.base_report is None
+    theirs = [{"id": 80 + i, "type": "e1", "x": 38 + i % 3, "y": 41, "hp": 100} for i in range(5)]
+    theirs += [{"id": 90, "type": "e3", "x": 41, "y": 38, "hp": 100}, {"id": 91, "type": "e1", "x": 10, "y": 10, "hp": 100}]
+    blds = [{"id": 70, "type": "fact", "x": 40, "y": 40}, {"id": 71, "type": "tent", "x": 36, "y": 42},
+            {"id": 72, "type": "proc", "x": 44, "y": 37}]
+    seen = dataclasses.replace(_view(_t=130.0, units=rifles, visible_enemies=theirs, visible_enemy_buildings=blds),
+                               bounds=(0, 0, 96, 96))
+    corps.orders(seen)
+    corps.orders(seen)                                                              # seen twice: counted once
+    report = corps.base_report
+    assert report["riflemen"] == 5 and report["units"] == {"e1": 5, "e3": 1}      # not the one out by our base
+    assert report["buildings"] == {"fact": 1, "tent": 1, "proc": 1} and report["as_of"] == 130
+    corps._route["right"] = []
+    corps._circuit_orders(seen, "right", type("U", (), {"id": 31, "cell": (40, 40), "idle": True})())
+    assert corps.base_report["reached_their_base_centre_at"] == 130
+    late = dataclasses.replace(seen, game_seconds=C.BASE_REPORT_UNTIL_SECONDS + 1,
+                               enemy_units=read(_raw(visible_enemies=theirs + [
+                                   {"id": 95, "type": "e1", "x": 40, "y": 41, "hp": 100}])).enemy_units)
+    corps.orders(late)
+    assert corps.base_report["riflemen"] == 5                                       # early only
+
+
+def test_the_advisor_sees_the_base_report():
+    agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
+    agent._patrol._report_units = {80: "e1", 81: "e1", 82: "e3"}
+    agent._patrol._report_buildings = {70: "tent"}
+    agent._patrol._report_at = 120.0
+    captured = {}
+    agent._advisor = type("A", (), {"poll": lambda self, view, situation: captured.update(situation)})()
+    agent._poll_advisor(read(_raw(_t=120.0, buildings=BASE)))
+    report = captured["scouting"]["base_report"]
+    assert report["riflemen"] == 2 and report["units"] == {"e1": 2, "e3": 1} and report["buildings"] == {"tent": 1}

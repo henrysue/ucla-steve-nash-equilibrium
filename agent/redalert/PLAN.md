@@ -77,7 +77,10 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
   for an army worth 2000 or 2:30, whichever comes first, so the barracks
   keeps training for the push at ~3:00 (2fe84e1f and 9cada749: the barracks
   idled saving for it, and the push took the war factory); not against a
-  passive enemy. Then the service depot (it
+  passive enemy. The first war factory goes at the back of the base, as
+  far from the enemy as it reaches (4+ cells off the ore, its exit open):
+  on the flank it was the first building their push reached, lost at
+  3:39-3:49 in four of five games against the rusher. Then the service depot (it
   unlocks the main battle tanks) and a third refinery, unless outgunned; more
   barracks only after those. Under a rush read everything goes into units —
   except a lost war factory's rebuild and the harvesters in production.
@@ -122,7 +125,12 @@ a turtle about one per turret (3–6) before any attack.
 
 ### 3. Information
 
-- **0–3 min**: two scouts round the back of their base: their opening. A
+- **0–3 min**: two scouts round the back of their base: their opening —
+  the second 30 s after the first, and on into the centre of their base.
+  What they see there in the first 4 minutes (riflemen and every unit type
+  counted by unit, the buildings present) goes to the advisor as
+  scouting.base_report (daa0e4d5 believed 1220 at 2:51 against a real
+  4300). A
   scout still alive after a circuit (these, and every later base check) goes
   on to look where their army masses (the mouth of their choke) and, if
   nobody is there, on into the front of their base (a turtle's army waits at
