@@ -51,7 +51,8 @@ class Commander:
         self._unblocked_since: float | None = None # ...and the rules have stopped calling one since
         self._strike_cell: tuple | None = None     # the remote expansion this attack set out to strike
         self._call_at: float | None = None         # when the rules last called an attack (CONFIRM_GRACE_SECONDS)
-        self._contact_at: float | None = None      # when the current attack first met their army
+        self._contact_at: float | None = None      # when the current fight of the attack began (first contact)
+        self._touch_at: float | None = None        # the attack's last view in contact
 
     def track_threat(self, view: View) -> None:
         """Update the threat window (call first each view). Losing a building
@@ -81,9 +82,16 @@ class Commander:
         # The attack's time in the fight counts from first contact, not from
         # the call: a strike or a distraction attack below the retreat line
         # (0.8) retreated 15 s in, still marching to its target (the audit).
-        if prev is Mode.ALL_IN and self._contact_at is None and _army_in_contact(view, squad_ids):
-            self._contact_at = view.game_seconds
-        fought = (view.game_seconds - self._contact_at) if self._contact_at is not None else 0.0
+        # A fight ends ENGAGEMENT_GAP_SECONDS out of contact: the next contact
+        # opens a new retreat window (brain: decided early, never mid-fight).
+        t = view.game_seconds
+        if prev is Mode.ALL_IN and _army_in_contact(view, squad_ids):
+            if self._contact_at is None:
+                self._contact_at = t
+            self._touch_at = t
+        elif self._touch_at is not None and t - self._touch_at >= C.ENGAGEMENT_GAP_SECONDS:
+            self._contact_at = self._touch_at = None
+        fought = (t - self._contact_at) if self._contact_at is not None else None
 
         def choose(pref):
             return brain.choose_mode(
@@ -93,6 +101,7 @@ class Commander:
                 retreated_at=self.retreated_at, retreat_army=self.retreat_army, hunting=hunting,
                 alarm=alarm, distraction=distraction,
                 attack_seconds=fought if prev is Mode.ALL_IN else None,
+                marching=prev is Mode.ALL_IN and fought is None,
             )
 
         mode = choose(model_pref)
@@ -137,10 +146,10 @@ class Commander:
             self.confirm_at = None
         if mode is Mode.ALL_IN and prev is not Mode.ALL_IN:
             self._strike_cell = strike_at if strike else None
-            self._contact_at = None
+            self._contact_at = self._touch_at = None
         elif mode is not Mode.ALL_IN:
             self._strike_cell = None
-            self._contact_at = None
+            self._contact_at = self._touch_at = None
         self._record(view, prev, mode, distraction)
         return mode
 

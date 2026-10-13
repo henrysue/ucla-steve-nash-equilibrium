@@ -254,7 +254,6 @@ def test_nothing_of_ours_walks_down_the_choke_into_their_concave(path):
     import dataclasses
 
     from agent.redalert import executor
-    from agent.redalert.observe import read as _read
 
     fx = _load(path)
     view = _view(fx, fx["states"][1], path.stem)

@@ -64,10 +64,6 @@ class MatchLog:
         self._latencies: list[float] = []
         self._plans: list[dict] = []
 
-    @property
-    def enabled(self) -> bool:
-        return not self._disabled
-
     # -- recording -------------------------------------------------------------
 
     def observe(self, raw: dict, view, mode, context, extra: dict | None = None) -> None:

@@ -30,6 +30,7 @@ def choose_mode(
     alarm: bool = False,
     distraction=None,
     attack_seconds: float | None = None,
+    marching: bool = False,
 ) -> Mode:
     """The posture for this view.
 
@@ -44,7 +45,9 @@ def choose_mode(
     ``hunting``: their base is razed (scout.Hunter.hunting). ``alarm``: our
     scout was killed forward early (an early push may be coming).
     ``distraction``: (enemy ids, their value) our raid squads have drawn
-    lately (raid.RaidCorps.drawing), or None.
+    lately (raid.RaidCorps.drawing), or None. ``attack_seconds``: since the
+    attack's first contact with their army (commander), ``marching``: an
+    attack not in contact yet.
     """
     if not view.ok:
         return Mode.OPEN
@@ -124,14 +127,20 @@ def choose_mode(
             and strike < C.OVERWHELMING_ODDS):
         can_attack = False
 
-    # Retreat: losing the fight we started -> pull back before we feed the
-    # enemy kills_cost; hold the retreat until regrouped (or strong again).
-    # The model can't override this.
-    # Contact reveals their army and the estimate jumps: in the first seconds
-    # of a fight only being clearly outmatched pulls back; then the trades
-    # judge (match 5e840776: attacks retreated 6-30 s in, and were chased).
-    floor = (C.RETREAT_EARLY_EDGE if attack_seconds is not None and attack_seconds < C.MIN_ENGAGEMENT_SECONDS
-             else C.RETREAT_ARMY_EDGE)
+    # Retreat: decided early in a fight, never in the middle of one. Contact
+    # shows their army: in the first RETREAT_WINDOW_SECONDS the retreat line
+    # and the trades judge. After that the army fights it out — breaking off
+    # mid-fight gave every chaser free shots (a4a78f76 at 5:54 lost 1400 more
+    # on the way out) — unless the fight it is in is hopeless
+    # (RETREAT_EARLY_EDGE), and then it falls back fighting (an attack-move).
+    # Marching, before contact, only being clearly outmatched turns it round
+    # (a strike below the line goes on to its target). Hold the retreat until
+    # regrouped (or strong again). The model can't override this.
+    mid_fight = attack_seconds is not None and attack_seconds >= C.RETREAT_WINDOW_SECONDS
+    if prev_mode in AGGRESSIVE and mid_fight:
+        local = local_fight_odds(view, squad_ids)
+        return Mode.RETREAT if local is not None and local < C.RETREAT_EARLY_EDGE else Mode.ALL_IN
+    floor = C.RETREAT_EARLY_EDGE if marching else C.RETREAT_ARMY_EDGE
     # An attack winning its trades keeps going: the estimate can dip on what
     # it sees, but we are trading up. Only being clearly outmatched stops it.
     if winning_trades:
@@ -144,6 +153,13 @@ def choose_mode(
     # Near the line the advisor's posture decides (its "attack" fights on a
     # little below it, its "hold" pulls back a little above it); losing the
     # trades still ends it.
+    # Losing the trades doesn't pull back from a fight we win where it is:
+    # the losses came while hitting buildings with their army arriving —
+    # turn onto them, don't run (a4a78f76 retreated at 5:54, 5000 against
+    # 4000 in the fight, and lost 1400 more on the way out).
+    local = local_fight_odds(view, squad_ids)
+    if losing_trades and local is not None and local >= C.LOCAL_FIGHT_ODDS:
+        losing_trades = False
     if prev_mode in AGGRESSIVE and (not advised(retreat_edge, floor, vote) or losing_trades):
         return Mode.RETREAT
     # Committed: an attack under way goes on until the retreat rule calls it
@@ -200,6 +216,20 @@ def choose_mode(
         return Mode.BUILD
 
     return policy_choice
+
+
+def local_fight_odds(view: View, squad_ids: frozenset = frozenset()) -> float | None:
+    """The main army's units in the fight against theirs in it: their
+    fighters within ``STAGE_ENGAGE_CELLS`` of any of ours, and ours within
+    that of any of them (strength.odds). None with no fight in sight."""
+    r2 = C.STAGE_ENGAGE_CELLS ** 2
+    foes = [a for a in view.enemy_units if a.cell is not None and not a.wreck and a.type not in C.HARVESTER]
+    ours = [u for u in view.combat_units if u.cell is not None and u.id not in squad_ids]
+    theirs = [a for a in foes if any(dist2(a.cell, u.cell) <= r2 for u in ours)]
+    if not theirs:
+        return None
+    mine = [u for u in ours if any(dist2(u.cell, a.cell) <= r2 for a in theirs)]
+    return strength.odds(view, [u.type for u in mine], [a.type for a in theirs])
 
 
 def advised(value: float, bar: float, vote: int, floor: float = 0.0) -> bool:

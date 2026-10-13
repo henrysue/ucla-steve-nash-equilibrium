@@ -2,7 +2,7 @@
 
 In priority order: place and build (buildplan), defenses, economy (idle
 harvesters, repairs, rally points), unit production, squad orders, army
-orders. No model call; the batch is capped by ``orders.batch``.
+orders. No model call; the batch is capped by ``orders.split``.
 """
 
 from __future__ import annotations
@@ -203,9 +203,10 @@ def _repair_orders(view: View) -> list[dict]:
 
 
 def harvester_target(view: View) -> int:
-    """How many harvesters we want: 2.5 per refinery (rounded up), at least 4
-    once the war factory is up ("4-5 harvesters as quickly as possible"), at
-    most 3 per refinery (more just queue to unload), capped overall."""
+    """How many harvesters we want: one per refinery (each comes with one)
+    plus ``EXTRA_HARVESTERS``, at most ``MAX_HARVESTERS_PER_REFINERY`` per
+    refinery (more just queue to unload), capped overall; no more while the
+    fields run dry."""
     refineries = max(1, sum(1 for b in view.buildings if b.type == C.REFINERY and not b.wreck))
     # Pros: trucks come with refineries; train an early pair (and replacements).
     want = refineries + C.EXTRA_HARVESTERS
@@ -513,15 +514,15 @@ def _fan_out(view: View, units: list[int], points: list) -> list[dict]:
 
 def _retreat(view: View, scout_id: int | None, reserved: frozenset = frozenset()) -> list[dict]:
     """Pull every fighter not yet back to the main base's line
-    (scout.home_line): a plain move, to break off — an attack-move stops to
-    shoot every chaser in range and never gets away. At the line our turrets
-    fight with us and the units turn (their stance)."""
+    (scout.home_line) — an attack-move, firing at their army as it chases
+    (a plain move gave every chaser free shots: a4a78f76 lost 1400 more on
+    the way back at 5:54). At the line our turrets fight with us."""
     point = scout.home_line(view) or view.base_center
     if point is None:
         return []
     r2 = C.REGROUP_RADIUS_CELLS ** 2
     away = [u.id for u in _fighters(view, scout_id, reserved) if dist2(u.cell, point) > r2]
-    return [orders.move(away[:orders.MAX_UNITS_PER_ORDER], list(point))] if away else []
+    return [orders.attack_move(away[:orders.MAX_UNITS_PER_ORDER], list(point))] if away else []
 
 
 # -- the base's defense: one handler -------------------------------------------

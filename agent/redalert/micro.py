@@ -52,7 +52,10 @@ def plan(view: View, mode: Mode, skip: frozenset, stage: tuple[int, int] | None)
     if not enemies:
         _FOCUS.clear()
         return out, controlled
-    r2 = C.FOCUS_RADIUS_CELLS ** 2
+    # In an attack, out to weapon range: units hitting a building turn onto
+    # their fighters shooting at them (a4a78f76 at 5:40 lost 1500 for 300
+    # firing at war factories while the defenders fired at them).
+    r2 = (C.FOCUS_RADIUS_ATTACK_CELLS if mode is Mode.ALL_IN else C.FOCUS_RADIUS_CELLS) ** 2
     by_target: dict[int, list[int]] = {}
     for u in fighters:
         if u.id in controlled:

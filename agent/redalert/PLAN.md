@@ -184,8 +184,15 @@ behind/outgunned. The blind check reads only what was actually seen.
 3. **FINISH**: their base razed, or we dominate (2x their kills and 5000 up)
    with odds of 2.5+.
 4. **PROTECT LEAD**: the last 2 minutes with a real lead.
-5. **RETREAT**: our attack is losing (odds under 0.8, or losing the trades
-   after the first 15 s).
+5. **RETREAT**: decided early in a fight, never in the middle of one. In
+   the first 12 s from contact: odds under 0.8, or losing the trades (unless
+   the fight in contact is won where it is, 1.0x+). After that the army
+   fights it out, unless that fight is hopeless (under 0.5x). Breaking off
+   mid-fight gave every chaser free shots: a4a78f76 lost 1500 for 300
+   hitting war factories at 5:40, retreated at 5000 vs 4000 and lost 1400
+   more on the way out. Marching, before contact, only under 0.5 turns it
+   round. 10 s out of contact ends a fight; the next contact opens a new
+   window.
 6. **ATTACK** when the odds against their army plus the turrets at the target
    reach the bar: 1.3, 1.15 after 7:00, 1.2 with a 15000+ army (at parity the
    defender wins: d1615ac6 lost 6800 for 3950 at 1.05), 1.0 behind
@@ -288,9 +295,12 @@ An attack goes on until the retreat rule ends it. No mass/attack flip within
   clearly win (2x) against the turrets and units there. Raids that lose
   800+ net stop new squads for 2 minutes (c1c37a10: four raids into
   pillboxes lost 7300 for 1950).
-- **Retreat**: a plain move to the main turret line; regroup there.
-- **Micro**: focus fire on the weakest enemy fighter within 4 cells; siege
-  units shell turrets.
+- **Retreat**: an attack-move to the main turret line, firing at the
+  chasers; regroup there. A raid squad that is outmatched falls back to the
+  army the same way.
+- **Micro**: focus fire on the weakest enemy fighter within 4 cells, or 7 in
+  an attack, so units hitting a building turn onto the defenders shooting
+  them; siege units shell turrets.
 - **Turrets**: a line on the base's front edge straight toward the enemy
   (side by side across that line, within 35° of it, never behind the base);
   when it is full, no more are built until the base grows that way.
@@ -330,9 +340,8 @@ has hysteresis:
   ends it at once); a new squad's route starts fresh.
 - Rules agree: one remote-expansion definition (25+ cells) for raids, the
   strike and the attack's first target; the turtle gate holds for every way
-  into an attack; an attack's 15 s before the 0.8 retreat line applies count
-  from first contact, not from the call (a strike at 0.75-0.8 overall used to
-  retreat while still marching); a distraction attack is judged on the odds
+  into an attack; the retreat window counts from first contact, not from the call (a strike
+  at 0.75-0.8 overall used to retreat while still marching); a distraction attack is judged on the odds
   it started on; "a way round"
   means the same ratio for the choke bar and the march; no forward expansion
   starts mid-attack; the follow-up's refinery needs a spot its trucks walk
@@ -385,7 +394,8 @@ yard.
   6b457914 charged 22 rushers with 9 units).
 - The massing army must answer what shoots it (3bd6e450, 08560d9b); idle units
   answer, units with orders keep them.
-- Retreat with a plain move: an attack-move stops to shoot every chaser.
+- Retreat early or not at all, and fall back fighting: a4a78f76 broke off
+  mid-fight with a plain move at 5:54 and lost 1400 more to the chasers.
 - The concave: ranks within rifle range of a kill point 2 cells in front, at
   most 6 slot orders a view (3bd6e450's 16-cell line couldn't all fire;
   52a77fb1's per-unit orders overflowed the batch).

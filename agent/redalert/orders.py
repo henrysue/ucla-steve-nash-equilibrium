@@ -186,27 +186,6 @@ def split(orders: list[dict]) -> tuple[list[dict], list[dict]]:
     return take, rest
 
 
-def batch(orders: list[dict]) -> dict:
-    """Validate, de-dupe-cap, and wrap orders into a sendable move.
-
-    Drops malformed orders (defensive) and caps at the server's batch limit
-    and engine-command budget, keeping orders in priority order. Returns
-    ``None`` when nothing valid remains, so the caller can WAIT.
-    """
-    valid, commands = [], 0
-    for order in orders:
-        if not order_ok(order) or len(valid) >= MAX_ORDERS_PER_BATCH:
-            continue
-        cost = engine_commands(order)
-        if commands + cost > MAX_ENGINE_COMMANDS:
-            continue  # a later, smaller order may still fit
-        valid.append(order)
-        commands += cost
-    if not valid:
-        return None
-    return {"type": "orders", "orders": valid}
-
-
 def engine_commands(order: dict) -> int:
     """How many engine commands an order expands to (skill/redalert §5)."""
     if isinstance(order.get("units"), list):

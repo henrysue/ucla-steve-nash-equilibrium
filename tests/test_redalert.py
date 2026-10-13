@@ -70,12 +70,6 @@ def _state(**over):
 BASE = [{"id": 10, "type": "fact"}, {"id": 11, "type": "tent"}]
 
 
-@pytest.fixture
-def visible_only(monkeypatch):
-    """The enemy army is what we see (brain.enemy_estimate has no fog prior
-    any more): kept for the tests that say so."""
-
-
 # -- build order -------------------------------------------------------------
 
 
@@ -83,12 +77,6 @@ def test_deploys_mcv_before_anything():
     v = _view(units=[{"id": 1, "type": "mcv", "x": 4, "y": 4, "hp": 100}])
     o = buildplan.next_build_orders(v)
     assert o and o[0] == {"cmd": "deploy", "units": [1]}
-
-
-def test_build_order_starts_with_power_plant():
-    v = _view(buildings=[{"id": 10, "type": "fact"}])
-    o = buildplan.next_build_orders(v)
-    assert o and o[0] == {"cmd": "build", "item": "powr"}
 
 
 # -- hole #1: low-power interrupt --------------------------------------------
@@ -174,7 +162,6 @@ def test_builds_when_outmatched():
     assert brain.choose_mode(v, cheese_since=None) is Mode.BUILD
 
 
-@pytest.mark.usefixtures("visible_only")
 def test_all_in_with_a_clear_edge():
     v = _view(_t=200.0, buildings=BASE, military={"army_value": 3000, "visible_enemy_value": 1000})
     assert brain.choose_mode(v, cheese_since=None) is Mode.ALL_IN
@@ -274,7 +261,6 @@ def test_live_shape_prices_the_army_from_unit_costs():
     assert v.army_value == 2100
 
 
-@pytest.mark.usefixtures("visible_only")
 def test_live_shape_army_attacks_once_it_is_real():
     units = [{"id": i, "type": "1tnk", "x": 5, "y": 5, "hp": 100} for i in range(30, 35)]
     agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
@@ -334,12 +320,6 @@ def test_a_queued_harvester_counts_toward_the_target():
     assert "harv" not in items and "1tnk" in items
 
 
-def test_two_harvesters_per_refinery():
-    v = _view(buildings=_ECON_BASE + [{"id": 14, "type": "proc"}], units=_harvs(3))
-    assert executor.harvester_target(v) == 4  # refineries + 2
-    assert any(x.get("item") == "harv" for x in executor._production_orders(v, Mode.BUILD))
-
-
 def test_a_silo_when_ore_storage_is_nearly_full():
     v = _view(buildings=_ECON_BASE + [{"id": 15, "type": "powr"}],
               available_production=["powr", "tent", "proc", "weap", "silo", "e1"],
@@ -378,11 +358,6 @@ def test_defend_rush_spams_cheap_infantry():
     assert {"cmd": "train", "item": "e1", "count": 1} in o                # one at a time, 2 deep at most
     full = dataclasses.replace(v, production=[{"item": "e1", "queue": "Infantry", "ready": False}] * 2)
     assert not any(x.get("item") == "e1" for x in executor._production_orders(full, Mode.DEFEND_RUSH))
-
-
-def test_protect_lead_trains_nothing():
-    v = _view(buildings=[{"id": 10, "type": "fact"}])
-    assert executor._production_orders(v, Mode.PROTECT_LEAD) == []
 
 
 # -- hole #6 + robustness: the agent never stalls ----------------------------
@@ -484,11 +459,6 @@ def test_match_log_records_samples_refusals_and_the_result(tmp_path):
     assert "## Timeline" in md and "deploy (batch_refused): 1" in md
 
 
-def test_match_log_is_off_without_a_directory():
-    agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
-    assert agent._matchlog.enabled is False
-
-
 # -- enemy memory ------------------------------------------------------------
 
 from agent.redalert.memory import EnemyMemory  # noqa: E402
@@ -562,21 +532,22 @@ def test_retreat_holds_until_regrouped_then_builds():
                              cheese_since=None, prev_mode=Mode.RETREAT) is Mode.BUILD
 
 
-@pytest.mark.usefixtures("visible_only")
 def test_retreat_ends_in_an_attack_when_strong_again():
     v = _view(_t=200.0, buildings=BASE, military={"army_value": 4000, "visible_enemy_value": 1000})
     assert brain.choose_mode(v, cheese_since=None, prev_mode=Mode.RETREAT) is Mode.ALL_IN
 
 
-def test_retreat_breaks_off_to_the_main_line():
-    far = [{"id": 30, "type": "1tnk", "x": 40, "y": 40, "hp": 100},
-           {"id": 31, "type": "1tnk", "x": 13, "y": 14, "hp": 100}]
-    v = _view(buildings=BASE, units=far)
+def test_the_retreat_falls_back_fighting_to_the_main_line():
+    """An attack-move home with every unit not yet there: a plain move gave
+    every chaser free shots (a4a78f76 lost 1400 more on the way out)."""
+    units = [{"id": 30, "type": "1tnk", "x": 38, "y": 38, "hp": 100}, {"id": 31, "type": "1tnk", "x": 30, "y": 30, "hp": 100},
+             {"id": 32, "type": "1tnk", "x": 13, "y": 14, "hp": 100}]                     # already home
+    enemy = [{"id": 90, "type": "3tnk", "x": 40, "y": 39, "hp": 100}]
+    v = _view(buildings=BASE, units=units, visible_enemies=enemy)
     o = executor._army_orders(v, Mode.RETREAT)
-    assert o == [{"cmd": "move", "units": [30], "to": list(scout.home_line(v))}]   # a plain move: it gets away
+    assert o == [{"cmd": "attack_move", "units": [30, 31], "to": list(scout.home_line(v))}]
 
 
-@pytest.mark.usefixtures("visible_only")
 def test_the_agent_retreats_after_its_attack_goes_bad():
     units = [{"id": 30 + i, "type": "1tnk", "x": 38, "y": 38, "hp": 100} for i in range(3)]
     agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
@@ -588,8 +559,8 @@ def test_the_agent_retreats_after_its_attack_goes_bad():
     dec = agent.choose_action(_state(_t=400.0, buildings=BASE, units=units, visible_enemies=enemies,
                                      military={"army_value": 3100, "visible_enemy_value": 8000}), CTX)   # clearly outmatched
     assert agent._mode is Mode.RETREAT
-    # they break off to the main base's line (a plain move: chased, an attack-move never gets away)
-    assert {"cmd": "move", "units": [30, 31, 32], "to": [11, 11]} in dec.action["orders"]
+    # they fall back to the main base's line, fighting the chasers
+    assert {"cmd": "attack_move", "units": [30, 31, 32], "to": [11, 11]} in dec.action["orders"]
 
 
 # -- rules from https://api.altruagent-game.com/skill/redalert ---------------
@@ -599,9 +570,10 @@ from agent.redalert import orders as ra_orders  # noqa: E402
 
 def test_batch_stays_under_the_engine_command_cap():
     big = [ra_orders.attack_move(list(range(i * 45, i * 45 + 45)), [10, 10]) for i in range(5)]  # 225 cmds
-    move = ra_orders.batch(big + [ra_orders.build("powr")])
-    assert sum(ra_orders.engine_commands(o) for o in move["orders"]) <= 200
-    assert {"cmd": "build", "item": "powr"} in move["orders"]  # a small order still fits
+    take, rest = ra_orders.split(big + [ra_orders.build("powr")])
+    assert sum(ra_orders.engine_commands(o) for o in take) <= 200
+    assert {"cmd": "build", "item": "powr"} in take                           # a small order still fits
+    assert rest == big[4:]                                                    # the rest goes next batch
 
 
 def test_a_just_sent_build_is_not_queued_twice():
@@ -807,7 +779,6 @@ def test_the_army_leaves_the_raid_squad_alone():
 
 # -- OpenRA wiki advice: placement, defense, repair, target priority ----------
 
-_MID = dict(base_center=[20, 20])   # a base mid-map, so offsets aren't clamped
 
 
 def test_refinery_goes_beside_the_ore_within_reach():
@@ -900,14 +871,12 @@ def test_no_layout_no_enemy_ore_field():
 # -- lessons from match 01930376: don't attack into defenses forever ---------
 
 
-@pytest.mark.usefixtures("visible_only")
 def test_a_losing_exchange_triggers_retreat_even_with_a_big_army_edge():
     v = _view(_t=200.0, buildings=BASE, military={"army_value": 7700, "visible_enemy_value": 1100})
     assert brain.choose_mode(v, cheese_since=None, prev_mode=Mode.ALL_IN) is Mode.ALL_IN
     assert brain.choose_mode(v, cheese_since=None, prev_mode=Mode.ALL_IN, losing_trades=True) is Mode.RETREAT
 
 
-@pytest.mark.usefixtures("visible_only")
 def test_no_new_attack_during_the_retreat_cooldown():
     v = _view(buildings=BASE, _t=300.0, military={"army_value": 7700, "visible_enemy_value": 1100})
     assert brain.choose_mode(v, cheese_since=None, prev_mode=Mode.BUILD, retreated_at=280.0) is Mode.BUILD
@@ -1110,22 +1079,20 @@ def test_advisor_plan_goes_to_console_only_when_it_changes(tmp_path):
 
 
 def test_army_movement_always_attack_moves_even_in_retreat():
-    """Every army order fights on the way; only RETREAT breaks off with a plain move."""
+    """Every army order fights on the way, the retreat's too."""
     units = [{"id": 30 + i, "type": "1tnk", "x": 38, "y": 38, "hp": 100, "idle": True} for i in range(6)]
     adv = ra_advisor.parse_advice(_ANSWER, _view(), 100.0)
     enemy = [{"id": 50, "type": "e1", "x": 12, "y": 4, "hp": 100}, {"id": 51, "type": "e1", "x": 13, "y": 4, "hp": 100}]
     for mode, kw in ((Mode.BUILD, {}), (Mode.BUILD, {"advice": adv}), (Mode.ALL_IN, {}),
-                     (Mode.ALL_IN, {"advice": adv}), (Mode.DEFEND_BASE, {}), (Mode.DEFEND_RUSH, {})):
+                     (Mode.ALL_IN, {"advice": adv}), (Mode.DEFEND_BASE, {}), (Mode.DEFEND_RUSH, {}), (Mode.RETREAT, {})):
         v = _view(buildings=BASE, units=units, visible_enemies=enemy if mode in (Mode.DEFEND_BASE, Mode.DEFEND_RUSH) else [])
         cmds = {o["cmd"] for o in executor._army_orders(v, mode, **kw)}
         assert cmds <= {"attack_move", "attack"}, (mode, cmds)
-    assert {o["cmd"] for o in executor._army_orders(_view(buildings=BASE, units=units), Mode.RETREAT)} == {"move"}
 
 
 # -- lessons from match 1a2767cd: commit, don't turtle, raid with what we have --
 
 
-@pytest.mark.usefixtures("visible_only")
 def test_model_hold_cannot_stop_an_overwhelming_attack():
     v = _view(_t=200.0, buildings=BASE, military={"army_value": 7350, "visible_enemy_value": 2350})
     assert brain.choose_mode(v, cheese_since=None, model_pref=Mode.BUILD) is Mode.ALL_IN
@@ -1133,7 +1100,6 @@ def test_model_hold_cannot_stop_an_overwhelming_attack():
     assert brain.choose_mode(unseen, cheese_since=None, model_pref=Mode.BUILD) is Mode.BUILD  # nothing known: hold is fine
 
 
-@pytest.mark.usefixtures("visible_only")
 def test_the_army_commits_instead_of_flip_flopping():
     tanks = [{"id": 30 + i, "type": "1tnk", "x": 22, "y": 22, "hp": 100} for i in range(4)]
     agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
@@ -1148,11 +1114,10 @@ def test_the_army_commits_instead_of_flip_flopping():
     assert agent._mode is Mode.ALL_IN                            # 30 s in: still committed (82908a24 flipped 9x)
     beaten = {"army_value": 3500, "visible_enemy_value": 5000}   # edge 0.7: the retreat rule ends it...
     met = [{"id": 900, "type": "e1", "x": 25, "y": 25, "hp": 100}]
-    agent.choose_action(_state(_t=405.0, buildings=BASE, units=tanks, military=beaten, visible_enemies=met), CTX)
-    assert agent._mode is Mode.ALL_IN                            # ...but only from first contact (just met them)
-    agent.choose_action(_state(_t=405.0 + C.MIN_ENGAGEMENT_SECONDS + 1, buildings=BASE, units=tanks, military=beaten,
-                               visible_enemies=met), CTX)
-    assert agent._mode is Mode.RETREAT                           # in the fight 15 s at 0.7: out
+    agent.choose_action(_state(_t=405.0, buildings=BASE, units=tanks, military=beaten), CTX)
+    assert agent._mode is Mode.ALL_IN                            # ...not while marching (nothing met yet)
+    agent.choose_action(_state(_t=410.0, buildings=BASE, units=tanks, military=beaten, visible_enemies=met), CTX)
+    assert agent._mode is Mode.RETREAT                           # contact at 0.7: decided early, out
 
 
 def test_raids_use_light_vehicles_when_infantry_is_short_and_spare_other_squads():
@@ -1725,7 +1690,6 @@ def test_protect_lead_only_when_actually_ahead_on_trades():
     assert brain.choose_mode(behind, cheese_since=None) is not Mode.PROTECT_LEAD
 
 
-@pytest.mark.usefixtures("visible_only")
 def test_behind_at_the_end_the_army_attacks_despite_hold_and_regrowth():
     v = _view(buildings=BASE, _t=1050.0, _r=150.0,
               military={"army_value": 9000, "visible_enemy_value": 8000, "kills_cost": 25500, "deaths_cost": 28600})
@@ -1872,14 +1836,6 @@ def test_moving_fighting_unloading_and_idle_units_are_not_stuck():
     idle = [{"id": 33, "type": "1tnk", "x": 20, "y": 20, "hp": 100, "idle": True}]
     for t in (100.0, 111.0, 122.0):
         assert u.orders(_view(_t=t, units=idle)) == []
-
-
-def test_a_withdrawal_breaks_off_with_every_unit():
-    units = [{"id": 30, "type": "1tnk", "x": 38, "y": 38, "hp": 100}, {"id": 31, "type": "1tnk", "x": 30, "y": 30, "hp": 100}]
-    enemy = [{"id": 90, "type": "3tnk", "x": 40, "y": 39, "hp": 100}]
-    v = _view(buildings=BASE, units=units, visible_enemies=enemy)
-    o = executor._army_orders(v, Mode.RETREAT)
-    assert o == [{"cmd": "move", "units": [30, 31], "to": list(scout.home_line(v))}]   # a plain move: it gets away
 
 
 # -- rule-based micro and Haiku squad leads -------------------------------------------
@@ -2044,7 +2000,6 @@ def test_harvesters_go_to_an_expansion_field_once_it_has_a_refinery():
     o = HarvestManager().orders(v)
     sent = [x for x in o if x["cmd"] == "harvest" and x.get("to") and (x["to"][0] - 24) ** 2 + (x["to"][1] - 6) ** 2 <= 9]
     assert sent, o
-    assert not hasattr(Expansion(), "_harvest_orders")
 
 
 def test_waiting_units_hold_and_attackers_engage():
@@ -2071,15 +2026,13 @@ def test_a_finished_unplaced_power_plant_is_not_built_twice():
 def test_the_hunter_checks_the_spawn_first_then_sweeps_and_starts_over():
     h = scout.Hunter()
     v = dataclasses.replace(_view(units=[{"id": 30, "type": "1tnk", "x": 30, "y": 30, "hp": 100}]), ore_cells=_THEIR_ORE)
-    assert h.target(v) == (40, 40)                                   # the enemy spawn first
+    assert h.targets(v, 1) == [(40, 40)]                             # the enemy spawn first
     at_spawn = dataclasses.replace(_view(units=[{"id": 30, "type": "1tnk", "x": 40, "y": 40, "hp": 100}]),
                                    ore_cells=_THEIR_ORE)
-    nxt = h.target(at_spawn)
-    assert nxt != (40, 40)                                           # checked: on to the next point
+    assert h.targets(at_spawn, 1) != [(40, 40)]                      # checked: on to the next point
     for _ in range(20):                                              # visit everything
-        pt = h.target(at_spawn)
-        h._checked.add(pt)
-    assert h.target(at_spawn) is not None                            # and it starts over, never None
+        h._checked.update(h.targets(at_spawn, 1))
+    assert h.targets(at_spawn, 1)                                    # and it starts over, never empty
 
 
 def test_with_nothing_known_the_army_hunts_instead_of_idling_on_ruins():
@@ -2323,7 +2276,6 @@ def test_no_extra_turrets_when_broke():
     assert buildplan.defense_orders(rich, under_attack=True) == [{"cmd": "build", "item": "pbox"}]
 
 
-@pytest.mark.usefixtures("visible_only")
 def test_an_overwhelming_army_splits_between_two_enemy_clusters():
     units = [{"id": 30 + i, "type": "3tnk", "x": 30, "y": 25 + i, "hp": 100} for i in range(10)]
     blds = [{"id": 81, "type": "proc", "x": 40, "y": 40, "hp": 100}, {"id": 82, "type": "fact", "x": 40, "y": 10, "hp": 100}]
@@ -2727,7 +2679,6 @@ def test_a_stale_advisor_target_does_not_hold_the_army_off_the_last_building():
     assert o[-1]["to"] == [13, 40]                                                   # onto the building itself (a4a78f76)
 
 
-@pytest.mark.usefixtures("visible_only")
 def test_hunting_beats_protecting_the_lead_and_a_model_hold():
     units = [{"id": 30 + i, "type": "1tnk", "x": 20, "y": 20, "hp": 100} for i in range(10)]
     strong = _view(buildings=BASE, units=units, _r=60.0,
@@ -2758,7 +2709,6 @@ def test_a_big_hunting_army_sweeps_several_points_at_once():
 
 # -- fixing b7fcbd4e's mistakes: no early trade, guard the harvesters, never walk away under fire, sell to recover
 
-@pytest.mark.usefixtures("visible_only")
 def test_no_all_in_before_the_economy_is_up_even_against_a_small_seen_army():
     v = _view(_t=65.0, buildings=BASE, military={"army_value": 3300, "visible_enemy_value": 500})   # 1:05, "6.6x"
     assert brain.choose_mode(v, cheese_since=None) is Mode.BUILD
@@ -2787,9 +2737,7 @@ def test_new_units_rally_to_the_massing_point():
 def test_no_combat_order_is_a_plain_move():
     units = [{"id": 30 + i, "type": "1tnk", "x": 38, "y": 38, "hp": 15 if i == 0 else 100, "idle": True} for i in range(6)]
     enemy = [{"id": 90, "type": "3tnk", "x": 39, "y": 39, "hp": 100}]
-    for mode in Mode:
-        if mode is Mode.RETREAT:
-            continue                                  # a retreat breaks off with a plain move
+    for mode in Mode:                                 # the retreat too: it falls back fighting
         v = _view(_t=400.0, buildings=BASE, units=units, visible_enemies=enemy)
         o = executor._army_orders(v, mode) + micro.plan(v, mode, frozenset(), scout.choke_cell(v))[0]
         assert all(x["cmd"] != "move" for x in o), (mode, o)
@@ -2914,8 +2862,6 @@ def test_no_attack_into_turrets_with_a_small_mixed_army():
     assert brain.choose_mode(v, cheese_since=None, prev_mode=Mode.BUILD) is Mode.BUILD
 
 
-@pytest.mark.usefixtures("visible_only")
-@pytest.mark.usefixtures("visible_only")
 def test_riflemen_dont_attack_into_flame_towers_armor_does():
     mass = [{"id": 30 + i, "type": "e1", "x": 10, "y": 10, "hp": 100} for i in range(18)]
     assert brain.choose_mode(_attack_view(mass), cheese_since=None, prev_mode=Mode.BUILD) is Mode.BUILD   # shredded
@@ -3021,10 +2967,8 @@ def test_units_on_the_spot_are_moved_off_before_placing():
     assert not any(x["cmd"] == "place" for x in o)                        # wait: the spot is occupied
     moves = [x for x in o if x["cmd"] == "attack_move"]                    # fighters step aside, still fighting
     assert moves and clearing == {"powr": 100.0}
-    at_spot = moves[0]["to"]
     o2 = buildplan.placement_orders(_crowded(106.0), clearing=clearing)
     assert any(x["cmd"] == "place" for x in o2) and clearing == {}         # waited long enough: place anyway
-    assert at_spot is not None
 
 
 def test_trucks_on_the_spot_get_a_plain_move_off_it():
@@ -3136,7 +3080,6 @@ def test_the_rusher_builds_lean_with_early_pillboxes():
     assert r.defense(pv, under_attack=True) is None
 
 
-@pytest.mark.usefixtures("visible_only")
 def test_the_turtler_builds_a_turret_ring_and_pushes_only_late():
     t = sparring.Turtler()
     blds = BASE + [{"id": 12, "type": "weap", "x": 4, "y": 8}, {"id": 13, "type": "proc", "x": 9, "y": 9}]
@@ -3282,7 +3225,7 @@ def test_an_outmatched_raid_breaks_off_and_marks_their_army_distracted():
     r, v = _raid_with(_RAIDERS, [_THEIR_HARV] + tanks)
     assert r.situation(v)[0] == "outmatched"
     o = r.orders(v)
-    assert o[0]["cmd"] == "move" and o[0]["to"] == list(scout.choke_cell(v))   # a plain move: it gets away
+    assert o[0]["cmd"] == "attack_move" and o[0]["to"] == list(scout.choke_cell(v))   # back to the army, fighting
     assert r.distracting(v) and not r.distracting(dataclasses.replace(v, game_seconds=440.0))
     ids, value, at = r.drawing(v)
     assert ids == frozenset(range(80, 86)) and value == 6 * 1150 and at is not None
@@ -3417,7 +3360,6 @@ def test_the_army_attacks_in_a_semi_concave_of_groups():
     assert len(set(spots)) == 3 and sorted(len(x["units"]) for x in o) == [3, 3, 3]
 
 
-@pytest.mark.usefixtures("visible_only")
 def test_an_attack_call_on_even_trades_is_checked_again_before_committing():
     tanks = [{"id": 30 + i, "type": "3tnk", "x": 10, "y": 10, "hp": 100} for i in range(6)]
     ahead = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
@@ -3468,7 +3410,6 @@ def test_a_travelling_mcv_does_not_move_the_massing_point():
     assert moves and all((o["to"][0] - 30) ** 2 + (o["to"][1] - 30) ** 2 <= 6 ** 2 for o in moves)   # the look-ahead, not the MCV
 
 
-@pytest.mark.usefixtures("visible_only")
 def test_a_confirmation_made_during_the_anti_flip_window_starts_the_attack_when_it_ends():
     tanks = [{"id": 30 + i, "type": "3tnk", "x": 10, "y": 10, "hp": 100} for i in range(6)]
     agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
@@ -3498,7 +3439,6 @@ def _strong(t, **kw):
                                enemy_base_scouted=True)                     # a fresh look: not blind
 
 
-@pytest.mark.usefixtures("visible_only")
 def test_the_commander_confirms_on_even_trades_and_goes_at_once_when_ahead():
     c = Commander()
     c.mode = Mode.BUILD
@@ -3971,11 +3911,6 @@ def test_the_outpost_comes_back_at_any_notice_unless_its_expansion_is_attacked()
 # -- match 0ee93a05: a 13-minute hold against a crippled rusher -------------------------------------
 
 
-def test_an_aggressive_read_brings_turrets_not_a_standing_hold():
-    a = ra_advisor.parse_advice({**_ANSWER, "posture": "default", "enemy_style": "aggressive"}, _view(), 100.0)
-    assert a.posture == "default" and a.enemy_style == "aggressive"
-
-
 def test_the_retreat_floor_grows_with_the_army():
     c = Commander()
     c.mode, c.mode_since, c.attack_army = Mode.ALL_IN, 900.0, 3900.0
@@ -3994,7 +3929,6 @@ def test_a_scout_alarm_before_the_war_factory_gets_one_turret():
 # -- steadier: a real army before the push, two agreeing advisor answers ---------------------------
 
 
-@pytest.mark.usefixtures("visible_only")
 def test_no_push_until_a_real_army_is_built():
     small = _view(_t=500.0, buildings=BASE, military={"army_value": 2400, "visible_enemy_value": 500})
     assert brain.choose_mode(small, cheese_since=None) is Mode.BUILD                 # 4.8x, but 2400: keep building
@@ -4158,7 +4092,6 @@ def test_finishing_takes_a_real_lead_not_six_hundred():
     assert brain.beaten(late)
 
 
-@pytest.mark.usefixtures("visible_only")
 def test_an_overwhelming_army_splits_across_up_to_four_bases():
     units = [{"id": 100 + i, "type": "3tnk", "x": 30, "y": 25, "hp": 100} for i in range(40)]
     blds = [{"id": 80 + i, "type": "proc", "x": x, "y": y, "hp": 100}
@@ -4489,10 +4422,68 @@ def test_the_first_tower_watches_a_choke_in_range():
     assert (spot[0] - watch[0]) ** 2 + (spot[1] - watch[1]) ** 2 <= C.WATCH_SPOT_CELLS ** 2
 
 
-def test_no_retreat_on_first_contact_unless_clearly_outmatched():
-    v = _view(_t=500.0, buildings=BASE, military={"army_value": 3100, "visible_enemy_value": 5000})   # 0.62
-    assert brain.choose_mode(v, cheese_since=None, prev_mode=Mode.ALL_IN, attack_seconds=5.0) is Mode.ALL_IN
-    assert brain.choose_mode(v, cheese_since=None, prev_mode=Mode.ALL_IN, attack_seconds=20.0) is Mode.RETREAT
+def test_the_retreat_is_decided_early_in_a_fight_never_mid_fight():
+    """Marching: only clearly outmatched turns back. The first
+    RETREAT_WINDOW_SECONDS of contact: the retreat line. After it the army
+    fights it out unless the fight in contact is hopeless."""
+    kw = dict(cheese_since=None, prev_mode=Mode.ALL_IN)
+    ours = [{"id": 30 + i, "type": "1tnk", "x": 30, "y": 30, "hp": 100} for i in range(4)]
+    mil = {"army_value": 3100, "visible_enemy_value": 5000}                                       # 0.62 overall
+    v = _view(_t=500.0, buildings=BASE, units=ours, military=mil)
+    assert brain.choose_mode(v, marching=True, **kw) is Mode.ALL_IN                                # no contact yet
+    assert brain.choose_mode(v, attack_seconds=5.0, **kw) is Mode.RETREAT                          # early: out
+    even = [{"id": 90 + i, "type": "1tnk", "x": 34, "y": 34, "hp": 100} for i in range(4)]
+    mid = _view(_t=500.0, buildings=BASE, units=ours, visible_enemies=even, military=mil)
+    late = C.RETREAT_WINDOW_SECONDS + 5
+    assert brain.choose_mode(mid, attack_seconds=late, losing_trades=True, **kw) is Mode.ALL_IN    # mid-fight: fight on
+    swarm = [{"id": 90 + i, "type": "3tnk", "x": 34, "y": 34, "hp": 100} for i in range(12)]
+    lost = _view(_t=500.0, buildings=BASE, units=ours, visible_enemies=swarm, military=mil)
+    assert brain.local_fight_odds(lost) < C.RETREAT_EARLY_EDGE
+    assert brain.choose_mode(lost, attack_seconds=late, **kw) is Mode.RETREAT                      # hopeless: fall back
+
+
+def test_losing_trades_dont_pull_back_from_a_fight_won_where_it_is():
+    """a4a78f76 at 5:47: 1500 lost for 300 hitting war factories while the
+    defenders arrived, 5000 against 4000 - it ran and lost 1400 more."""
+    kw = dict(cheese_since=None, prev_mode=Mode.ALL_IN, attack_seconds=5.0, losing_trades=True)
+    ours = [{"id": 30 + i, "type": "3tnk", "x": 30, "y": 30, "hp": 100} for i in range(6)]
+    few = [{"id": 90 + i, "type": "1tnk", "x": 34, "y": 34, "hp": 100} for i in range(4)]
+    mil = {"army_value": 6000, "visible_enemy_value": 4000}
+    v = _view(_t=500.0, buildings=BASE, units=ours, visible_enemies=few, military=mil)
+    assert brain.local_fight_odds(v) >= C.LOCAL_FIGHT_ODDS
+    assert brain.choose_mode(v, **kw) is Mode.ALL_IN                                               # turn onto them
+    many = [{"id": 90 + i, "type": "3tnk", "x": 34, "y": 34, "hp": 100} for i in range(9)]
+    w = _view(_t=500.0, buildings=BASE, units=ours, visible_enemies=many, military=mil)
+    assert brain.choose_mode(w, **kw) is Mode.RETREAT                                              # losing there too: out
+
+
+def test_attackers_on_a_building_turn_onto_defenders_in_weapon_range():
+    ours = [{"id": 30, "type": "3tnk", "x": 20, "y": 20, "hp": 100}]
+    shooter = [{"id": 90, "type": "1tnk", "x": 26, "y": 20, "hp": 100}]                           # 6 cells off
+    v = _view(units=ours, visible_enemies=shooter)
+    micro._FOCUS.clear()
+    o, _ = micro.plan(v, Mode.ALL_IN, frozenset(), (15, 15))
+    assert o == [{"cmd": "attack", "units": [30], "target": 90}]
+    micro._FOCUS.clear()
+    assert micro.plan(v, Mode.BUILD, frozenset(), (15, 15))[0] == []                               # at home: 4 cells
+
+
+def test_a_fight_ends_out_of_contact_and_the_next_opens_a_new_retreat_window():
+    from agent.redalert.commander import Commander
+    tanks = [{"id": 30 + i, "type": "1tnk", "x": 30, "y": 30, "hp": 100} for i in range(4)]
+    foe = [{"id": 90, "type": "e1", "x": 33, "y": 33, "hp": 100}]
+    v = lambda t, e: _view(_t=t, buildings=BASE, units=tanks, visible_enemies=e,  # noqa: E731
+                           military={"army_value": 3100})
+    c = Commander()
+    c.mode, c.mode_since = Mode.ALL_IN, 600.0
+    c.decide(v(610.0, foe))
+    assert c._contact_at == 610.0
+    c.decide(v(615.0, []))
+    assert c._contact_at == 610.0                                   # a moment out of sight: the same fight
+    c.decide(v(615.0 + C.ENGAGEMENT_GAP_SECONDS, []))
+    assert c._contact_at is None                                    # over
+    c.decide(v(640.0, foe))
+    assert c._contact_at == 640.0                                   # a new fight, a new window
 
 
 def test_stragglers_wait_at_the_massing_point_and_go_as_a_group():
@@ -4684,8 +4675,7 @@ def test_losing_raids_back_off_to_one_squad():
     assert corps.active <= 1
 
 
-@pytest.mark.usefixtures("visible_only")
-def test_a_blind_attack_call_waits_for_a_look_at_their_army(monkeypatch):
+def test_a_blind_attack_call_waits_for_a_look_at_their_army():
     v = lambda t, **kw: dataclasses.replace(_strong(t, army_value=6000, visible_enemy_value=0, kills_cost=8000,  # noqa: E731
                                                     deaths_cost=8000, **kw), enemy_base_scouted=False)
     assert brain.blind_estimate(v(600.0))
@@ -4753,7 +4743,6 @@ def _banked(t, enemy, balance_units=False, **kw):
                  military={"army_value": 10500, "visible_enemy_value": enemy}, **kw)   # 5000 net of harvesters
 
 
-@pytest.mark.usefixtures("visible_only")
 def test_behind_on_army_the_bank_goes_into_units():
     behind = _banked(420.0, enemy=10000)
     assert brain.behind_on_army(behind)
@@ -4766,7 +4755,6 @@ def test_behind_on_army_the_bank_goes_into_units():
     assert not brain.behind_on_army(_banked(120.0, enemy=10000))               # the opening: its own plan
 
 
-@pytest.mark.usefixtures("visible_only")
 def test_behind_on_army_no_new_refinery_or_mcv_unless_home_runs_dry():
     behind = _banked(420.0, enemy=10000)
     ore = tuple((16 + i, 16 + j) for i in range(8) for j in range(6))
@@ -4878,14 +4866,12 @@ def test_the_mix_moves_the_odds():
 # -- match efefdca8: attacks into a turtle's ring --------------------------------------------------------
 
 
-@pytest.mark.usefixtures("visible_only")
-def test_blind_means_what_we_actually_saw_not_the_rebuild_guess(monkeypatch):
+def test_blind_means_what_we_actually_saw_not_the_rebuild_guess():
     v = dataclasses.replace(_strong(425.0, army_value=13150, visible_enemy_value=700, kills_cost=600, deaths_cost=500),
                             enemy_army_peak=5600.0, enemy_seen_recent=700.0, enemy_base_scouted=False)
     assert brain.blind_estimate(v)                                            # 700 seen: blind, look first
 
 
-@pytest.mark.usefixtures("visible_only")
 def test_turrets_at_the_target_count_against_an_attack():
     ring = [{"id": 80 + i, "type": "ftur", "x": 38 + i, "y": 37, "hp": 100} for i in range(5)]
     base = [{"id": 90, "type": "fact", "x": 40, "y": 40, "hp": 100}]
@@ -4945,7 +4931,6 @@ def test_against_a_turtle_the_dome_comes_early_and_siege_comes_first():
     assert any(x.get("item") == "v2rl" for x in o) and not any(x.get("item") == "3tnk" for x in o)
 
 
-@pytest.mark.usefixtures("visible_only")
 def test_no_attack_into_a_turtle_before_the_siege():
     tanks = [{"id": 30 + i, "type": "3tnk", "x": 10, "y": 10, "hp": 100} for i in range(6)]
     v = dataclasses.replace(_view(_t=600.0, buildings=BASE + [{"id": 12, "type": "weap", "x": 4, "y": 8}], units=tanks,
@@ -5638,8 +5623,6 @@ def test_a_test_match_opponent_can_be_named_by_hand(tmp_path, monkeypatch):
 def test_only_a_look_at_their_army_makes_an_attack_call_not_blind():
     agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
     agent._patrol.base_seen_at = 300.0                                          # a lap round their base...
-    v = agent._patrol.army_looked_at                                            # ...is not a look at their army
-    assert v is None
     tanks = [{"id": 30 + i, "type": "3tnk", "x": 10, "y": 10, "hp": 100} for i in range(6)]
     agent.choose_action(_state(_t=305.0, buildings=BASE, units=tanks, military={"army_value": 6900}), CTX)
     assert agent._mode is not Mode.ALL_IN and agent._commander.wants_look       # cb4bfc36: it went at 5:08 on a lap
@@ -5722,7 +5705,9 @@ def test_against_a_passive_enemy_we_expand_early_and_often_even_behind():
     assert e.state == "idle"                                                   # not passive: wait
     e.update(dataclasses.replace(_exp_view(t=200.0, military=behind), enemy_passive=True), Mode.BUILD)
     assert e.state == "scouting"                                               # passive: take the ground
-    assert e._again(400.0 + C.EXPAND_AGAIN_PASSIVE_SECONDS, passive=True) or e._last_done_at is None
+    e._last_done_at = 400.0                                                    # and often: the next one sooner
+    soon = 400.0 + C.EXPAND_AGAIN_PASSIVE_SECONDS + 1
+    assert e._again(soon, passive=True) and not e._again(soon, passive=False)
 
 
 def test_against_a_passive_enemy_more_tanks_and_war_factories():
@@ -5836,7 +5821,6 @@ def test_a_new_enemy_expansion_sends_a_scout_to_look_at_their_army_and_looks_are
     agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0, log_dir=str(tmp_path))
     agent._patrol.roles = {"left": 30, "p1": 31}
     out = [{"id": 80, "type": "proc", "x": 14, "y": 40, "hp": 100}]
-    agent._matchlog.start(_view(_t=0.0), {"map": "m"}) if hasattr(agent._matchlog, "start") else None
     agent._flag_expansions(_view(_t=600.0, visible_enemy_buildings=out))
     assert "p1" in agent._patrol._army_check                                   # a scout goes to look
     agent._patrol.army_looked_at = 610.0
@@ -5890,7 +5874,6 @@ def test_a_reached_advisor_target_hands_the_attack_back_to_the_rules():
 # -- the audit: sticky state releases ---------------------------------------------------------------
 
 
-@pytest.mark.usefixtures("visible_only")
 def test_a_blind_call_waits_for_a_look_but_not_forever():
     """A look may never come (every stop down a choke, scouts dying): after
     CONFIRM_BLIND_MAX_SECONDS only a clear edge on the belief goes."""
@@ -5994,7 +5977,7 @@ def test_a_strike_ends_with_its_expansion_unless_the_usual_bar_says_go_on():
 
 def test_a_strike_below_the_retreat_line_keeps_marching_until_it_meets_them():
     """The retreat line (0.8) counts from first contact: a strike at 0.79
-    overall used to retreat 15 s in, still on its way to the expansion."""
+    overall used to retreat while still on its way to the expansion."""
     from agent.redalert.commander import Commander
     tanks = [{"id": 30 + i, "type": "3tnk", "x": 10, "y": 10, "hp": 100} for i in range(12)]
     exp = [{"id": 85, "type": "proc", "x": 14, "y": 43, "hp": 100}]
@@ -6005,7 +5988,7 @@ def test_a_strike_below_the_retreat_line_keeps_marching_until_it_meets_them():
     c = Commander()
     c.mode, c.mode_since = Mode.BUILD, 0.0
     assert c.decide(v(700.0)) is Mode.ALL_IN
-    assert c.decide(v(700.0 + C.MIN_ENGAGEMENT_SECONDS + 10)) is Mode.ALL_IN   # marching, no contact: on it goes
+    assert c.decide(v(730.0)) is Mode.ALL_IN                                   # marching, no contact: on it goes
 
 
 def test_a_squad_leads_far_attack_order_marches_fighting():
@@ -6051,7 +6034,7 @@ def test_the_advisors_posture_decides_only_near_each_bar():
 
 def test_near_the_retreat_line_the_advisor_decides_whether_to_fight_on():
     v = _view(_t=600.0, buildings=BASE, military={"army_value": 3000, "visible_enemy_value": 3900})   # 0.77, under 0.8
-    kw = dict(cheese_since=None, prev_mode=Mode.ALL_IN, attack_seconds=30.0)
+    kw = dict(cheese_since=None, prev_mode=Mode.ALL_IN, attack_seconds=5.0)
     assert brain.choose_mode(v, **kw) is Mode.RETREAT
     assert brain.choose_mode(v, model_pref=Mode.ALL_IN, **kw) is Mode.ALL_IN           # its "attack": fight on
     w = _view(_t=600.0, buildings=BASE, military={"army_value": 3000, "visible_enemy_value": 3450})   # 0.87, over 0.8

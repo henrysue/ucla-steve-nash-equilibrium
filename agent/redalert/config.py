@@ -164,7 +164,6 @@ DEFENSE_ADD_FUNDS = 600            # ...and each beyond the first only with this
 DEFENSE_LINE_OFFSETS = (0, -3, 3, -6, 6)   # turret slots: cells across the line from the base straight to the enemy
 DEFENSE_CONE_DEGREES = 35.0        # turrets stand within this of that line (when a spot is free there)
 APPROACH_RING_CELLS = 12           # the approach: the cell this far from the base that is the shortest walk from the enemy
-APPROACH_MAX_STEPS = 400
 CHOKE_MAX_WIDTH = 11               # a choke: the enemy's walking path this narrow (cells across, cliffs to cliffs)...
 CHOKE_MIN_CELLS = 4                # ...between this far...
 CHOKE_MAX_CELLS = 16               # ...and this far from one of our yards (building range): its first tower watches it
@@ -277,7 +276,9 @@ ENEMY_CLUSTER_CELLS = 10           # enemy buildings this close together are one
 
 # -- retreating ------------------------------------------------------------------------------------
 RETREAT_ARMY_EDGE = 0.8            # retreat below this edge while attacking...
-RETREAT_EARLY_EDGE = 0.5           # ...but in the first MIN_ENGAGEMENT_SECONDS only below this (contact reveals their army)
+RETREAT_EARLY_EDGE = 0.5           # ...marching (no contact yet) or mid-fight only below this (mid-fight: the fight in contact)
+RETREAT_WINDOW_SECONDS = 12.0      # the retreat is decided this long from first contact; after it the army fights it out
+ENGAGEMENT_GAP_SECONDS = 10.0      # this long out of contact ends a fight: the next contact opens a new window
 REINFORCE_GAP_CELLS = 14           # in an attack, units this far behind the front wait at the massing point...
 REINFORCE_GROUP_UNITS = 6          # ...until this many can go together (no trickling through a choke one by one)
 REINFORCE_HOLD_CELLS = 8           # only units still this close to the massing point wait: none is ever sent back
@@ -314,7 +315,7 @@ TRADE_WINDOW_SECONDS = 30.0        # ...or when, since the attack began (at most
 TRADE_LOSS_MIN = 1000              # we lost at least this,
 TRADE_LOSS_ARMY_SHARE = 0.25       # and this share of the army (the bigger of at the start and now),
 TRADE_LOSS_RATIO = 1.3             # and more than this times what we killed (08560d9b bled out at 1.33),
-MIN_ENGAGEMENT_SECONDS = 15.0      # after at least this long in the fight
+MIN_ENGAGEMENT_SECONDS = 15.0      # after at least this long into the attack (the first volley always costs)
 REGROUPED_SHARE = 0.7              # retreat ends when this share is back...
 REGROUP_RADIUS_CELLS = 8           # ...within this of the staging point
 RETREAT_COOLDOWN_SECONDS = 60.0    # no new attack this soon after a retreat
@@ -503,6 +504,8 @@ HARVESTER_SETTLE_SECONDS = 30.0    # a moved harvester stays put at least this l
 
 # -- units: micro, movement, stances --------------------------------------------------------------
 FOCUS_RADIUS_CELLS = 4             # focus fire on the weakest enemy fighter this close (about weapon range); the target sticks
+FOCUS_RADIUS_ATTACK_CELLS = 7      # ...this close in an attack (units on a building turn onto the fighters shooting them)
+LOCAL_FIGHT_ODDS = 1.0             # losing the trades doesn't call a retreat while the fight in contact is won at these odds
 STUCK_SECONDS = 10.0               # an ordered unit that hasn't moved this long gets a stop
 ENGAGED_RADIUS_CELLS = 7           # ...unless an enemy is this close
 # The concave: ranks on arcs round a kill point FORMATION_FOCUS_AHEAD cells in
