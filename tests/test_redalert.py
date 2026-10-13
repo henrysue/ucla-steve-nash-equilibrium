@@ -5837,17 +5837,17 @@ def test_the_army_strikes_a_remote_expansion_it_clearly_beats():
     """d1615ac6: raids killed an expansion's harvesters for two minutes while
     the army sat home, 14850 against a believed 18900. An expansion we beat
     locally is struck, short of the whole-army bar."""
-    tanks = [{"id": 30 + i, "type": "3tnk", "x": 10, "y": 10, "hp": 100} for i in range(12)]
+    tanks = [{"id": 30 + i, "type": "3tnk", "x": 10, "y": 10, "hp": 100} for i in range(14)]
     exp = [{"id": 85, "type": "proc", "x": 14, "y": 43, "hp": 100}]           # remote: 26+ from their main (40, 40)
     v = dataclasses.replace(_view(_t=700.0, buildings=BASE, units=tanks, visible_enemy_buildings=exp,
-                                  military={"army_value": 13800, "visible_enemy_value": 0}),
+                                  military={"army_value": 16100, "visible_enemy_value": 0}),
                             enemy_army_peak=16000.0, enemy_base_scouted=True)
     assert brain.army_odds(v) < C.ESCALATED_ARMY_EDGE                          # the whole-army bar says no...
     assert brain.expansion_strike(v) == (14, 43)
     assert brain.choose_mode(v, cheese_since=None) is Mode.ALL_IN               # ...the expansion says go
     guarded = [{"id": 900 + i, "type": "3tnk", "x": 15, "y": 44, "hp": 100} for i in range(10)]
     g = dataclasses.replace(_view(_t=700.0, buildings=BASE, units=tanks, visible_enemy_buildings=exp,
-                                  visible_enemies=guarded, military={"army_value": 13800}),
+                                  visible_enemies=guarded, military={"army_value": 16100}),
                             enemy_army_peak=16000.0, enemy_base_scouted=True)
     assert brain.expansion_strike(g) is None                                    # defended: no strike
     far_behind = dataclasses.replace(v, enemy_army_peak=40000.0)
@@ -5921,3 +5921,57 @@ def test_unreachable_places_are_tried_again_after_a_while():
     assert corps._go(_view(_t=120.0), u, (50, 50)) == ([], True)              # still out of reach
     moves, arrived = corps._go(_view(_t=100.0 + C.UNREACHABLE_EXPIRE_SECONDS + 1), u, (50, 50))
     assert moves and not arrived                                               # tried again
+
+
+# -- the audit: conflicting rules and flip-flops ------------------------------------------------------
+
+
+def test_a_fight_at_home_once_joined_is_not_dropped_on_a_flicker():
+    mem: dict = {}
+    army = [{"id": 100 + i, "type": "3tnk", "x": 12, "y": 12, "hp": 100} for i in range(5)]
+    few = [{"id": 900 + i, "type": "3tnk", "x": 16, "y": 16, "hp": 100} for i in range(3)]
+    more = few + [{"id": 910 + i, "type": "3tnk", "x": 16, "y": 16, "hp": 100} for i in range(1)]
+    o = executor._army_home(_view(_t=500.0, buildings=BASE, units=army, visible_enemies=few), Mode.BUILD, memory=mem)
+    assert o and o[0]["cmd"] == "attack_move" and o[0]["to"] == [16, 16]      # 5 vs 3: joined
+    o = executor._army_home(_view(_t=503.0, buildings=BASE, units=army, visible_enemies=more), Mode.BUILD, memory=mem)
+    assert o and o[0]["to"] == [16, 16]                                        # 5 vs 4 (1.25 > odds > 1.0): kept
+
+
+def test_an_outmatched_raid_is_released_not_walked_back_and_forth():
+    from agent.redalert.raid import Raid
+    r = Raid()
+    r.update(_view(_t=500.0, buildings=BASE, units=_raid_army(), visible_enemies=[_ENEMY_HARV],
+                   visible_enemy_buildings=[_EXP_PROC]), Mode.BUILD, None)
+    assert r.unit_ids
+    cells = _raid_army()
+    tanks = [{"id": 900 + i, "type": "3tnk", "x": 22, "y": 23, "hp": 100} for i in range(4)]
+    r.update(_view(_t=510.0, buildings=BASE, units=cells, visible_enemies=tanks,
+                   visible_enemy_buildings=[_EXP_PROC]), Mode.BUILD, None)
+    assert r.unit_ids == []
+
+
+def test_the_passive_read_ends_when_their_army_far_outgrows_ours():
+    agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
+    agent._intel.passive = lambda view, retreated_at=None: True
+    calm = _view(_t=600.0, military={"army_value": 6000})
+    assert agent._passive(dataclasses.replace(calm, enemy_army_peak=5000.0))
+    assert not agent._passive(dataclasses.replace(calm, enemy_army_peak=12000.0))   # a push is building
+
+
+def test_the_concave_keeps_its_slots_as_the_enemy_drifts():
+    a = executor._bucketed((20, 20), (40, 21))
+    b = executor._bucketed((20, 20), (40, 23))
+    assert a == b                                                              # a few degrees: the same facing
+
+
+def test_a_strike_ends_with_its_expansion_unless_the_usual_bar_says_go_on():
+    from agent.redalert.commander import Commander
+    tanks = [{"id": 30 + i, "type": "3tnk", "x": 14, "y": 40, "hp": 100} for i in range(14)]
+    exp = [{"id": 85, "type": "proc", "x": 14, "y": 43, "hp": 100}]
+    c = Commander()
+    c.mode, c.mode_since = Mode.BUILD, 0.0
+    v = lambda t, blds: dataclasses.replace(_view(_t=t, buildings=BASE, units=tanks, visible_enemy_buildings=blds,  # noqa: E731
+                                                  military={"army_value": 16100}),
+                                            enemy_army_peak=16000.0, enemy_base_scouted=True)
+    assert c.decide(v(700.0, exp)) is Mode.ALL_IN and c._strike_cell == (14, 43)
+    assert c.decide(v(720.0, [])) is Mode.RETREAT                              # it fell: home, not on into their main

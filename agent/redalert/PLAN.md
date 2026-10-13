@@ -292,6 +292,38 @@ An attack goes on until the retreat rule ends it. No mass/attack flip within
   (side by side across that line, within 35° of it, never behind the base);
   when it is full, no more are built until the base grows that way.
 
+### 6b. No getting stuck, no flip-flopping (the October audit)
+
+Every latch has a way out and every threshold that flips on what is in sight
+has hysteresis:
+- A blind attack call waits for a look at most 2 minutes, then goes only at
+  1.5x the bar on what we believe. A reached advisor target hands the attack
+  back to the rules. A strike that took its expansion ends there unless the
+  usual bar says go on. The advisor's 90 s hold restarts only after the rules
+  stop calling an attack for 10 s; a call that drops for a moment keeps its
+  confirmation and look for 5 s.
+- The attack's destination is their buildings, not the nearest unit in sight.
+  A fight at home is joined at 1.25x and kept above 1.0x for at least 10 s.
+  The concave faces in 30-degree steps. Only idle stragglers wait at home.
+- Scouts: a picket that backed off stays back 20 s; the roamer and the
+  expansion visit move on from a place they can't reach; unreachable places
+  are tried again after a minute; hunt points never reached are given up
+  after 90 s, in a fixed order.
+- Raids: units already sent count toward a group by its ids or where it
+  stands; an outmatched squad is released (target marked failed); every
+  squad, the first too, stays within 35% of the fighters and joins the main
+  fight only from near; the economy's "healthy" reading holds 60 s (outgunned
+  ends it at once); a new squad's route starts fresh.
+- Rules agree: one remote-expansion definition (25+ cells) for raids, the
+  strike and the attack's first target; the turtle gate holds for every way
+  into an attack; a strike needs 0.9x overall (above the 0.8 retreat line); a
+  distraction attack is judged on the odds it started on; "a way round"
+  means the same ratio for the choke bar and the march; no forward expansion
+  starts mid-attack; the follow-up's refinery needs a spot its trucks walk
+  from; idle units answer a group at our buildings or trucks even across the
+  half line; the passive read ends when a push comes into our half or their
+  army grows to 1.5x ours.
+
 ### 7. The end
 
 Protect a real lead in the last 2 minutes; level or behind in the last 3,

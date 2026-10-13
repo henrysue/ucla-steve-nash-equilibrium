@@ -458,6 +458,7 @@ class Expansion:
             # an MCV in production at 2-3x behind) or they don't come out.
             and (passive or not (behind_on_army(view) and not getattr(self, "_ore_running_out", False)))
             and mode not in DEFENSIVE and mode is not Mode.RETREAT
+            and mode is not Mode.ALL_IN               # (its outpost goes with the attack: the MCV would drive alone)
             and (view.remaining_seconds is None or view.game_seconds <= C.EXPAND_LAST_START_SECONDS)
         )
 

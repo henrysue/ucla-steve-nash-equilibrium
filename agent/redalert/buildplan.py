@@ -184,7 +184,16 @@ def _build_order(view: View) -> tuple:
         return C.BUILD_ORDER
     if opening_done(view) and recovering(view):
         return C.BUILD_ORDER + (C.REFINERY,)
-    return C.BUILD_ORDER + C.FOLLOW_UP
+    return C.BUILD_ORDER + follow_up(view)
+
+
+def follow_up(view: View) -> tuple:
+    """The opening's follow-up — without its refinery when no field has a
+    spot its trucks walk from (refinery_room: the build order queued one
+    10 steps out, d2d8dc27)."""
+    if refinery_room(view):
+        return C.FOLLOW_UP
+    return tuple(s for s in C.FOLLOW_UP if s != C.REFINERY)
 
 
 def factory_lost(view: View) -> bool:
@@ -838,6 +847,8 @@ def refinery_room(view: View, depleted: frozenset = frozenset()) -> bool:
     field full) costs 2000 and saves the trucks nothing. Cached for 5 s per
     building count (the spot search is not cheap)."""
     depleted = depleted or frozenset()
+    if not view.ore_cells:
+        return True                               # no ore on the map picture: nothing to judge by
     key = (round(view.game_seconds / 5), len(view.buildings), len(depleted), id(view.blocked_cells))
     hit = _ROOM.get("key")
     if hit == key:
@@ -1094,7 +1105,7 @@ def barracks_target(view: View) -> int:
     and the third refinery: pros add the 2nd around 4:00-4:20, after them);
     then 2, and more by game time."""
     refineries = sum(1 for b in view.buildings if b.type == C.REFINERY and not b.wreck)
-    if not view.has_building(C.SERVICE_DEPOT) or refineries < C.BUILD_ORDER.count(C.REFINERY) + C.FOLLOW_UP.count(C.REFINERY):
+    if not view.has_building(C.SERVICE_DEPOT) or refineries < C.BUILD_ORDER.count(C.REFINERY) + follow_up(view).count(C.REFINERY):
         return 1
     want = 2
     for at, n in C.BARRACKS_SCHEDULE:

@@ -167,7 +167,7 @@ def choke_between(view: View) -> bool:
         return hit[1]
     direct = walk_path(view, tuple(base), tuple(enemy))
     through = bool(direct) and any(c in zone for c in direct) and \
-        route_around(view, base, enemy, zone, C.DETOUR_MAX_RATIO) is None
+        route_around(view, base, enemy, zone, C.MARCH_DETOUR_MAX_RATIO) is None
     _ZONES[key] = (view.blocked_cells, through)
     return through
 

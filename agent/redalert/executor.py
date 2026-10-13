@@ -31,6 +31,7 @@ def plan(
     fan: bool = False,
     attacked: list | None = None,
     responding: dict | None = None,
+    home_memory: dict | None = None,
 ) -> list[dict]:
     """All orders for this view, concatenated in priority order (pre-cap).
 
@@ -94,7 +95,8 @@ def plan(
     # The massing point stays at the main choke (an MCV on the road gets the
     # outpost, not the army); it edges forward while an attack is confirmed.
     out += _army_orders(view, mode, scout_id, reserved=frozenset(raid_ids) | clearing_ids | responders, advice=advice,
-                        flank_via=flank_via, stage_override=probe, hunt=hunt, hunt_points=hunt_points, fan=fan)
+                        flank_via=flank_via, stage_override=probe, hunt=hunt, hunt_points=hunt_points, fan=fan,
+                        home_memory=home_memory)
     return _off_the_yard(view, _keep_clear(out, placed, clearing_ids), keep_out,
                          getattr(expansion, "mcv_id", None))
 
@@ -388,6 +390,7 @@ def _army_orders(
     view: View, mode: Mode, scout_id: int | None = None, reserved: frozenset = frozenset(), advice=None,
     flank_via=None, stage_override: tuple[int, int] | None = None,
     hunt: tuple[int, int] | None = None, hunt_points: list | None = None, fan: bool = False,
+    home_memory: dict | None = None,
 ) -> list[dict]:
     """Move the army: rally home when defensive, attack-move when aggressive,
     stage at the forward choke while massing.
@@ -446,7 +449,7 @@ def _army_orders(
             return [{**view.attack_now, "units": units}] if units else []
         return []
 
-    return _army_home(view, mode, scout_id, reserved, stage_override)   # OPEN / BUILD / DEFEND / PROTECT_LEAD
+    return _army_home(view, mode, scout_id, reserved, stage_override, home_memory)   # OPEN / BUILD / DEFEND / PROTECT_LEAD
 
 
 def _gather_stragglers(view: View, units: list[int], target, stage) -> tuple[list[int], list[dict]]:
@@ -632,17 +635,27 @@ def respond(view: View, mode: Mode, scout_id: int | None, reserved: frozenset, h
     def their_half(cell) -> bool:
         return base is not None and enemy_home is not None and dist2(cell, enemy_home) < dist2(cell, base)
 
+    # Our buildings and trucks, wherever they stand: a group at them is ours
+    # to answer even over the half line (an expansion's field across it).
+    main_assets = [a.cell for a in list(view.buildings) + list(view.units_of(C.HARVESTER))
+                   if a.cell is not None and not a.wreck]
+    half_skipped: list = []
+
     for g in sorted(groups, key=lambda g: -_value(view, g)):
         if mode not in AGGRESSIVE and held is not None and any(dist2(a.cell, held[0]) <= r2 for a in g):
             continue                                       # at the concave (the army home): its own fire
-        if their_half(_centre(g)):
+        near_ours = any(dist2(a.cell, c) <= C.HOME_RAID_RADIUS_CELLS ** 2 for a in g for c in main_assets)
+        if their_half(_centre(g)) and not near_ours:
+            half_skipped.append(g)
             continue                                       # on their side: not ours to chase (into their concave)
         centre = _centre(g)
         cell = min(g, key=lambda a: dist2(a.cell, centre)).cell
         small_home = (_value(view, g) <= C.SMALL_RAID_VALUE
                       and any(dist2(a.cell, c) <= C.HOME_RAID_RADIUS_CELLS ** 2 for a in g for c in main))
         targets.append((cell, small_home, g))
-    seen = [a.cell for g in enemy_groups(view) for a in g]
+    # A hit spot with a group by it is that group's (the concave's own fire
+    # included) — but not a group on their side we leave alone.
+    seen = [a.cell for g in enemy_groups(view) if g not in half_skipped for a in g]
     # A hit counts where it is ours to answer: by our buildings or trucks —
     # not a scout shot at their concave (ae03adbd: each scout hit at the far
     # mouth of Sidestep's gap sent two more units down it to "look").
@@ -694,7 +707,7 @@ def respond(view: View, mode: Mode, scout_id: int | None, reserved: frozenset, h
 
 
 def _army_home(view: View, mode: Mode, scout_id: int | None = None, reserved: frozenset = frozenset(),
-               stage_override: tuple[int, int] | None = None) -> list[dict]:
+               stage_override: tuple[int, int] | None = None, memory: dict | None = None) -> list[dict]:
     """The army at home — massing, defending the base, protecting a lead —
     one decision, first match:
 
@@ -718,7 +731,16 @@ def _army_home(view: View, mode: Mode, scout_id: int | None = None, reserved: fr
     contact = army_contact(view, fighters, defending)
     if contact:
         centre = _centre(contact)
-        if strength.odds(view, [u.type for u in fighters], [a.type for a in contact]) >= C.ENGAGE_MIN_EDGE:
+        # Joined at ENGAGE_MIN_EDGE, kept above ENGAGE_KEEP_EDGE for at least
+        # ENGAGE_HOLD_SECONDS: the odds of what is in sight flicker as their
+        # units step in and out of vision, and the army charged and fell back
+        # to the turret line with them (the audit).
+        mem = memory if memory is not None else {}
+        t = view.game_seconds
+        joined = mem.get("engaged_until", float("-inf")) >= t
+        bar = C.ENGAGE_KEEP_EDGE if joined else C.ENGAGE_MIN_EDGE
+        if strength.odds(view, [u.type for u in fighters], [a.type for a in contact]) >= bar:
+            mem["engaged_until"] = t + C.ENGAGE_HOLD_SECONDS
             base = view.base_center or centre
             target = min(contact, key=lambda a: dist2(a.cell, base)).cell
             return [orders.attack_move([u.id for u in fighters][:orders.MAX_UNITS_PER_ORDER], list(target))]
@@ -837,6 +859,22 @@ def _assign_slots(units, slots, key) -> dict:
     return of
 
 
+def _bucketed(center, facing):
+    """``facing`` turned to the nearest ``CONCAVE_FACING_BUCKET_DEGREES`` step
+    round ``center``, at the same distance."""
+    import math
+
+    if facing is None or center is None:
+        return facing
+    dx, dy = facing[0] - center[0], facing[1] - center[1]
+    d = (dx * dx + dy * dy) ** 0.5
+    if d == 0:
+        return facing
+    step = math.radians(C.CONCAVE_FACING_BUCKET_DEGREES)
+    a = round(math.atan2(dy, dx) / step) * step
+    return (round(center[0] + math.cos(a) * d), round(center[1] + math.sin(a) * d))
+
+
 def _concave_orders(view: View, fighters, center, facing, everyone: bool = False) -> list[dict]:
     """Attack-move each unit to its concave slot; a unit keeps its slot
     (:func:`_assign_slots`), and only idle units get slot orders — one with
@@ -847,6 +885,9 @@ def _concave_orders(view: View, fighters, center, facing, everyone: bool = False
     units =[u for u in fighters if u.cell is not None]
     if not units:
         return []
+    # The facing in CONCAVE_FACING_BUCKET_DEGREES steps: a moving enemy
+    # centroid re-keyed the slots every view and swapped everyone round.
+    facing = _bucketed(center, facing)
     slots = concave_slots(view, center, facing, min(len(units), C.FORMATION_MAX_UNITS))
     of = _assign_slots(units, slots, (tuple(center), tuple(facing) if facing is not None else None))
     # attack_move, not move: a unit walking to its slot still fights what it meets.
@@ -1056,9 +1097,11 @@ def _attack_target(view: View, hunt: tuple[int, int] | None = None) -> tuple[int
     # A known enemy expansion first: away from their army, lightly defended,
     # and their income (match 4b5980f8: a 33k army sat idle while red's
     # expansion was known for the last 2.5 minutes).
-    from .expand import enemy_expansions
+    from .raid import remote_expansions
 
-    expansions = enemy_expansions(view)
+    # The same remote expansions the strike and the raids judge (25+ cells
+    # from their main), not their main base's edge.
+    expansions = remote_expansions(view)
     if expansions:
         return min(expansions, key=lambda c: dist2(c, view.base_center))
     for group in (view.enemy_buildings, view.enemy_units, view.known_enemy_buildings):

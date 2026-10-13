@@ -80,6 +80,13 @@ class Raid:
         self.unit_ids = [i for i in self.unit_ids if i in alive]
         if self.unit_ids:
             lost_half = len(self.unit_ids) * 2 <= self._formed_size
+            # Outmatched: released (the target marked failed), not walked back
+            # and forth between the choke and the target (the audit).
+            if self.situation(view)[0] == "outmatched":
+                if self._aim is not None:
+                    self.failed.append((self._aim, view.game_seconds))
+                self._release(view)
+                return
             # No target for a moment (it flickers as their units come and go
             # out of sight) isn't the end: RAID_NO_TARGET_GRACE_SECONDS of it is
             # (5a4bc83f formed and dropped five squads in 25 s, walking them
@@ -294,17 +301,17 @@ def healthy(view: View) -> bool:
             and our_unit_value(view) >= C.RAID_EXTRA_MIN_ARMY_VALUE and not outgunned(view))
 
 
-def raid_steps(view: View) -> int:
+def raid_steps(view: View, is_healthy: bool | None = None) -> int:
     """How far into a healthy game we are: 0 before ``RAID_EXTRA_START_SECONDS``
     or when unhealthy, then 1 and one more every ``RAID_EXTRA_EVERY_SECONDS``."""
     t = view.game_seconds
-    if t < C.RAID_EXTRA_START_SECONDS or not healthy(view):
+    if t < C.RAID_EXTRA_START_SECONDS or not (healthy(view) if is_healthy is None else is_healthy):
         return 0
     return 1 + int((t - C.RAID_EXTRA_START_SECONDS) // C.RAID_EXTRA_EVERY_SECONDS)
 
 
-def squads_allowed(view: View) -> int:
-    return min(C.RAID_MAX_SQUADS, 1 + raid_steps(view))
+def squads_allowed(view: View, is_healthy: bool | None = None) -> int:
+    return min(C.RAID_MAX_SQUADS, 1 + raid_steps(view, is_healthy))
 
 
 class RaidCorps:
@@ -337,8 +344,15 @@ class RaidCorps:
             self._backoff_until = t + C.RAID_BACKOFF_SECONDS
             for s in self.squads:
                 s.results.clear()
-        steps = 0 if t < self._backoff_until else raid_steps(view)
-        allowed = 1 if t < self._backoff_until else squads_allowed(view)
+        # Healthy held RAID_HEALTHY_HOLD_SECONDS: extra squads released and
+        # re-formed as the reading flickered (the audit).
+        if healthy(view):
+            self._healthy_until = t + C.RAID_HEALTHY_HOLD_SECONDS
+        from .brain import outgunned
+
+        well = t <= getattr(self, "_healthy_until", float("-inf")) and not outgunned(view)   # outgunned: at once
+        steps = 0 if t < self._backoff_until else raid_steps(view, well)
+        allowed = 1 if t < self._backoff_until else squads_allowed(view, well)
         while len(self.squads) < allowed:
             self.squads.append(Raid())
         fighters = [u for u in view.combat_units if u.id is not None and u.id != scout_id and u.id not in taken]
@@ -361,8 +375,9 @@ class RaidCorps:
             s.avoid = list(claimed)
             s.cooldown = C.RAID_LATE_COOLDOWN_SECONDS if steps else C.RAID_COOLDOWN_SECONDS
             s.size_bonus = max(0, steps - 1)
-            s.limit = (None if i == 0 else
-                       max(0, int(C.RAID_MAX_ARMY_SHARE * len(fighters)) - len(others)))
+            # Every squad (the first too: "in force" took 8 of 14) within
+            # RAID_MAX_ARMY_SHARE of the fighters.
+            s.limit = max(0, int(C.RAID_MAX_ARMY_SHARE * len(fighters)) - len(others))
             s.update(view, mode, scout_id, advice if i == 0 else None, taken=set(taken) | others,
                      may_form=t >= self._backoff_until)
             cell = _cell_of(view, s.target(view))
@@ -410,7 +425,7 @@ class RaidCorps:
         j2 = C.RAID_JOIN_FIGHT_CELLS ** 2
         for i, s in enumerate(self.squads):
             fight = main_fight
-            if i > 0 and fight is not None:
+            if fight is not None:                 # (every squad: the first flip-flopped across the map)
                 centre = _centroid(s._members(view))
                 if centre is None or dist2(centre, fight) > j2:
                     fight = None                  # far off on its own errand: keep at it

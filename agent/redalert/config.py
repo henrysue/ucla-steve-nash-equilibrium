@@ -280,7 +280,17 @@ REINFORCE_GROUP_UNITS = 6          # ...until this many can go together (no tric
 REINFORCE_HOLD_CELLS = 8           # only units still this close to the massing point wait: none is ever sent back
 DETOUR_MAX_RATIO = 1.6             # an attack goes round the chokes between the bases when that is at most this much longer
 STRIKE_LOCAL_ODDS = 2.0           # the army strikes a remote expansion of theirs it beats this clearly (its turrets and units)...
-STRIKE_MIN_EDGE = 0.75             # ...while not worse than this against their whole army (they must come out to it)
+STRIKE_MIN_EDGE = 0.9              # ...while not worse than this against their whole army (they must come out to it;
+                                   # above RETREAT_ARMY_EDGE, or the strike retreats 15 s in, still marching)
+ARMY_ROUTE_MAX_RATIO = 4.0         # the march from where the army stands takes a way round up to this (from our concave
+                                   # every lane looks long); terrain.choke_between judges base to base at MARCH_DETOUR_MAX_RATIO
+CONCAVE_FACING_BUCKET_DEGREES = 30  # the concave faces in steps of this (a drifting enemy centroid doesn't re-slot it)
+ENGAGE_KEEP_EDGE = 1.0             # a fight at home already joined goes on above this (it is joined at ENGAGE_MIN_EDGE)...
+ENGAGE_HOLD_SECONDS = 10.0         # ...for at least this long (the army charged and fell back as units came into sight)
+CONFIRM_GRACE_SECONDS = 5.0        # an attack call that drops for a moment keeps its confirmation and its look this long
+HOLD_FLICKER_SECONDS = 10.0        # the advisor's hold timer restarts only after the rules stop calling an attack this long
+RAID_HEALTHY_HOLD_SECONDS = 60.0   # extra raid squads stay allowed this long after the economy last read healthy
+PASSIVE_BREAK_SHARE = 1.5          # a passive read ends when their believed army is this x ours (a push is building)
 MARCH_DETOUR_MAX_RATIO = 2.5       # ...measured from where the army stands (at our concave by the choke's mouth the
                                    # corridor is short and every lane long: d1615ac6 went down Sidestep's gap)
 CHOKE_ATTACK_FACTOR = 1.5          # with no way round, an attack through the choke needs this x the usual edge (their concave

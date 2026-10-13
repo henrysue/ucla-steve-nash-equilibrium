@@ -136,7 +136,12 @@ def choose_mode(
     # it sees, but we are trading up. Only being clearly outmatched stops it.
     if winning_trades:
         floor = min(floor, C.RETREAT_EARLY_EDGE)
-    if prev_mode in AGGRESSIVE and (edge < floor or losing_trades):
+    # A distraction attack is judged without the part of their army our raid
+    # holds — the odds it started on (it retreated 15 s in otherwise).
+    retreat_edge = edge
+    if distraction:
+        retreat_edge = max(edge, strength.army_odds(view, (), distraction[0], distraction[1]))
+    if prev_mode in AGGRESSIVE and (retreat_edge < floor or losing_trades):
         return Mode.RETREAT
     # Committed: an attack under way goes on until the retreat rule calls it
     # off — not back to massing when the estimate dips under the attack bar
@@ -170,6 +175,12 @@ def choose_mode(
     if (not can_attack and not early and built and not cooling_down and regrown and _has_real_army(view)
             and edge >= C.STRIKE_MIN_EDGE and expansion_strike(view) is not None):
         can_attack = True
+    # The turtle gate holds for every way in (a distraction or a strike set
+    # it back on: the audit — the efefdca8 case the gate is there for).
+    if (can_attack and prev_mode not in AGGRESSIVE and view.enemy_turtling
+            and len(view.units_of(C.SIEGE_UNITS)) < C.SIEGE_ATTACK_MIN
+            and strike < C.OVERWHELMING_ODDS):
+        can_attack = False
     policy_choice = Mode.ALL_IN if can_attack else Mode.BUILD
 
     # The model may hold an attack back — but not when we clearly outnumber

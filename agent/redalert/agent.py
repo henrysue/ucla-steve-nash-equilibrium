@@ -98,6 +98,7 @@ class RedAlertAgent:
         self._models_checked = False                # REDALERT_MODELS_OFF_SEAT applied yet
         self._clearing: dict = {}   # building item -> game time its spot was first found occupied
         self._responding: dict = {}  # unit id -> (cell, enemy ids, when): units sent to answer a group (executor.respond)
+        self._home_memory: dict = {}  # the army at home's fight already joined (executor._army_home)
         self._harvest = HarvestManager()
         # Per-match review log (off unless a log directory is configured).
         self._matchlog = MatchLog(self._log, directory=log_dir)
@@ -166,7 +167,7 @@ class RedAlertAgent:
         self._intel.update(view)
         view = dataclasses.replace(view, enemy_turtling=self._intel.turtling(view),
                                    enemy_mix=self._intel.recent_mix(view, C.ENEMY_MIX_SECONDS),
-                                   enemy_passive=self._intel.passive(view, self._commander.retreated_at))
+                                   enemy_passive=self._passive(view))
         self._patrol.update(view, taken={*self._raid.unit_ids, *self._garrison.unit_ids})
         if self._patrol.alarm(view):
             self._intel.scouts_lost(view)
@@ -301,9 +302,10 @@ class RedAlertAgent:
             threat=threat,
             probe=self._probe_point(view),
             warning=self._intel.suspect(view),
-            fan=hunting,
+            fan=hunting and brain._overwhelming(view),   # (their army alive: the army stays together)
             attacked=attacked,
             responding=self._responding,
+            home_memory=self._home_memory,
         ) + self._unstick.orders(view, set(self._garrison.unit_ids)) + executor.stance_orders(
             view, self._mode, set(self._garrison.unit_ids), getattr(advice, "army_stance", None))
         now = self._clock()
@@ -518,7 +520,7 @@ class RedAlertAgent:
             # road itself — always in legs, so the whole army takes one road
             # and none of it paths round the other side of a rock (b9145367:
             # half the army re-aimed mid-march went its own way on Trapped).
-            path = (terrain.route_around(view, here, goal, avoid, C.MARCH_DETOUR_MAX_RATIO)
+            path = (terrain.route_around(view, here, goal, avoid, C.ARMY_ROUTE_MAX_RATIO)
                     or terrain.walk_path(view, here, goal))
             points += terrain.legs(path, C.ARMY_LEG_CELLS) if path else [goal]
             here = goal
@@ -867,6 +869,17 @@ class RedAlertAgent:
         self._believed_mark = (spent, view.kills_cost, view.game_seconds)
         self._believed = max(self._believed, floor, 0.0)
         return self._believed
+
+    def _passive(self, view) -> bool:
+        """The passive read (intel.passive) — ended at once when a push builds:
+        their army seen coming into our half (scout.incoming_push), or their
+        believed army ``PASSIVE_BREAK_SHARE`` x ours (the audit: it held until
+        their push hit a building, with no turrets and the money in MCVs)."""
+        if not self._intel.passive(view, self._commander.retreated_at):
+            return False
+        if scout.incoming_push(view) is not None:
+            return False
+        return brain.enemy_estimate(view) < C.PASSIVE_BREAK_SHARE * max(1.0, view.army_value)
 
     def _field_share(self, view) -> float:
         """Their ore fields over the fields we work: what their economy can

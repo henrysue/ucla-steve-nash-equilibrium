@@ -48,6 +48,9 @@ class Commander:
         self._trades: list[tuple[float, float, float]] = []   # (game seconds, kills, deaths)
         self._building_ids: set | None = None
         self._held_since: float | None = None      # the advisor's "hold" has stopped an attack the rules call since
+        self._unblocked_since: float | None = None # ...and the rules have stopped calling one since
+        self._strike_cell: tuple | None = None     # the remote expansion this attack set out to strike
+        self._call_at: float | None = None         # when the rules last called an attack (CONFIRM_GRACE_SECONDS)
 
     def track_threat(self, view: View) -> None:
         """Update the threat window (call first each view). Losing a building
@@ -92,8 +95,14 @@ class Commander:
         # 9:14 — while a turtle built 28800 behind its pillboxes).
         blocking = model_pref is Mode.BUILD and mode is not Mode.ALL_IN and choose(None) is Mode.ALL_IN
         if not blocking:
-            self._held_since = None
+            # Reset only once the rules have stopped calling an attack a while:
+            # a one-view flicker restarted the 90 s and the hold went on.
+            if self._unblocked_since is None:
+                self._unblocked_since = view.game_seconds
+            if view.game_seconds - self._unblocked_since >= C.HOLD_FLICKER_SECONDS:
+                self._held_since = None
         else:
+            self._unblocked_since = None
             if self._held_since is None:
                 self._held_since = view.game_seconds
             if view.game_seconds - self._held_since >= C.ADVISOR_HOLD_MAX_SECONDS:
@@ -104,13 +113,24 @@ class Commander:
             mode = Mode.BUILD                      # defend the haul: no new attack (one under way goes on)
         # A strike on an expansion needs no look at their army: we know what
         # stands there (the raid or a scout just saw it).
-        strike = mode is Mode.ALL_IN and prev is not Mode.ALL_IN and brain.expansion_strike(view) is not None
+        strike_at = brain.expansion_strike(view) if mode is Mode.ALL_IN and prev is not Mode.ALL_IN else None
+        strike = strike_at is not None and brain.attack_odds(view) < brain._attack_threshold(view)
+        # A strike that took its expansion ends there unless the usual bar
+        # says go on (the audit: it carried on into their main base at 0.85).
+        if (prev is Mode.ALL_IN and mode is Mode.ALL_IN and self._strike_cell is not None
+                and not _standing(view, self._strike_cell)
+                and brain.attack_odds(view) < brain._attack_threshold(view)):
+            mode = Mode.RETREAT
         mode = self._confirm(view, prev, mode, skip=rushing or hunting or up or brain._catching_up(view) or strike)
         if ({prev, mode} == {Mode.BUILD, Mode.ALL_IN}
                 and view.game_seconds - self.mode_since < C.MODE_MIN_DWELL_SECONDS):
             mode = prev                            # commit: no quick flip (a confirmation is kept)
         if mode is Mode.ALL_IN:
             self.confirm_at = None
+        if mode is Mode.ALL_IN and prev is not Mode.ALL_IN:
+            self._strike_cell = strike_at if strike else None
+        elif mode is not Mode.ALL_IN:
+            self._strike_cell = None
         self._record(view, prev, mode, distraction)
         return mode
 
@@ -177,6 +197,15 @@ class Commander:
         # masses — from the first attack, not only late: with no guess in the
         # estimate, little seen reads as a big edge.
         blind = brain.blind_estimate(view)
+        t = view.game_seconds
+        # A call that drops for a moment (an odds flicker) keeps its
+        # confirmation and its look for CONFIRM_GRACE_SECONDS: they were cleared
+        # and restarted every other view (the audit).
+        if mode is Mode.ALL_IN and prev is not Mode.ALL_IN:
+            self._call_at = t
+        elif (mode is Mode.BUILD and prev is Mode.BUILD and self.confirm_at is not None
+              and self._call_at is not None and t - self._call_at <= C.CONFIRM_GRACE_SECONDS):
+            return prev
         self.wants_look = False
         if mode is Mode.ALL_IN and prev is not Mode.ALL_IN and (even or blind) and not skip:
             if self.confirm_at is None:
@@ -214,6 +243,13 @@ class Commander:
             self.retreated_at = view.game_seconds
             self.retreat_army = view.army_value
         self.mode = mode
+
+
+def _standing(view: View, cell) -> bool:
+    """A building of theirs (seen or remembered) still stands by ``cell``."""
+    r2 = (C.EXPAND_CLUSTER_CELLS + 4) ** 2
+    return any(b.cell is not None and not b.wreck and (b.cell[0] - cell[0]) ** 2 + (b.cell[1] - cell[1]) ** 2 <= r2
+               for b in list(view.enemy_buildings) + list(view.known_enemy_buildings))
 
 
 def _army_in_contact(view: View, squad_ids: frozenset) -> bool:
