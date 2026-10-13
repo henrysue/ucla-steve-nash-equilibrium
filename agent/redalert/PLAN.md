@@ -362,6 +362,13 @@ An attack goes on until the retreat rule ends it. No mass/attack flip within
   fighters or turrets there outmatch them, after losing half, 25 s on
   target or 2 minutes in all. For an opponent with no expansion to raid
   (Yuriko takes none before ~6:40): a harvester is 1100 of tiebreak.
+- **Raids go farthest first**: of their remote expansions our scouts know,
+  the one farthest from their start (the least defended, the slowest for
+  their army to reach) — a harvester there in sight, else the expansion, a
+  remembered harvester there, its refinery; the next farthest only when
+  nothing there can be reached; a squad already at one finishes it first
+  (20095e3e went for the natural by their main while the scouts had seen
+  one farther out).
 - **Raids clear what they reach**: at an expansion with no harvester in
   sight a squad takes its buildings by id — the refinery, the yard,
   production, the rest (not turrets, nor anything in their reach, for

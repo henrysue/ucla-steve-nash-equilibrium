@@ -526,27 +526,44 @@ def _target(view: View, members: list[Actor], advice=None, avoid=(), squad=None)
     if advised is not None:
         return advised
 
-    def nearest(cells):
-        found = [(s, c) for s, c in ((spot(c), c) for c in cells) if s is not None]
+    def nearest(cells, area):
+        found = [(s, c) for s, c in ((spot(c), c) for c in cells if dist2(c, area) <= by2) if s is not None]
         return min(found, key=lambda f: dist2(f[1], origin)) if found and origin else (found[0] if found else None)
 
-    visible = [a for a in view.enemy_units if a.type in C.HARVESTER and a.id is not None and a.cell is not None
-               and spot(a.cell) == a.cell]
-    if visible:
-        return min(visible, key=lambda a: dist2(a.cell, origin) if origin else 0).id
-    # At the expansion with no harvester in sight: clear it, building by building.
-    if members:
+    def harvester_at(area):
+        here = [a for a in view.enemy_units if a.type in C.HARVESTER and a.id is not None and a.cell is not None
+                and dist2(a.cell, area) <= by2 and spot(a.cell) == a.cell]
+        return min(here, key=lambda a: dist2(a.cell, origin) if origin else 0).id if here else None
+
+    # The squad already at an expansion finishes it first: its harvesters,
+    # then its buildings one by one (not off to another mid-job).
+    if members and origin is not None:
+        c2 = C.RAID_CLEAR_CELLS ** 2
+        for area in (r for r in remote if dist2(r, origin) <= c2):
+            hit_id = harvester_at(area)
+            if hit_id is not None:
+                return hit_id
         building = _clear_target(view, squad, origin, remote, avoid)
         if building is not None:
             return building
-    # A known enemy expansion: its refinery is where its harvesters unload,
-    # and a fresh expansion has the least protection.
-    for cells in (enemy_expansions(view),
-                  [a.cell for a in view.known_enemy_units if a.type in C.HARVESTER],
-                  [a.cell for a in view.enemy_buildings + view.known_enemy_buildings if a.type == C.REFINERY]):
-        best = nearest(cells)
-        if best is not None:
-            return best[0]
+    # Else the expansion farthest from their start first — the least
+    # defended, the slowest for their army to reach (20095e3e's raids went for
+    # the natural by their main while the scouts had seen one 11 cells
+    # farther out): a harvester there in sight, else the expansion, a
+    # harvester remembered there, its refinery; the next farthest only when
+    # nothing there can be reached.
+    areas = sorted(remote, key=lambda r: -dist2(r, main) if main is not None else 0)
+    known_harvesters = [a.cell for a in view.known_enemy_units if a.type in C.HARVESTER]
+    refineries = [a.cell for a in view.enemy_buildings + view.known_enemy_buildings if a.type == C.REFINERY]
+    expansions = enemy_expansions(view)
+    for area in areas:
+        hit_id = harvester_at(area)
+        if hit_id is not None:
+            return hit_id
+        for cells in (expansions, known_harvesters, refineries, [area]):
+            best = nearest(cells, area)
+            if best is not None:
+                return best[0]
     return None
 
 

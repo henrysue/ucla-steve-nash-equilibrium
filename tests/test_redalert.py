@@ -1605,7 +1605,7 @@ def test_a_defended_enemy_expansion_is_left_to_the_main_army():
 
 
 def test_a_visible_harvester_still_comes_first():
-    blds = [{"id": 81, "type": "proc", "x": 42, "y": 13, "hp": 100}, _EXP_PROC]
+    blds = [{"id": 81, "type": "proc", "x": 40, "y": 15, "hp": 100}, _EXP_PROC]   # 25 out, the truck's expansion 26
     r = Raid()
     v = _view(_t=300.0, buildings=BASE, units=_raid_army(), visible_enemy_buildings=blds, visible_enemies=[_ENEMY_HARV])
     r.update(v, Mode.BUILD, None)
@@ -6802,3 +6802,26 @@ def test_a_flank_walled_off_by_terrain_goes_straight_in():
     assert len(vias) == 2 and sum(len(x["units"]) for x in vias) == 16
     for x in vias:
         assert tuple(x["to"]) not in wall                                          # never a point in the rock
+
+
+def test_raids_go_for_the_expansion_farthest_from_their_start_first():
+    """20095e3e: the raid parties went for the natural by their main while
+    the scouts had seen one farther out."""
+    from agent.redalert.raid import _target
+    natural = {"id": 81, "type": "proc", "x": 40, "y": 15, "hp": 100}            # 25 from their main (40, 40)
+    natural_truck = {"id": 91, "type": "harv", "x": 41, "y": 14, "hp": 100}
+    far = {"id": 85, "type": "proc", "x": 6, "y": 40, "hp": 100}                  # 34 out
+    raiders = [{"id": 60 + i, "type": "e3", "x": 30, "y": 12, "hp": 100} for i in range(6)]   # by the natural
+    v = _view(_t=600.0, units=raiders, visible_enemy_buildings=[natural, far], visible_enemies=[natural_truck])
+    members = list(v.combat_units)
+    assert _cell_of_target(v, _target(v, members)) == (6, 40)                     # the far one, though nearer the natural
+    gone = _view(_t=600.0, units=raiders, visible_enemy_buildings=[natural], visible_enemies=[natural_truck])
+    assert _target(gone, list(gone.combat_units)) == 91                           # nothing farther: the natural's truck
+    at_far = [dict(u, x=7, y=38) for u in raiders]
+    there = _view(_t=600.0, units=at_far, visible_enemy_buildings=[natural, far], visible_enemies=[natural_truck])
+    assert _target(there, list(there.combat_units)) == 85                         # at the far one: it clears it first
+
+
+def _cell_of_target(view, target):
+    from agent.redalert.raid import _cell_of
+    return _cell_of(view, target)
