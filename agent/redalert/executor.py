@@ -854,12 +854,45 @@ def _two_flanks(view: View, ids: list, target) -> list[dict] | None:
     mid = (cx + dx / 2, cy + dy / 2)
     side = sorted(units, key=lambda u: (u.cell[0] - cx) * px + (u.cell[1] - cy) * py)
     half = len(side) // 2
+    start = (round(cx), round(cy))
     out = []
     for group, sign in ((side[:half], -1), (side[half:], 1)):
-        via = scout._open_cell(view, (round(mid[0] + sign * px * off), round(mid[1] + sign * py * off)))
+        via = _flank_point(view, start, tuple(target), mid, (sign * px, sign * py), off)
         ids_ = [u.id for u in group][:orders.MAX_UNITS_PER_ORDER]
+        if via is None:                                  # no sensible way round on this side: straight in
+            out.append(orders.attack_move(ids_, list(target)))
+            continue
         out += [orders.attack_move(ids_, list(via)), orders.attack_move(ids_, list(target), queued=True)]
     return out
+
+
+_FLANKS: dict = {}   # (map, start bucket, target, side) -> the flank point (or None), the walks are costly
+
+
+def _flank_point(view: View, start, target, mid, side, off):
+    """A flank point ``off`` cells to ``side`` of ``mid`` that our units can
+    walk to (scouting._reachable: not a pocket walled in by cliffs), whose
+    road there and on to the target is at most ``LAST_STAND_MAX_DETOUR`` x
+    the direct one; else half as wide; else None (straight in). Checked on
+    every map fixture (test_redalert_maps)."""
+    from .scouting import _reachable
+    from .terrain import walk_path
+
+    key = (id(view.blocked_cells), (start[0] // 4, start[1] // 4), target, (round(side[0], 2), round(side[1], 2)))
+    if key in _FLANKS:
+        return _FLANKS[key]
+    if len(_FLANKS) > 256:
+        _FLANKS.clear()
+    direct = walk_path(view, start, target)
+    found = None
+    for width in (off, off / 2):
+        via = _reachable(view, scout._open_cell(view, (round(mid[0] + side[0] * width), round(mid[1] + side[1] * width))))
+        a, b = walk_path(view, start, via), walk_path(view, via, target)
+        if a and b and (not direct or len(a) + len(b) <= C.LAST_STAND_MAX_DETOUR * len(direct)):
+            found = via
+            break
+    _FLANKS[key] = found
+    return found
 
 
 def _concave_engage(view: View, fighters, foes) -> list[dict] | None:

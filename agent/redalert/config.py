@@ -356,7 +356,8 @@ CATCH_UP_REMAINING_SECONDS = 300.0      # behind or level from 15:00: force trad
 LAST_STAND_REMAINING_SECONDS = 120.0    # behind in the last 2 minutes: attack whatever the odds — a sure loss
                                         # otherwise (91da02f3, 748f8d89: the losing seat sat out the end)...
 LAST_STAND_FLANK_FRACTION = 0.3         # ...in two halves, each by a flank point this share of the way to the
-LAST_STAND_MIN_UNITS = 12               # target sideways (with at least this many units; fewer go as one)
+LAST_STAND_MIN_UNITS = 12               # target sideways (with at least this many units; fewer go as one)...
+LAST_STAND_MAX_DETOUR = 2.0             # ...a flank's road at most this x the direct one (else half as wide, else straight)
 
 # -- squads: scout, raids, home guard, garrison ---------------------------------------------------
 SCOUT_INSET_CELLS = 8              # patrol ring this far inside the map edge

@@ -399,3 +399,32 @@ def test_a_push_is_held_at_the_concave_at_the_choke_until_it_gets_inside(path):
     inside = min(view.buildings, key=lambda b: (b.cell[0] - base[0]) ** 2 + (b.cell[1] - base[1]) ** 2).cell
     point, _ = executor._hold_point(view, inside)
     assert point == scout.home_line(view, inside)                                 # inside: at home
+
+
+@pytest.mark.parametrize("path", FIXTURES, ids=[p.stem for p in FIXTURES])
+def test_the_last_stand_flanks_route_round_the_terrain_on_real_maps(path):
+    """The army in two halves by both flanks (executor._two_flanks): each
+    flank point walkable from the army, each road at most
+    LAST_STAND_MAX_DETOUR x the direct one, and two different roads."""
+    import dataclasses
+
+    from agent.redalert import executor
+    from agent.redalert.observe import Actor
+
+    fx = _load(path)
+    view = _view(fx, fx["states"][1], path.stem)
+    start = scout.concave_point(view)[0]
+    target = executor.route_goal(view) or tuple(fx["enemy_spawn"])
+    army = [Actor(id=1000 + i, type="3tnk", cell=(start[0] + (i % 4) - 2, start[1] + (i // 4) - 2), hp=100.0)
+            for i in range(16)]                                                    # 16 heavy tanks at our concave
+    v = dataclasses.replace(view, units=list(view.units) + army)
+    o = executor._two_flanks(v, [u.id for u in army], tuple(target))
+    assert o, "no split"
+    direct = terrain.walk_path(v, tuple(start), tuple(target))
+    roads = []
+    for via in [tuple(x["to"]) for x in o if not x.get("queued")]:
+        a, b = terrain.walk_path(v, tuple(start), via), terrain.walk_path(v, via, tuple(target))
+        assert a and b, via                                                         # walkable both ways
+        assert len(a) + len(b) <= C.LAST_STAND_MAX_DETOUR * len(direct) + 1, via    # no long way round
+        roads.append(set(a) | set(b))
+    assert len(roads) == 2 and len(roads[0] & roads[1]) < 0.6 * min(len(roads[0]), len(roads[1]))   # two roads

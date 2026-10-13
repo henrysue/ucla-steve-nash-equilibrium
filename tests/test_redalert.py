@@ -6786,3 +6786,19 @@ def test_behind_in_the_last_two_minutes_we_go_all_in_from_both_flanks():
     ys = sorted(x["to"][1] for x in firsts)
     assert ys[0] < 13 - 3 and ys[1] > 13 + 3                                       # by opposite flanks
     assert all(x["to"] == [60, 13] for x in o if x.get("queued"))                  # then onto their base
+
+
+def test_a_flank_walled_off_by_terrain_goes_straight_in():
+    army = [{"id": 100 + i, "type": "3tnk", "x": 20, "y": 10 + (i % 8), "hp": 100} for i in range(16)]
+    blds = [{"id": 90, "type": "fact", "x": 60, "y": 13}]
+    wall = frozenset((x, y) for x in range(0, 80) for y in range(0, 5))            # the north flank: solid rock
+    v = dataclasses.replace(_view(buildings=BASE, units=army, visible_enemy_buildings=blds, _r=100.0,
+                                  military={"army_value": 18400, "visible_enemy_value": 30000,
+                                            "kills_cost": 1000, "deaths_cost": 5000}),
+                            bounds=(0, 0, 80, 24), blocked_cells=wall)
+    executor._FLANKS.clear()
+    o = executor._two_flanks(v, [u["id"] for u in army], (60, 13))
+    vias = [x for x in o if not x.get("queued")]
+    assert len(vias) == 2 and sum(len(x["units"]) for x in vias) == 16
+    for x in vias:
+        assert tuple(x["to"]) not in wall                                          # never a point in the rock
