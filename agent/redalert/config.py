@@ -364,6 +364,7 @@ RAID_EXPANSION_SECONDS = 480.0     # ...and a raid at a found expansion goes in 
 RAID_EXPANSION_SQUAD = 8           # at least this many (army and MIN_DEFENDERS allowing)
 RAID_REMOTE_MIN_CELLS = 25         # raids only at a yard or refinery of theirs this far from their main base (a remote expansion)
 RAID_NO_TARGET_GRACE_SECONDS = 8.0 # a raid keeps going through this long without a target (it flickers as units come and go)
+ATTACK_ID_CELLS = 8                # an attack on one unit by id only this close: farther, attack-move there (fighting on the way)
 RAID_TARGET_ODDS = 2.0             # a raid goes only where the squad clearly beats the units known there (strength.odds)
 RAID_TURRET_CLEAR_CELLS = 7        # infantry raids keep this far from known enemy turrets (a pillbox reaches ~6)...
 RAID_ROUTE_MAX_RATIO = 2.0         # ...walking round them when the way round is at most this much longer...

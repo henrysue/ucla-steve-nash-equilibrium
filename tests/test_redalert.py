@@ -740,7 +740,11 @@ def test_raid_forms_from_rockets_and_hunts_a_visible_harvester():
     v = _view(_t=200.0, buildings=BASE, units=_raid_army(), visible_enemies=[_ENEMY_HARV], visible_enemy_buildings=[_EXP_PROC])
     r.update(v, Mode.BUILD, scout_id=None)
     assert sorted(r.unit_ids) == [100, 101, 102, 103]
-    assert r.orders(v) == [{"cmd": "attack", "units": [100, 101, 102, 103], "target": 90}]
+    o = r.orders(v)                                                            # far off: attack-move to it, fighting on the way
+    assert all(x["cmd"] == "attack_move" for x in o) and o[-1]["to"] == [14, 40]
+    near = [dict(u, x=14, y=36) for u in _raid_army()]                          # close: the truck itself
+    vn = _view(_t=210.0, buildings=BASE, units=near, visible_enemies=[_ENEMY_HARV], visible_enemy_buildings=[_EXP_PROC])
+    assert r.orders(vn) == [{"cmd": "attack", "units": [100, 101, 102, 103], "target": 90}]
 
 
 def test_raid_waits_for_the_opening_to_pass_and_spares_defenders():
@@ -795,9 +799,10 @@ def test_the_army_leaves_the_raid_squad_alone():
     state = _state(_t=400.0, buildings=BASE, units=_raid_army(4, 10), visible_enemies=[_ENEMY_HARV], visible_enemy_buildings=[_EXP_PROC],  # 4 rifles scout
                    military={"army_value": 2900, "visible_enemy_value": 2500})   # massing (short of a push), not attacking
     orders_ = agent.choose_action(state, CTX).action["orders"]
-    raid = [o for o in orders_ if o.get("target") == 90]
-    others = [o for o in orders_ if o["cmd"] in ("attack_move", "move") and o.get("target") is None]
-    assert raid and not any(set(o["units"]) & set(raid[0]["units"]) for o in others)
+    raiders = set(agent._raid.unit_ids)
+    moving = [set(o["units"]) for o in orders_ if o["cmd"] in ("attack_move", "move", "attack")]
+    assert raiders and any(m <= raiders for m in moving)                         # the raid has its orders...
+    assert all(m <= raiders or not (m & raiders) for m in moving)                # ...and no one else's
 
 
 # -- OpenRA wiki advice: placement, defense, repair, target priority ----------
@@ -1591,7 +1596,7 @@ def test_a_visible_harvester_still_comes_first():
     r = Raid()
     v = _view(_t=300.0, buildings=BASE, units=_raid_army(), visible_enemy_buildings=blds, visible_enemies=[_ENEMY_HARV])
     r.update(v, Mode.BUILD, None)
-    assert r.orders(v)[0]["target"] == 90
+    assert r.orders(v)[-1]["to"] == [14, 40]                                  # the truck first (attack-moving to it)
 
 
 # -- keep expanding, garrison, lanes (match f9f06e34) ---------------------------------
@@ -1982,7 +1987,7 @@ def test_the_raid_follows_its_lead_and_falls_back_to_rules_on_failure():
     bad._raid.unit_ids = [100, 101, 102]
     bad._raid_orders(v)
     bad._leads["raid"]._future.exception()
-    assert bad._raid_orders(v)[0]["target"] == 90                            # the raid rules: hit the harvester
+    assert bad._raid_orders(v)[-1]["to"] == [14, 40]                         # the raid rules: to the harvester
 
 
 # -- pro-replay features (RAGL/ladder replays) ---------------------------------------------
@@ -5995,3 +6000,14 @@ def test_a_strike_below_the_retreat_line_keeps_marching_until_it_meets_them():
     c.mode, c.mode_since = Mode.BUILD, 0.0
     assert c.decide(v(700.0)) is Mode.ALL_IN
     assert c.decide(v(700.0 + C.MIN_ENGAGEMENT_SECONDS + 10)) is Mode.ALL_IN   # marching, no contact: on it goes
+
+
+def test_a_squad_leads_far_attack_order_marches_fighting():
+    """An attack on one unit by id walks past everything else without firing
+    back: from afar it is an attack-move to it."""
+    d = squadlead.Directive(made_at=0.0, action="attack", target_id=90, cell=None, reasoning="")
+    v = _view(_t=300.0, units=_raid_army(), visible_enemies=[_ENEMY_HARV])
+    assert squadlead.squad_orders(v, [100, 101], d, None) == [{"cmd": "attack_move", "units": [100, 101], "to": [14, 40]}]
+    near = [dict(u, x=14, y=37) for u in _raid_army()]
+    vn = _view(_t=300.0, units=near, visible_enemies=[_ENEMY_HARV])
+    assert squadlead.squad_orders(vn, [100, 101], d, None) == [{"cmd": "attack", "units": [100, 101], "target": 90}]

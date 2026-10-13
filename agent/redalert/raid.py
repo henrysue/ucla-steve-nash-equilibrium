@@ -163,7 +163,13 @@ class Raid:
             return []
         self._aim = _cell_of(view, target) or self._aim
         if isinstance(target, int):
-            return [orders.attack(ids, target)]
+            # A harvester by id only once near: an attack on one unit walks
+            # past everything else without firing back — from afar the squad
+            # attack-moves along its route to it, fighting what it meets.
+            cell, centre = _cell_of(view, target), _centroid(members)
+            if cell is None or centre is None or dist2(cell, centre) <= C.ATTACK_ID_CELLS ** 2:
+                return [orders.attack(ids, target)]
+            target = cell
         via = self._flank(view, members, target)
         route = self._round_turrets(view, members, target, via)
         if route:

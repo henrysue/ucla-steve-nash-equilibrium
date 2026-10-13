@@ -95,9 +95,18 @@ def squad_orders(view: View, ids: list[int], d: Directive, home: tuple[int, int]
     if not ids:
         return None
     if d.action == "attack":
-        if d.target_id is not None and any(a.id == d.target_id for a in list(view.enemy_units) + list(view.enemy_buildings)):
-            return [orders.attack(ids, d.target_id)]
-        return None
+        hit = next((a for a in list(view.enemy_units) + list(view.enemy_buildings)
+                    if d.target_id is not None and a.id == d.target_id and a.cell is not None), None)
+        if hit is None:
+            return None
+        # By id only once near (an attack on one unit walks past the rest
+        # without firing back); from afar, attack-move to it.
+        cells = [u.cell for u in view.units if u.id in set(ids) and u.cell is not None]
+        if cells:
+            cx, cy = sum(c[0] for c in cells) / len(cells), sum(c[1] for c in cells) / len(cells)
+            if (hit.cell[0] - cx) ** 2 + (hit.cell[1] - cy) ** 2 > C.ATTACK_ID_CELLS ** 2:
+                return [orders.attack_move(ids, list(hit.cell))]
+        return [orders.attack(ids, d.target_id)]
     if d.action == "move":
         return [orders.attack_move(ids, list(d.cell))] if d.cell is not None else None
     if d.action == "hold":
