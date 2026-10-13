@@ -27,7 +27,8 @@ ROCKET = "e3"
 # tanks). Pro replays: heavy/medium tanks in every game, light tanks never.
 TANK_PREFERENCE = ("3tnk", "2tnk", "4tnk", "1tnk")
 MAIN_BATTLE_TANKS = ("3tnk", "2tnk", "4tnk")
-TANK_VALUE_SHARE = 0.5             # pros keep 45-55% of combat value in tanks: below this, tanks come first
+TANK_VALUE_SHARE = 0.5             # pros keep 45-55% of combat value in tanks: below this, tanks come first...
+TANK_VALUE_SHARE_HEAVY = 0.65      # ...more as the Soviets, whose main tank is the heavy tank: it trades efficiently
 ENEMY_MIX_SECONDS = 180.0          # their army's make-up: the unit types our scouts saw this recently
 HARVESTER = ("harv",)
 SIEGE_UNITS = ("v2rl", "arty")     # Soviet V2 / Allied artillery: outrange defenses
@@ -39,7 +40,9 @@ TURRETS = ("pbox", "hbox", "gun", "ftur", "tsla")   # ground turrets, either sid
 BUILD_TURRETS = ("pbox", "ftur", "gun", "tsla")   # what we build: the first one offered (cheapest first)...
 ANTI_TANK_TURRETS = ("gun", "tsla")   # ...against a tank push not yet beaten: these first (a pillbox and a flame tower
                                       # are anti-infantry; Yuriko's push is medium tanks)
-TANK_PUSH_DEFENSES = 3             # ...and this many standing at home meanwhile (by her ~4:30 push)
+TANK_PUSH_DEFENSES = 1             # ...and this many standing at home meanwhile — one gun turret; the rest goes into
+                                   # tanks (TANK_PUSH_TANK_SHARE)
+TANK_PUSH_TANK_SHARE = 0.65        # against a tank push not yet beaten, at least this share of the army in tanks
 ALL_BUILDING_TYPES = frozenset({
     "fact", "powr", "apwr", "tent", "barr", "proc", "weap", "fix", "silo", "dome", "hpad", "afld",
     "spen", "syrd", "atek", "stek", "gap", "sam", "agun", "kenn", "iron", "pdox", "mslo",

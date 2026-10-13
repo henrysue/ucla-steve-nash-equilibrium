@@ -117,7 +117,7 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
 
 ### 2. The army's make-up
 
-Half the combat value in main battle tanks (70% against a passive enemy,
+Half the combat value in main battle tanks (65% as the Soviets, whose heavy tank trades efficiently; 65% against a tank push not yet beaten; 70% against a passive enemy,
 with the second war factory at the depot and a third once two expansions
 stand: we out-build it) (the strongest offered, never
 light tanks once better ones exist), riflemen and rockets 3:1 shifting to 1:1
@@ -366,10 +366,10 @@ An attack goes on until the retreat rule ends it. No mass/attack flip within
 - **Retreat**: a plain move to the main turret line; regroup there.
 - **Micro**: focus fire on the weakest enemy fighter within 4 cells; siege
   units shell turrets.
-- **Turrets**: against a tank push not yet beaten, anti-tank first (the
+- **Turrets**: against a tank push not yet beaten, one anti-tank turret (the
   Allied gun turret, a tesla coil; a pillbox and a flame tower are
-  anti-infantry) and 3 standing at home; the expansion waits until the push
-  is beaten (unless home runs dry). The first out in front of the first war factory (beside it
+  anti-infantry) and the rest into tanks (65% of the army's value); the
+  expansion waits until the push is beaten (unless home runs dry). The first out in front of the first war factory (beside it
   on its enemy side; where its exit lane leaves no spot there, the line),
   unless a threat or the advisor names the side; the rest a line on the
   base's front edge straight toward the enemy (side by side across that

@@ -373,7 +373,8 @@ def ahead_in_queue(view: View, queue: str, item: str) -> str | None:
 
 def tanks_lag(view: View, tank: str | None) -> bool:
     """A main battle tank is offered and tanks hold less than
-    ``TANK_VALUE_SHARE`` of our combat value (``TANK_VALUE_SHARE_PASSIVE``
+    ``TANK_VALUE_SHARE`` of our combat value (``TANK_VALUE_SHARE_HEAVY`` when
+    it is the Soviets' heavy tank, ``TANK_VALUE_SHARE_PASSIVE``
     against a passive enemy: we out-build it; queued tanks count)."""
     if tank not in C.MAIN_BATTLE_TANKS:
         return False
@@ -382,7 +383,11 @@ def tanks_lag(view: View, tank: str | None) -> bool:
     tanks += sum(cost(t) for t in C.TANK_PREFERENCE for _ in range(view.queued_count(t)))
     total = sum(cost(u.type) for u in view.combat_units) + tanks - sum(
         cost(u.type) for u in view.combat_units if u.type in C.VEHICLE_TYPES)
-    share = C.TANK_VALUE_SHARE_PASSIVE if view.enemy_passive else C.TANK_VALUE_SHARE
+    # The Soviets' heavy tank trades efficiently: more of the army in it.
+    share = (C.TANK_VALUE_SHARE_PASSIVE if view.enemy_passive
+             else C.TANK_VALUE_SHARE_HEAVY if tank == "3tnk" else C.TANK_VALUE_SHARE)
+    if view.tank_push_pending:                   # their tanks are coming: ours meet them (one gun turret only)
+        share = max(share, C.TANK_PUSH_TANK_SHARE)
     return total <= 0 or tanks < share * total
 
 

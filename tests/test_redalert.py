@@ -5747,13 +5747,13 @@ def test_against_a_passive_enemy_we_expand_early_and_often_even_behind():
 
 
 def test_against_a_passive_enemy_more_tanks_and_war_factories():
-    tanks = [{"id": 30 + k, "type": "3tnk", "x": 5, "y": 5, "hp": 100} for k in range(6)]
+    tanks = [{"id": 30 + k, "type": "2tnk", "x": 5, "y": 5, "hp": 100} for k in range(6)]
     rifles = [{"id": 50 + k, "type": "e1", "x": 5, "y": 5, "hp": 100} for k in range(4)]
-    v = _view(_t=500.0, buildings=BASE, units=tanks + rifles, available_production=["3tnk", "e1"])
+    v = _view(_t=500.0, buildings=BASE, units=tanks + rifles, available_production=["2tnk", "e1"])
     cost = lambda k: v.unit_costs.get(k, C.DEFAULT_UNIT_COST)  # noqa: E731
-    share = 6 * cost("3tnk") / (6 * cost("3tnk") + 4 * cost("e1"))
+    share = 6 * cost("2tnk") / (6 * cost("2tnk") + 4 * cost("e1"))
     assert C.TANK_VALUE_SHARE < share < C.TANK_VALUE_SHARE_PASSIVE
-    assert not executor.tanks_lag(v, "3tnk") and executor.tanks_lag(dataclasses.replace(v, enemy_passive=True), "3tnk")
+    assert not executor.tanks_lag(v, "2tnk") and executor.tanks_lag(dataclasses.replace(v, enemy_passive=True), "2tnk")
     eco = {"cash": 0, "ore": 500, "resource_capacity": 8000, "power_provided": 600, "power_drained": 100}
     base = _ECON_BASE + [{"id": 15, "type": "powr"}, {"id": 16, "type": "fix"}, {"id": 18, "type": "powr"}]
     early = _view(_t=300.0, buildings=base, units=_harvs(1), economy=eco)
@@ -6533,13 +6533,21 @@ def test_a_roamer_scouts_the_remote_fields_from_3_00_and_their_main_less_once_sc
     assert corps._circling                                              # ...after the wary 5
 
 
-def test_against_an_unbeaten_tank_push_we_build_anti_tank_turrets_three_of_them():
-    blds = BASE + [{"id": 12, "type": "weap", "x": 14, "y": 10}, {"id": 20, "type": "pbox", "x": 12, "y": 14}]
-    offered = ["pbox", "gun", "e1"]
+def test_against_an_unbeaten_tank_push_one_gun_turret_and_the_rest_into_tanks():
+    blds = BASE + [{"id": 12, "type": "weap", "x": 14, "y": 10}]
+    offered = ["pbox", "gun", "e1", "2tnk"]
     calm = _view(_t=240.0, buildings=blds, available_production=offered, economy={"cash": 3000})
-    assert buildplan.defense_orders(calm, under_attack=False) == []                      # one standing: enough
+    assert buildplan.defense_orders(calm, under_attack=False) == [{"cmd": "build", "item": "pbox"}]
     pushed = dataclasses.replace(calm, enemy_tank_push=True, tank_push_pending=True)
     assert buildplan.defense_orders(pushed, under_attack=False) == [{"cmd": "build", "item": "gun"}]   # anti-tank
+    one = dataclasses.replace(pushed, buildings=pushed.buildings + read(_raw(buildings=[
+        {"id": 20, "type": "gun", "x": 12, "y": 14}])).buildings)
+    assert buildplan.defense_orders(one, under_attack=False) == []                       # one: the rest into tanks
+    tanks = [{"id": 30 + i, "type": "2tnk", "x": 10, "y": 10, "hp": 100} for i in range(3)]
+    rifles = [{"id": 50 + i, "type": "e1", "x": 10, "y": 10, "hp": 100} for i in range(2)]
+    army = _view(units=tanks + rifles, available_production=offered)                      # 60% tanks (priced alike)
+    assert not executor.tanks_lag(army, "2tnk")
+    assert executor.tanks_lag(dataclasses.replace(army, tank_push_pending=True), "2tnk")  # 65% against the push
 
 
 def test_no_expansion_while_a_tank_push_is_unbeaten():
@@ -6599,3 +6607,14 @@ def test_the_harvester_snipe_slips_round_their_turrets_kills_one_harvester_and_l
     tanks = [{"id": 95 + i, "type": "2tnk", "x": 13, "y": 13, "hp": 100} for i in range(4)]
     sn2.orders(at(345.0, jeeps, tanks))
     assert sn2.state == "leave"
+
+
+def test_as_the_soviets_more_of_the_army_goes_into_heavy_tanks():
+    """Heavy tanks trade efficiently: 65% of the army's value in them (50%
+    for the Allies' medium tank)."""
+    tanks = [{"id": 30 + i, "type": "3tnk", "x": 10, "y": 10, "hp": 100} for i in range(3)]
+    rifles = [{"id": 50 + i, "type": "e1", "x": 10, "y": 10, "hp": 100} for i in range(2)]
+    soviet = _view(units=tanks + rifles, available_production=["3tnk", "e1"])         # 3 of 5 (priced alike): 60%
+    assert executor.tanks_lag(soviet, "3tnk")                                          # under 65%: tanks first
+    allied = _view(units=[dict(t, type="2tnk") for t in tanks] + rifles, available_production=["2tnk", "e1"])
+    assert not executor.tanks_lag(allied, "2tnk")                                      # over 50%: enough
