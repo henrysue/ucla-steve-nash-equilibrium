@@ -407,7 +407,11 @@ INTERCEPT_MIN_VALUE = 1500         # an enemy army this big seen in our half: th
 INTERCEPT_HOLD_SECONDS = 20.0      # the intercept point holds this long after the last sighting (no dithering)
 # -- committing to an attack --
 CONFIRM_SECONDS = 4.0              # an attack call is re-checked this long later, the army edging forward to see...
-CONFIRM_BLIND_MAX_SECONDS = 40.0   # an attack call knowing little of their army (BLIND_SEEN_SHARE) waits up to this for a look
+CONFIRM_BLIND_MAX_SECONDS = 120.0  # an attack call knowing little of their army (BLIND_SEEN_SHARE) waits up to this for a look...
+BLIND_GO_FACTOR = 1.5              # ...then goes only at this x the usual bar on what we believe (no look may ever come)
+EXPAND_SITE_RETRY_SECONDS = 300.0  # a site whose scouting timed out is skipped this long
+HUNT_POINT_GIVEUP_SECONDS = 90.0   # a hunt search point aimed at this long without a unit getting near it counts as checked
+UNREACHABLE_EXPIRE_SECONDS = 60.0  # a place a scout couldn't reach is tried again after this
 CONFIRM_TRADE_BAND = 200           # ...only while kills - losses are this close to even (clearly ahead/behind: go at once)
 PROBE_FRACTION = 0.3               # ...to this share of the way from the massing point to the target
 ATTACK_GROUPS = 3                  # the army attacks in this many groups, a semi-concave...

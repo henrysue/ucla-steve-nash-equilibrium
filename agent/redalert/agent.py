@@ -224,8 +224,9 @@ class RedAlertAgent:
             # Expand again once the worked fields are forecast to run dry (not
             # only once harvesters idle on an empty one).
             self._expansion.update(view, self._mode, advice, ore_running_out=view.ore_running_dry)
-        if self._expansion.scout_target is not None and self._patrol.visit is None:
-            self._patrol.visit = self._expansion.scout_target
+        # The expansion's site to look at, only while it is being scouted (a
+        # stale one held a scout idle for good when the site was out of reach).
+        self._patrol.visit = self._expansion.scout_target
         self._game_seconds = view.game_seconds
 
         if spar is None or spar.raids:     # sparring: the archetypes don't raid
@@ -539,8 +540,13 @@ class RedAlertAgent:
         cx = sum(c[0] for c in army) / len(army)
         cy = sum(c[1] for c in army) / len(army)
         if self._flank_via:
+            # The front half there (not the whole army's centroid, which units
+            # waiting at home held back: the route was never popped and the
+            # front was sent back to the waypoint every 20 s).
             nxt = self._flank_via[0]
-            if (cx - nxt[0]) ** 2 + (cy - nxt[1]) ** 2 <= C.FLANK_ARRIVED_CELLS ** 2:
+            front = sorted(army, key=lambda c: dist2(c, nxt))[:max(1, len(army) // 2)]
+            fx, fy = sum(c[0] for c in front) / len(front), sum(c[1] for c in front) / len(front)
+            if (fx - nxt[0]) ** 2 + (fy - nxt[1]) ** 2 <= C.FLANK_ARRIVED_CELLS ** 2:
                 self._flank_via = self._flank_via[1:]
         t = view.game_seconds
         if t - self._route_at < C.ROUTE_REPLAN_SECONDS:

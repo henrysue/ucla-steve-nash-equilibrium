@@ -186,7 +186,14 @@ class Commander:
             # the end does it go without): the 40 s expiry sent blind attacks
             # that lost the army (b9145367 at 4:41: 3100 into "seen 0", 300
             # left; 5a4bc83f at 7:06: 7350 lost).
-            if waited < C.CONFIRM_SECONDS or (blind and not brain._catching_up(view)):
+            # Capped at CONFIRM_BLIND_MAX_SECONDS — a look may never come (every
+            # stop down a choke, scouts dying): then only a clear edge on what we
+            # believe (BLIND_GO_FACTOR x the bar) goes (the audit: on Trapped or
+            # Sidestep the army could sit at the probe point for the rest of
+            # the game).
+            blind_go = (waited >= C.CONFIRM_BLIND_MAX_SECONDS
+                        and brain.attack_odds(view) >= C.BLIND_GO_FACTOR * brain._attack_threshold(view))
+            if waited < C.CONFIRM_SECONDS or (blind and not brain._catching_up(view) and not blind_go):
                 self.wants_look = blind
                 return prev
         elif mode is not Mode.ALL_IN:

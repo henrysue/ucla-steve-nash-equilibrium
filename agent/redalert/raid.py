@@ -261,6 +261,7 @@ class Raid:
             self.unit_ids = []
             return
         self._formed_size = len(self.unit_ids)
+        self._legs = None                          # a fresh route (not a released squad's leftover)
         self._start = (view.kills_cost, view.deaths_cost)
         self._formed_at = view.game_seconds
 

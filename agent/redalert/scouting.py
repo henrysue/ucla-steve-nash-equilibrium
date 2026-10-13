@@ -52,7 +52,7 @@ class ScoutCorps:
         self._look_leg: dict[int, int] = {}           # scout id -> its look's stop (0 their exit, 1 their base)
         self._fled_at: dict[str, float] = {}         # role -> when it last backed off from enemy fighters
         self._look_saw: set = set()                   # scout ids whose look has seen something (a stop or their army)
-        self.unreachable: set = set()                 # places a scout can't reach without walking a choke corridor
+        self.unreachable: dict = {}                   # place -> when a scout found it out of reach (a choke corridor)
         self.base_seen_at: float | None = None
         self.army_looked_at: float | None = None      # when a scout last looked where their army masses (look)
         self._sent: dict[int, tuple[int, int]] = {}  # unit id -> waypoint last ordered
@@ -192,15 +192,23 @@ class ScoutCorps:
             if role in ("p0", "x0") and view.game_seconds >= C.MID_PICKET_SECONDS:
                 site = self._next_remote_site(view, u, role)
                 if site is not None:                 # the roamer: remote fields they may have expanded to
-                    out += self._go(view, u, site)[0]
-                    continue
+                    moves, arrived = self._go(view, u, site)
+                    if arrived:                      # as near as it gets (or out of reach): seen, the next
+                        self._site_seen[site] = view.game_seconds
+                    else:
+                        out += moves
+                        continue
             if self.visit is not None and not visit_done:
                 visit_done = True
                 if dist2(u.cell, self.visit) <= 36:
                     self.visit = None
                 else:
-                    out += self._go(view, u, self.visit)[0]
-                    continue
+                    moves, arrived = self._go(view, u, self.visit)
+                    if arrived:
+                        self.visit = None            # as near as it gets (or out of reach): done
+                    else:
+                        out += moves
+                        continue
             post = self.post(view, role)
             if post is None:
                 continue
@@ -300,6 +308,11 @@ class ScoutCorps:
         dest = tuple(dest)
         plan = self._legs.get(u.id)
         if plan is None or plan[0] != dest or (u.idle and plan[1] and dist2(u.cell, plan[1][0]) > (2 * C.SCOUT_LEG_CELLS) ** 2):
+            t = view.game_seconds
+            self.unreachable = {c: at for c, at in self.unreachable.items()
+                                if 0 <= t - at < C.UNREACHABLE_EXPIRE_SECONDS}
+            if dest in self.unreachable:
+                return [], True                      # tried lately: still out of reach
             path = route_around(view, u.cell, dest, self.avoid(view), C.SCOUT_MAX_DETOUR)
             if path is None and self._through_choke(view, u.cell, dest):
                 # No way round, and the straight road runs down a choke
@@ -309,7 +322,7 @@ class ScoutCorps:
                 # way round instead, else not reachable at all.
                 path = self._beside_choke(view, u.cell, dest)
                 if path is None:
-                    self.unreachable.add(dest)
+                    self.unreachable[dest] = view.game_seconds
                     self._legs.pop(u.id, None)
                     return [], True
             if path is None:                         # the straight road is clear: still walked in legs,

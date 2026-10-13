@@ -58,6 +58,7 @@ class Expansion:
         self._deploy_cell: tuple[int, int] | None = None   # ...from this cell
         self._bad_spots: set = set()                # cells a deploy was refused at
         self._blocked_since: float | None = None    # our own units on the yard's spot, since
+        self._failed_sites: dict = {}               # site -> when its scouting timed out (skipped a while)
         self._idle_since: float | None = None       # harvesters idling: the ore is running out
         self._strapped_since: float | None = None   # money under EXPAND_STRAPPED_FUNDS since
         self._even = False                          # trades about even or better (last view)
@@ -204,7 +205,8 @@ class Expansion:
             if (len(self.done) < C.EXPAND_MAX_EXPANSIONS and self._failures < C.EXPAND_MAX_FAILURES
                     and t >= self._cooldown_until and self._again(t, view.enemy_passive)
                     and self._gates(view, mode, advice)):
-                site = choose_site(view, exclude=self.sites)
+                recent = [s for s, at in self._failed_sites.items() if t - at < C.EXPAND_SITE_RETRY_SECONDS]
+                site = choose_site(view, exclude=self.sites + recent)
                 if site is not None:
                     self.site, self.ore = site
                     self._go("scouting", t)
@@ -226,6 +228,10 @@ class Expansion:
             elif fresh and C.MCV in view.available and self._gates(view, mode, advice):
                 self._go("training", t)
             elif t - self._since > C.EXPAND_SCOUT_TIMEOUT_SECONDS:
+                # Never seen in time (out of a scout's reach?): another site
+                # next time, not the same one forever.
+                if self.site is not None:
+                    self._failed_sites[self.site] = t
                 self._abort(t)
             return
         if self.state == "training":

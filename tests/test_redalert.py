@@ -5870,3 +5870,54 @@ def test_a_reached_advisor_target_hands_the_attack_back_to_the_rules():
     w = _view(_t=560.0, units=there, visible_enemy_buildings=tower)
     assert agent._army_advice(pick, False, w).army_target is None              # reached: the rules lead on
     assert agent._army_advice(pick, False, _view(_t=575.0, units=there, visible_enemy_buildings=tower)).army_target is None
+
+
+# -- the audit: sticky state releases ---------------------------------------------------------------
+
+
+@pytest.mark.usefixtures("visible_only")
+def test_a_blind_call_waits_for_a_look_but_not_forever():
+    """A look may never come (every stop down a choke, scouts dying): after
+    CONFIRM_BLIND_MAX_SECONDS only a clear edge on the belief goes."""
+    from agent.redalert.commander import Commander
+    clear = lambda t: dataclasses.replace(_strong(t, army_value=12000, visible_enemy_value=0, kills_cost=8000,  # noqa: E731
+                                                  deaths_cost=8000), enemy_base_scouted=False, enemy_army_peak=2000.0)
+    c = Commander()
+    c.mode = Mode.BUILD
+    assert c.decide(clear(600.0)) is Mode.BUILD and c.wants_look
+    assert c.decide(clear(600.0 + C.CONFIRM_BLIND_MAX_SECONDS - 5)) is Mode.BUILD
+    assert c.decide(clear(600.0 + C.CONFIRM_BLIND_MAX_SECONDS + 1)) is Mode.ALL_IN   # 6x on the belief: go
+    near = lambda t: dataclasses.replace(clear(t), enemy_army_peak=8000.0)          # noqa: E731  1.5x: not enough blind
+    d = Commander()
+    d.mode = Mode.BUILD
+    d.decide(near(600.0))
+    assert d.decide(near(600.0 + C.CONFIRM_BLIND_MAX_SECONDS + 1)) is Mode.BUILD
+
+
+def test_a_hunt_point_never_reached_is_given_up():
+    h = scout.Hunter()
+    v = _view(_t=900.0, units=[{"id": 30, "type": "e1", "x": 4, "y": 4, "hp": 100}])
+    first = h.targets(v, 1)[0]
+    later = _view(_t=900.0 + C.HUNT_POINT_GIVEUP_SECONDS + 1, units=[{"id": 30, "type": "e1", "x": 4, "y": 4, "hp": 100}])
+    assert h.targets(later, 1)[0] != first                                     # never reached: on to the next
+
+
+def test_a_scouting_site_that_timed_out_is_skipped_a_while():
+    e = Expansion()
+    e.update(_exp_view(), Mode.BUILD)
+    site = e.site
+    assert e.state == "scouting"
+    e.update(_exp_view(t=260.0 + C.EXPAND_SCOUT_TIMEOUT_SECONDS + 1), Mode.BUILD)   # never seen in time
+    assert e.state == "idle" and site in e._failed_sites
+    e._cooldown_until = 0.0
+    e.update(_exp_view(t=500.0), Mode.BUILD)
+    assert e.site != site                                                      # another site, not the same forever
+
+
+def test_unreachable_places_are_tried_again_after_a_while():
+    corps = ScoutCorps()
+    corps.unreachable[(50, 50)] = 100.0
+    u = type("U", (), {"id": 7, "cell": (10, 10), "idle": True})()
+    assert corps._go(_view(_t=120.0), u, (50, 50)) == ([], True)              # still out of reach
+    moves, arrived = corps._go(_view(_t=100.0 + C.UNREACHABLE_EXPIRE_SECONDS + 1), u, (50, 50))
+    assert moves and not arrived                                               # tried again

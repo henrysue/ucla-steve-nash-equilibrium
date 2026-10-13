@@ -372,6 +372,7 @@ class Hunter:
         self._ever: list[tuple[int, int]] = []   # every cell where we knew an enemy building
         self._razed = False                      # their main base fell: hunt until the end (latched)
         self._grid: tuple | None = None          # (key, cells): the map's search grid
+        self._aimed: dict = {}                   # search point -> when it was first aimed at
 
     def hunting(self, view: View) -> bool:
         """Their base is (nearly) razed: we once knew at least twice
@@ -408,21 +409,30 @@ class Hunter:
             return []
         r2 = C.HUNT_CHECKED_CELLS ** 2
         ours = [u.cell for u in view.units if u.cell is not None and not u.wreck]
+        t = view.game_seconds
         for p in points:
-            if p not in self._checked and any(dist2(c, p) <= r2 for c in ours):
+            # Reached — or aimed at for HUNT_POINT_GIVEUP_SECONDS without a unit
+            # getting near (sea, a plateau): checked, so the sweep moves on
+            # (the audit: an unreachable point held the hunt for good).
+            given_up = t - self._aimed.get(p, t) >= C.HUNT_POINT_GIVEUP_SECONDS
+            if p not in self._checked and (given_up or any(dist2(c, p) <= r2 for c in ours)):
                 self._checked.add(p)
+                self._aimed.pop(p, None)
         left = [p for p in points if p not in self._checked]
         if not left:
             self._checked.clear()
+            self._aimed.clear()
             left = points
         first = [left[0]] if left[0] == points[0] else []   # the enemy spawn first, while unchecked
         rest = [p for p in left if p not in first]
-        army = [u.cell for u in view.combat_units if u.cell is not None]
-        if army:
-            cx = sum(c[0] for c in army) / len(army)
-            cy = sum(c[1] for c in army) / len(army)
-            rest.sort(key=lambda p: dist2(p, (cx, cy)))
-        return (first + rest)[:max(1, k)]
+        # A stable order — nearest their spawn first — not by the army's
+        # moving centroid, which re-chose the set each view as groups spread.
+        spawn = points[0]
+        rest.sort(key=lambda p: dist2(p, spawn))
+        chosen = (first + rest)[:max(1, k)]
+        for p in chosen:
+            self._aimed.setdefault(p, t)
+        return chosen
 
     def _points(self, view: View) -> list[tuple[int, int]]:
         from .expand import _ore_fields, enemy_expansion_sites
