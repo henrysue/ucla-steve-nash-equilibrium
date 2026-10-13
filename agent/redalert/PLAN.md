@@ -163,7 +163,9 @@ a turtle about one per turret (3–6) before any attack.
 times its hit points (Lanchester); 1.0 is even and it reads like a value
 ratio. Turrets fight in it. Their army is what we saw lately or, if more,
 what they could have built since: it grows by 0.6 of what we spend on our
-army (both sides have the same money) and loses half our kills; it stops
+army (both sides have the same money) — never more than their fields over
+ours allow (at most 3 at home, two starting patches and the natural, plus
+one per remote expansion seen) — and loses half our kills; it stops
 growing once their main base is razed and the unseen part fades while our
 main army (not raiders or scouts) stands in their main base and finds nothing
 (5a4bc83f: raiders by an expansion yard faded it from 14480 to 8300). (Seen-only read 1.3-12x low on
@@ -185,7 +187,8 @@ behind/outgunned. The blind check reads only what was actually seen.
 5. **RETREAT**: our attack is losing (odds under 0.8, or losing the trades
    after the first 15 s).
 6. **ATTACK** when the odds against their army plus the turrets at the target
-   reach the bar: 1.3, 1.15 after 7:00, 1.05 with a 15000+ army, 1.0 behind
+   reach the bar: 1.3, 1.15 after 7:00, 1.2 with a 15000+ army (at parity the
+   defender wins: d1615ac6 lost 6800 for 3950 at 1.05), 1.0 behind
    at the end or on the advisor's "attack". Or at once after the main army
    clearly won a fight (1500+ net and 1.5x in 2 minutes) when at least even.
    - **Look first**: knowing little of them (under half our army seen lately,
@@ -249,15 +252,20 @@ An attack goes on until the retreat rule ends it. No mass/attack flip within
   most 1.6x as long) as queued attack-move waypoints 10 steps apart, so no
   unit takes a road of its own round a rock (82bdca3e went through Trapped's
   gap into their concave; b9145367 split round Trapped's rocks when half the
-  army was re-aimed mid-march). A new route from where it stands when the
-  target moves 12+ cells or the route runs out short of it (at most every
+  army was re-aimed mid-march). It leads to their buildings or base (or the
+  advisor's target), never to whichever unit of theirs is nearest
+  (d1615ac6 zig-zagged between Sidestep's lanes chasing those for 90 s), and
+  takes a way round a choke up to 2.5x as long from where the army stands
+  (from our concave the corridor is short and every lane looks long). A new
+  route from where it stands when the target moves 12+ cells or the route runs out short of it (at most every
   15 s); the advisor's target stays for the attack while anything of theirs
   stands by it. Only within 15 cells of the target does it spread into three
   groups in a semi-concave, and only to points it walks to without a detour.
   Stragglers wait to go 6 together; no flank before 10:00 unless far ahead.
   Scouts and raid squads walk in legs too.
-- **Raids**: only at their remote expansions — a yard or refinery of theirs
-  25+ cells from their main base (not its edge) — that our scouts found; more squads the
+- **Raids**: only at their remote expansions — any building of theirs 25+
+  cells from their main base (not its edge; a building there means a yard,
+  even if the first one seen is its turret) — that our scouts found; more squads the
   longer a healthy game goes (at most 35% of the fighters); they kill
   defenders first, break off when outmatched, and join the main army's fight
   as a second prong. From 8:00 a found expansion is raided in force (8+

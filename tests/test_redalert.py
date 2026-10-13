@@ -4557,9 +4557,12 @@ def test_the_army_fights_a_push_at_the_main_base_and_readies_for_one_at_an_expan
 
 
 def test_a_maxed_army_pushes_at_a_small_edge():
-    big = _view(_t=736.0, buildings=BASE, military={"army_value": 16200, "visible_enemy_value": 15000})
+    big = _view(_t=736.0, buildings=BASE, military={"army_value": 18500, "visible_enemy_value": 15000})
     assert brain._attack_threshold(big) == C.BIG_ARMY_EDGE
     assert brain.choose_mode(dataclasses.replace(big, enemy_army_peak=15000.0), cheese_since=None) is Mode.ALL_IN
+    # At parity it holds: the defender's concave and turrets win (d1615ac6: 25150 into 24700 lost 6800 for 3950).
+    even = _view(_t=736.0, buildings=BASE, military={"army_value": 16200, "visible_enemy_value": 15000})
+    assert brain.choose_mode(dataclasses.replace(even, enemy_army_peak=15000.0), cheese_since=None) is Mode.BUILD
 
 
 def test_an_attack_winning_its_trades_keeps_going():
@@ -5771,3 +5774,41 @@ def test_during_an_attack_the_advisors_first_target_stays_while_it_stands():
     assert agent._army_advice(pick((42, 44)), False, gone).army_target == (42, 44)  # razed: the new one
     agent._mode = Mode.BUILD
     assert agent._army_advice(pick((31, 16)), False, v).army_target == (31, 16) and agent._latched_target is None
+
+
+def test_the_attack_route_follows_their_buildings_not_whichever_unit_is_nearest():
+    """d1615ac6: the route was re-planned toward each nearest enemy unit and
+    the army zig-zagged between Sidestep's lanes for 90 s."""
+    fact = [{"id": 90, "type": "fact", "x": 40, "y": 40, "hp": 100}]
+    a = _view(_t=400.0, visible_enemy_buildings=fact, visible_enemies=[{"id": 900, "type": "e1", "x": 10, "y": 30, "hp": 100}])
+    b = _view(_t=405.0, visible_enemy_buildings=fact, visible_enemies=[{"id": 901, "type": "e1", "x": 30, "y": 10, "hp": 100}])
+    assert executor.route_goal(a) == executor.route_goal(b) == (40, 40)
+
+
+def test_any_building_far_from_their_main_is_a_remote_expansion():
+    """Every building goes up beside a yard: a lone turret out there means
+    they have expanded (d1615ac6 waited 67 s for the refinery)."""
+    from agent.redalert.raid import remote_expansions
+    turret = [{"id": 80, "type": "ftur", "x": 14, "y": 40, "hp": 100}]         # 26 cells from their main (40, 40)
+    assert remote_expansions(_view(_t=600.0, visible_enemy_buildings=turret)) == [(14, 40)]
+    near = [dict(turret[0], x=30, y=34)]                                        # by their main: not one
+    assert remote_expansions(_view(_t=600.0, visible_enemy_buildings=near)) == []
+
+
+def test_their_army_grows_no_faster_than_their_fields_allow():
+    """Without a remote expansion seen they mine at most 3 fields (two
+    starting patches and the natural): against our 6 they can't match our
+    spending. Each remote expansion found adds a field."""
+    agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
+    ore = tuple((x, y) for cx, cy in ((40, 36), (36, 44), (44, 44), (10, 40), (40, 10), (8, 8))
+                for x in range(cx, cx + 3) for y in range(cy, cy + 2))
+    v = dataclasses.replace(_view(_t=600.0), ore_cells=ore)
+    agent._harvest.last_counts = {(k, k): 3 for k in range(6)}                  # we work 6 fields
+    assert agent._field_share(v) == pytest.approx(3 / 6)
+    out = [{"id": 80, "type": "proc", "x": 10, "y": 41, "hp": 100}]           # a remote expansion of theirs
+    seen = dataclasses.replace(_view(_t=600.0, visible_enemy_buildings=out), ore_cells=ore)
+    assert agent._field_share(seen) == pytest.approx(4 / 6)
+    agent._enemy_peak(dataclasses.replace(_view(_t=600.0, military={"army_value": 1000}), ore_cells=ore))
+    before = agent._believed
+    agent._enemy_peak(dataclasses.replace(_view(_t=630.0, military={"army_value": 7000}), ore_cells=ore))
+    assert agent._believed - before == pytest.approx(0.5 * 6000)              # capped at 3/6, under 0.6

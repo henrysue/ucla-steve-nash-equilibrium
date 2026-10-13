@@ -483,16 +483,18 @@ def _target(view: View, members: list[Actor], advice=None, avoid=(), squad=None)
 
 
 def remote_expansions(view: View) -> list[tuple[int, int]]:
-    """Their remote expansions: a construction yard or refinery of theirs we
-    know ``RAID_REMOTE_MIN_CELLS`` or more from their main base. Raids go
-    only there (e2bc988e raided a refinery 18 cells out, their main base's
-    edge, and lost)."""
+    """Their remote expansions: any building of theirs we know
+    ``RAID_REMOTE_MIN_CELLS`` or more from their main base — a yard, a
+    refinery, or the turret they put up there first (d1615ac6 saw an
+    expansion's turret at 12:12 and waited for its refinery until 13:19).
+    Raids go only there (e2bc988e raided a refinery 18 cells out, their
+    main base's edge, and lost)."""
     main = enemy_spawn_guess(view)
     if main is None:
         return []
     far2 = C.RAID_REMOTE_MIN_CELLS ** 2
     return [a.cell for a in list(view.enemy_buildings) + list(view.known_enemy_buildings)
-            if a.type in (C.CONSTRUCTION_YARD, C.REFINERY) and a.cell is not None and not a.wreck
+            if a.cell is not None and not a.wreck
             and dist2(a.cell, main) >= far2]
 
 

@@ -495,7 +495,7 @@ class RedAlertAgent:
         the side with the fewest known enemies, rotating on ties."""
         from . import terrain
 
-        target = executor._advised_target(view, advice) or executor._attack_target(view)
+        target = executor.route_goal(view, advice)
         army = [u.cell for u in view.combat_units if u.cell is not None and u.id not in self._patrol.unit_ids]
         if target is None or not (army or view.base_center):
             return []
@@ -516,7 +516,7 @@ class RedAlertAgent:
             # road itself — always in legs, so the whole army takes one road
             # and none of it paths round the other side of a rock (b9145367:
             # half the army re-aimed mid-march went its own way on Trapped).
-            path = (terrain.route_around(view, here, goal, avoid, C.DETOUR_MAX_RATIO)
+            path = (terrain.route_around(view, here, goal, avoid, C.MARCH_DETOUR_MAX_RATIO)
                     or terrain.walk_path(view, here, goal))
             points += terrain.legs(path, C.ARMY_LEG_CELLS) if path else [goal]
             here = goal
@@ -544,7 +544,7 @@ class RedAlertAgent:
         t = view.game_seconds
         if t - self._route_at < C.ROUTE_REPLAN_SECONDS:
             return
-        target = executor._advised_target(view, advice) or executor._attack_target(view)
+        target = executor.route_goal(view, advice)
         if target is None:
             return
         moved = self._route_target is None or dist2(target, self._route_target) > C.ROUTE_RETARGET_CELLS ** 2
@@ -828,13 +828,39 @@ class RedAlertAgent:
         if self._believed_mark is not None:
             spent0, kills0, t0 = self._believed_mark
             if not self._hunting:
-                self._believed += C.ENEMY_GROWTH_SHARE * max(0.0, spent - spent0)
+                share = min(C.ENEMY_GROWTH_SHARE, self._field_share(view))
+                self._believed += share * max(0.0, spent - spent0)
             self._believed -= C.KILL_ARMY_SHARE * max(0.0, view.kills_cost - kills0)
             if self._believed > floor and self._at_their_base(view):
                 self._believed -= (self._believed - floor) * min(1.0, (view.game_seconds - t0) / C.BELIEF_DECAY_SECONDS)
         self._believed_mark = (spent, view.kills_cost, view.game_seconds)
         self._believed = max(self._believed, floor, 0.0)
         return self._believed
+
+    def _field_share(self, view) -> float:
+        """Their ore fields over the fields we work: what their economy can
+        pay for next to ours (a field yields about the same to either side).
+        Theirs: the fields by their main base, at most ``ENEMY_HOME_FIELDS``
+        (two starting patches and the natural), plus each field by a remote
+        expansion of theirs we know (raid.remote_expansions: any building out
+        there means a yard). Ours: the fields our harvesters work."""
+        from .expand import _ore_fields
+        from .observe import enemy_spawn_guess
+        from .raid import remote_expansions
+
+        spawn = enemy_spawn_guess(view)
+        if spawn is None or not view.ore_cells:
+            return float("inf")                   # nothing to go on: no cap
+        fields = _ore_fields(view)
+        r2 = C.RAID_REMOTE_MIN_CELLS ** 2
+        home = sum(1 for _, centre, _ in fields if dist2(centre, spawn) <= r2)
+        home = min(C.ENEMY_HOME_FIELDS, max(1, home))
+        out2 = (C.EXPAND_CLUSTER_CELLS + 6) ** 2
+        remote_cells = remote_expansions(view)
+        remote = sum(1 for _, centre, _ in fields if dist2(centre, spawn) > r2
+                     and any(dist2(centre, c) <= out2 for c in remote_cells))
+        ours = max(1, len(getattr(self._harvest, "last_counts", {}) or {}))
+        return (home + remote) / ours
 
     def _at_their_base(self, view) -> bool:
         """``BELIEF_LOOK_UNITS`` of our main army (not scouts, raiders or the

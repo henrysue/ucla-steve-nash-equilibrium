@@ -198,6 +198,11 @@ KILL_ARMY_SHARE = 0.5              # a past sighting loses this share of our kil
 # "no guess" estimate (545fd344 .. d2d8dc27) it read 1.3-12x low, biased
 # -0.6 to -1.0 in log terms; with 0.6 the bias is about 0 and the error halved.
 ENEMY_GROWTH_SHARE = 0.6
+# ...but never more than their economy allows: their ore fields over the
+# fields we work, times what we spend — at most ENEMY_HOME_FIELDS at home
+# (two starting patches and the natural) until we see a remote expansion,
+# then one more field each (every building goes up by a yard).
+ENEMY_HOME_FIELDS = 3
 BELIEF_LOOK_CELLS = 10             # this many of our army units (BELIEF_LOOK_UNITS) this close to their base...
 BELIEF_LOOK_UNITS = 3
 BELIEF_DECAY_SECONDS = 30.0        # ...and the unseen part of their army fades over this (it isn't there)
@@ -205,7 +210,9 @@ ATTACK_ARMY_EDGE = 1.3             # our army / estimated enemy army (brain.enem
 ESCALATED_ARMY_EDGE = 1.15         # ...lowered after ESCALATE_AFTER_SECONDS (1.0 attacked at parity and retreated within seconds: ef66403c)...
 CATCH_UP_ARMY_EDGE = 1.0           # ...and to this when behind at the end
 BIG_ARMY_VALUE = 15000             # an army this big pushes at...
-BIG_ARMY_EDGE = 1.05               # ...this edge (c7a982ac: two 20k+ armies idled 10 minutes at ~1.1)
+BIG_ARMY_EDGE = 1.2                # ...this edge (c7a982ac: two 20k+ armies idled 10 minutes at ~1.1; but
+                                   # d1615ac6 attacked 25150 into 24700 at 1.05 and lost 6800 for 3950: at
+                                   # parity the defender's concave, turrets and short reinforcement win)
 TRADE_WIN_MIN = 1000               # an attack that has killed this much more than it lost keeps going
 ESCALATE_AFTER_SECONDS = 420.0
 MIN_ATTACK_ARMY_VALUE = 1500       # never attack with less...
@@ -269,6 +276,8 @@ REINFORCE_GAP_CELLS = 14           # in an attack, units this far behind the fro
 REINFORCE_GROUP_UNITS = 6          # ...until this many can go together (no trickling through a choke one by one)
 REINFORCE_HOLD_CELLS = 8           # only units still this close to the massing point wait: none is ever sent back
 DETOUR_MAX_RATIO = 1.6             # an attack goes round the chokes between the bases when that is at most this much longer
+MARCH_DETOUR_MAX_RATIO = 2.5       # ...measured from where the army stands (at our concave by the choke's mouth the
+                                   # corridor is short and every lane long: d1615ac6 went down Sidestep's gap)
 CHOKE_ATTACK_FACTOR = 1.5          # with no way round, an attack through the choke needs this x the usual edge (their concave
                                    # fires on a column coming out of it), unless it brings SIEGE_ATTACK_MIN siege units
 SCOUT_CHOKE_ENTRY_CELLS = 6        # a scout walks into a choke corridor only this close to where it is going

@@ -332,3 +332,38 @@ def test_attack_groups_spread_only_where_they_walk_without_a_detour(path):
     for p in points:
         route = terrain.walk_path(v, far, p)
         assert route and len(route) <= C.ATTACK_POINT_MAX_DETOUR * ((p[0] - far[0]) ** 2 + (p[1] - far[1]) ** 2) ** 0.5 + 4
+
+
+@pytest.mark.parametrize("path", FIXTURES, ids=[p.stem for p in FIXTURES])
+def test_an_attack_from_our_concave_takes_the_lane_not_the_corridor(path):
+    """d1615ac6 (Sidestep): from our concave at the corridor's mouth every
+    lane looked long, so the 17:31 attack went down the gap into their
+    concave. With a way round between the bases, the march takes it."""
+    import dataclasses
+
+    from agent.redalert.agent import RedAlertAgent
+    from agent.redalert.modes import Mode
+    from agent.redalert.observe import enemy_spawn_guess
+    from agent.redalert.observe import read as _rd
+
+    fx = _load(path)
+    view = _view(fx, fx["states"][1], path.stem)
+    zone = terrain.choke_zone(view)
+    if not zone or terrain.choke_between(view):
+        return                                                                   # no corridor, or no way round it
+    enemy, point = tuple(enemy_spawn_guess(view)), scout.concave_point(view)[0]
+    units = _rd({"phase": "playing", "is_terminal": False, "state_version": 1, "pacing": {"mode": "realtime"},
+                 "observation": {"tick": 1, "units": [{"id": 100 + k, "type": "e1", "x": point[0], "y": point[1], "hp": 100}
+                                                      for k in range(10)]},
+                 "time": {"game_seconds": 600}}, None).units
+    fact = type("B", (), {"id": 900, "type": "fact", "cell": enemy, "wreck": False, "hp": 100})()
+    there = dataclasses.replace(view, units=units, known_enemy_buildings=[fact])
+    agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
+    agent._mode = Mode.ALL_IN
+    walked, here = [], point
+    for leg in agent._pick_route(there, None, flank=False) + [enemy]:
+        walked += terrain.walk_path(view, here, leg)
+        here = leg
+    d2 = lambda a, b: (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2                     # noqa: E731
+    deep = [c for c in walked if c in zone and d2(c, point) > 64 and d2(c, enemy) > 20 ** 2]
+    assert len(deep) <= 4, deep[:8]

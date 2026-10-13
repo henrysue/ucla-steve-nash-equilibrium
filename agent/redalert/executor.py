@@ -1003,6 +1003,17 @@ def _attack_points(view: View, units: list[int], target) -> list[tuple[int, int]
     return out
 
 
+def route_goal(view: View, advice=None) -> tuple[int, int] | None:
+    """Where the attack's route leads: the advisor's target, else their
+    buildings (an expansion first) or their base — never whichever of their
+    units is nearest, which jumps about the map (d1615ac6: the route was
+    re-planned toward each one, north lane, back, south lane, and the army
+    zig-zagged across the middle for 90 s before it arrived piecemeal)."""
+    import dataclasses
+
+    return _advised_target(view, advice) or _attack_target(dataclasses.replace(view, enemy_units=()))
+
+
 def _attack_target(view: View, hunt: tuple[int, int] | None = None) -> tuple[int, int] | None:
     """The cell to attack-move to: a visible enemy building, else the nearest
     visible enemy unit, else an enemy building we remember, else the enemy
