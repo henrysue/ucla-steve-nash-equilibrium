@@ -6323,3 +6323,79 @@ def test_the_last_seen_map_mirrors_what_our_vision_and_scouts_saw():
     agent._advisor = type("A", (), {"poll": lambda self, view, situation: captured.update(situation)})()
     agent._poll_advisor(read(_raw(_t=300.0, buildings=BASE)))
     assert captured["last_seen_map"]["enemy_army_as_last_seen"]["units"] == {"e1": 2}
+
+
+def test_the_yuriko_sparring_build_saves_for_the_war_factory_then_pushes_tanks_at_4_30():
+    """yuriko-vs-abu (x2): six riflemen, nothing until the war factory, tanks
+    from the depot, the push from 4:30 with 3+ tanks."""
+    y = sparring.Yuriko()
+    avail = ["powr", "tent", "proc", "weap", "fix", "e1", "e3", "2tnk"]
+    eco = {"power_provided": 300, "power_drained": 100, "cash": 3000}
+    opening = [{"id": 10, "type": "fact"}, {"id": 11, "type": "powr"}, {"id": 12, "type": "tent"}]
+    six = [{"id": 30 + i, "type": "e1", "x": 20, "y": 20, "hp": 100} for i in range(6)]
+    v = _view(_t=60.0, buildings=opening, units=six, available_production=avail, economy=eco)
+    assert y.production(v, Mode.BUILD) == []                                          # six: the money waits
+    assert y.build(v) == [{"cmd": "build", "item": "proc"}]
+    five = _view(_t=40.0, buildings=opening, units=six[:5], available_production=avail, economy=eco)
+    assert y.production(five, Mode.BUILD) == [{"cmd": "train", "item": "e1", "count": 1}]
+    full = opening + [{"id": 13, "type": "proc"}, {"id": 14, "type": "proc"}, {"id": 15, "type": "powr"},
+                      {"id": 16, "type": "weap"}, {"id": 17, "type": "fix"}]
+    tanks = [{"id": 50 + i, "type": "2tnk", "x": 20, "y": 20, "hp": 100} for i in range(3)]
+    w = _view(_t=250.0, buildings=full, units=six + tanks, available_production=avail, economy=eco,
+              military={"army_value": 3150})
+    items = [o["item"] for o in y.production(w, Mode.BUILD)]
+    assert "2tnk" in items and "e3" in items                                         # tanks, rockets alternating
+    assert y.mode(w, None, Mode.BUILD) is Mode.BUILD                                  # not before 4:30
+    push = dataclasses.replace(w, game_seconds=sparring.YURIKO_PUSH_SECONDS)
+    assert y.mode(push, None, Mode.BUILD) is Mode.ALL_IN
+    spent = dataclasses.replace(push, game_seconds=330.0, army_value=0.3 * y._launch_value)
+    assert y.mode(spent, None, Mode.ALL_IN) is Mode.BUILD                             # spent: regroup
+    assert y.mode(push, None, Mode.DEFEND_BASE) is Mode.DEFEND_BASE                   # its base hit: it defends
+    assert y.defense(_view(_t=200.0, buildings=full, available_production=avail + ["pbox"], economy=eco),
+                     False) == [{"cmd": "build", "item": "pbox"}]
+    assert not y.expands and not y.raids
+
+
+def test_an_early_war_factory_depot_or_tanks_reads_as_a_tank_push_and_brings_rockets():
+    from agent.redalert.intel import EnemyIntel
+    intel = EnemyIntel()
+    intel.first_seen = {"weap": 170}
+    assert intel.tank_push(_view(_t=200.0))
+    late = EnemyIntel()
+    late.first_seen = {"weap": 230, "fix": 300}
+    assert not late.tank_push(_view(_t=310.0))                                       # a normal war factory, late depot
+    late.first_seen["2tnk"] = 320
+    assert late.tank_push(_view(_t=325.0))                                           # tanks before 5:30
+    assert not late.tank_push(_view(_t=C.TANK_PUSH_HOLD_SECONDS))                    # held until 10:00
+    rifles = [{"id": 30 + i, "type": "e1", "x": 20, "y": 20, "hp": 100} for i in range(4)]
+    rockets = [{"id": 40, "type": "e3", "x": 20, "y": 20, "hp": 100}]
+    v = _view(_t=300.0, buildings=_ECON_BASE, units=_harvs(3) + rifles + rockets, economy={"cash": 1500},
+              available_production=["e1", "e3", "harv"])
+    assert not any(o.get("item") == "e3" for o in executor._production_orders(v, Mode.BUILD))   # 4:1 while poor
+    pushed = dataclasses.replace(v, enemy_tank_push=True)
+    assert any(o.get("item") == "e3" for o in executor._production_orders(pushed, Mode.BUILD))  # 2:1 now
+
+
+def test_a_scout_checks_their_army_at_3_20_and_the_advisor_gets_its_make_up():
+    corps = ScoutCorps()
+    rifles = [{"id": 30 + i, "type": "e1", "x": 5, "y": 5, "hp": 100, "idle": True} for i in range(3)]
+    corps.update(_view(_t=60.0, units=rifles))
+    corps._circling.clear()
+    corps.update(_view(_t=C.ARMY_CHECK_SECONDS - 1, units=rifles))
+    assert not corps._army_check
+    corps.update(_view(_t=C.ARMY_CHECK_SECONDS, units=rifles))
+    assert corps._army_check                                                       # a look at their army asked for
+    theirs = [{"id": 80, "type": "2tnk", "x": 31, "y": 30, "hp": 100}, {"id": 81, "type": "e3", "x": 30, "y": 31, "hp": 100}]
+    u = type("U", (), {"id": 30, "cell": (30, 30), "idle": True})()
+    seen = _view(_t=210.0, units=rifles, visible_enemies=theirs)
+    corps._look_saw.add(30)
+    corps._looked(seen, u)
+    assert corps.army_report == {"at": 210, "units": {"2tnk": 1, "e3": 1}, "tanks": 1}
+    agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
+    agent._patrol._army_report = corps.army_report
+    agent._intel.first_seen = {"weap": 160}
+    captured = {}
+    agent._advisor = type("A", (), {"poll": lambda self, view, situation: captured.update(situation)})()
+    agent._poll_advisor(read(_raw(_t=215.0, buildings=BASE)))
+    assert captured["scouting"]["army_report"]["tanks"] == 1
+    assert captured["scouting"]["rules_read"]["tank_push"] is True

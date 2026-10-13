@@ -49,6 +49,8 @@ class ScoutCorps:
         self._report_at: float | None = None          # when the base report last changed
         self._centre_at: float | None = None          # when the second scout reached their base centre
         self._into_centre: str | None = None          # the role walking into their base centre
+        self._army_checked = False                    # the ARMY_CHECK_SECONDS look was asked for
+        self._army_report: dict | None = None         # their army's make-up at the last look that saw it
         self.visit: tuple[int, int] | None = None    # a one-off look (our expansion site)
         self.look: tuple[int, int] | None = None     # where their army masses, before a blind attack
         self._peek_at: dict[str, float] = {}          # role -> when its last look at their exit ended
@@ -131,6 +133,13 @@ class ScoutCorps:
         if seen:
             self._report_at = view.game_seconds
 
+    @property
+    def army_report(self) -> dict | None:
+        """Their army's make-up at the last look that saw it (each enemy
+        fighter in sight then, by type, and when), for the advisor; the
+        first look is asked for at ``ARMY_CHECK_SECONDS``. None until one."""
+        return self._army_report
+
     def backing_off(self, view: View) -> bool:
         """``SCOUT_BACKOFF_LOSSES`` scouts lost within
         ``SCOUT_BACKOFF_WINDOW_SECONDS``: no looks or peeks until
@@ -194,6 +203,10 @@ class ScoutCorps:
             self.roles[role] = uid
             if role in ("left", "right") and view.game_seconds < C.EARLY_SCOUT_END_SECONDS and self.base_seen_at is None:
                 self._start_circuit(view, role)
+        # Their army's make-up once the early circuits are done: is a tank
+        # timing push coming (intel.tank_push)? (army_report, for the advisor)
+        if not self._army_checked and view.game_seconds >= C.ARMY_CHECK_SECONDS and self.request_army_look():
+            self._army_checked = True
         # Mid-game base check: one picket runs the circuit again.
         if (view.game_seconds >= C.MID_PICKET_SECONDS and view.game_seconds - self._last_check >= C.BASE_CHECK_SECONDS
                 and not self._circling):
@@ -664,6 +677,14 @@ class ScoutCorps:
         self._look_leg.pop(u.id, None)
         if u.id in self._look_saw:
             self.base_seen_at = self.army_looked_at = view.game_seconds
+            r2 = C.BASE_REPORT_CELLS ** 2
+            seen: dict = {}
+            for a in view.enemy_units:
+                if a.cell is not None and not a.wreck and a.type not in C.HARVESTER and dist2(a.cell, u.cell) <= r2:
+                    seen[a.type] = seen.get(a.type, 0) + 1
+            if seen or self._army_report is None:
+                self._army_report = {"at": round(view.game_seconds), "units": seen,
+                                     "tanks": sum(n for k, n in seen.items() if k in C.MAIN_BATTLE_TANKS)}
         self._look_saw.discard(u.id)
         return None
 

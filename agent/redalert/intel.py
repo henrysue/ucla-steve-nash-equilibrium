@@ -126,7 +126,8 @@ class EnemyIntel:
             "first_seen": dict(self.first_seen),
             "recent_sightings": self.sightings[-15:],
             "rules_read": {"opening": self.opening(), "rush_suspected": self.suspect(view),
-                           "turtling": self.turtling(view), "passive": view.enemy_passive},
+                           "turtling": self.turtling(view), "passive": view.enemy_passive,
+                           "tank_push": self.tank_push(view)},
         }
 
     def _track_pushes(self, view: View) -> None:
@@ -179,6 +180,23 @@ class EnemyIntel:
         ids = {(a.id if a.id is not None else a.cell) for a in list(view.known_enemy_buildings) + list(view.enemy_buildings)
                if a.type in C.TURRETS and not a.wreck}
         return len(ids) >= C.TURTLE_READ_DEFENSES
+
+    def tank_push(self, view: View) -> bool:
+        """A tank timing push coming: their war factory seen before
+        ``TANK_PUSH_WEAP_SECONDS``, their service depot before
+        ``TANK_PUSH_DEPOT_SECONDS``, or their main battle tanks before
+        ``TANK_PUSH_TANK_SECONDS`` (Yuriko, yuriko-vs-abu: one barracks, two
+        refineries, war factory 2:39, depot 3:20, medium tanks from 4:10 and
+        the push at 4:30-5:30, the game over by 6:45). Holds until
+        ``TANK_PUSH_HOLD_SECONDS``. Answer: rockets (2 riflemen per rocket
+        soldier) and the army first."""
+        if view.game_seconds >= C.TANK_PUSH_HOLD_SECONDS:
+            return False
+        seen = self.first_seen
+        early = lambda kinds, by: any(seen.get(k, 1e9) < by for k in kinds)  # noqa: E731
+        return (early((C.WAR_FACTORY,), C.TANK_PUSH_WEAP_SECONDS)
+                or early((C.SERVICE_DEPOT,), C.TANK_PUSH_DEPOT_SECONDS)
+                or early(C.MAIN_BATTLE_TANKS, C.TANK_PUSH_TANK_SECONDS))
 
     def opening(self) -> str | None:
         return "rush" if self._rush else "economy" if self._economy else None

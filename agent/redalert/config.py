@@ -96,6 +96,13 @@ MAX_QUEUE_DEPTH = 2                # units queued per type at most, trained one 
 # -- production: infantry-heavy army from many barracks ---------------------------------------
 RIFLE_TO_ROCKET_EARLY = 4          # riflemen per rocket soldier while poor
 RIFLE_TO_ROCKET = 3                # ...and once money passes the switch
+TANK_PUSH_RIFLE_TO_ROCKET = 2      # ...and at most this against a tank timing push (intel.tank_push: rockets kill tanks)
+TANK_PUSH_WEAP_SECONDS = 180.0     # a tank timing push read: their war factory seen before this...
+TANK_PUSH_DEPOT_SECONDS = 240.0    # ...or their service depot before this...
+TANK_PUSH_TANK_SECONDS = 330.0     # ...or their main battle tanks before this (Yuriko yuriko-vs-abu: war factory
+                                   # 2:39, depot 3:20, tanks from 4:10, the push 4:30-5:30)
+TANK_PUSH_HOLD_SECONDS = 600.0     # the read holds until this
+ARMY_CHECK_SECONDS = 200.0         # a scout looks at their army now (after the early circuits): its make-up for the advisor
 ROCKET_RATIO_CREDIT_SWITCH = 2500
 BARRACKS_SCHEDULE = ((240.0, 2), (330.0, 3))  # after the service depot (each extra one only speeds the one infantry queue)
 MAX_BARRACKS = 3

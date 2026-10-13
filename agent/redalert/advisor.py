@@ -125,7 +125,14 @@ have seen — buildings_known, first_seen (enemy type -> game second), recent_si
 own read and our scouts alive/lost — and base_report: what our scouts saw in their base in the \
 first 4 minutes (riflemen and every unit type counted by unit, the buildings present by type), \
 with the second scout walking round the back of their base into its centre 30 s after the first \
-(reached_their_base_centre_at). Many riflemen and one refinery there is a rush coming.
+(reached_their_base_centre_at). Many riflemen and one refinery there is a rush coming. \
+army_report is their army's make-up at the last scout look that saw it (a look is sent at ~3:20).
+TANK PUSH tell: a war factory by ~3:00 or a service depot by ~4:00, with two refineries, one \
+barracks and no expansion — or main battle tanks seen before 5:30 — is a tank timing push at \
+~4:30-5:30 (Yuriko's build: medium/heavy tanks plus rocket soldiers, nonstop, the game over by \
+6:45 if it breaks us). rules_read.tank_push says the engine saw it: it trains 2 riflemen per \
+rocket soldier. Call balance "more_army" and expand "wait" until the push is held at our concave, \
+then out-expand them (they take no expansion before ~6:40).
 situation.last_seen_map is what we last saw where, refreshed every moment from our vision (8-cell squares): enemy_army_as_last_seen (each unit where we last saw it, and how old the oldest sighting is), their_base and the squares with enemies, each with seen_ago and scouted_ago, plus the share of the map seen in the last minute and when a scout last saw anything. It is evidence, not the estimate: when enemy.army_value_estimate is far above what was last seen and the last look is fresh, say so — the estimate assumes they built what we didn't see. Predict their posture from it as soon as our scouts reach \
 their base (~1:00-1:40), and say in plan when and from where you expect their first push. Tells:
   rush: one refinery by 1:40, a second barracks or an early war factory, 5+ riflemen in front of \

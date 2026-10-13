@@ -13,6 +13,15 @@ instead of our game plan, so the other seat's reads and answers get tested:
   last launch (``RUSH_WAVE_GROWTH``, or ``RUSH_WAVE_MAX_GAP_SECONDS`` after
   regrouping); a wave pushes until it is down to ``RUSH_REGROUP_SHARE`` of its
   launch value, then everyone regroups at home.
+- ``yuriko``: Yuriko's current build (replays yuriko-vs-abu, Trapped and
+  Sidestep, October 13; she won both by ~6:45): power, one barracks, two
+  refineries, power, war factory (placed 2:39), depot (3:20), power; six
+  riflemen at 0:32-0:42, then nothing until the war factory, a few more
+  riflemen, pillboxes at 2:40 and 3:35; from the depot, medium/heavy tanks
+  nonstop with rocket soldiers and riflemen. The push from
+  ``YURIKO_PUSH_SECONDS`` with ``YURIKO_PUSH_TANKS`` tanks, reinforced until
+  spent (``YURIKO_REGROUP_SHARE``), then the next; a third refinery at 6:40
+  and no expansion.
 - ``turtler``: our build plus a growing ring of turrets (``TURTLE_DEFENSES``
   over time, up to ``TURTLE_MAX_DEFENSES``), the army at home, no raids. It
   only attacks late (``TURTLE_PUSH_SECONDS`` with an edge) or with a huge army
@@ -45,7 +54,7 @@ from . import config as C
 from . import orders
 from .modes import DEFENSIVE, Mode
 
-ARCHETYPES = ("rusher", "turtler", "macro")
+ARCHETYPES = ("rusher", "yuriko", "turtler", "macro")
 DEFAULT_SEAT = 1
 _MARKER_DIR = Path(tempfile.gettempdir()) / "redalert_selfplay"
 _STALE_SECONDS = 3 * 3600
@@ -65,6 +74,21 @@ RUSH_WAVE_MAX_GAP_SECONDS = 300.0   # ...or this long after it with at least the
 RUSH_REGROUP_SHARE = 0.4         # a wave pushes until the army falls below this share of its launch value
 RUSH_INFANTRY_DEPTH = 2
 RUSH_TANK_DEPTH = 2
+
+# yuriko (current, yuriko-vs-abu x2: war factory 2:39, depot 3:20, pillboxes 2:55 and 3:58, tanks from 4:10,
+# the push 4:30-5:30 with 5-6 medium tanks and 8-12 infantry, 9000 queued by 6:00, a third refinery 6:39)
+YURIKO_BUILD_ORDER = ("powr", ("tent", "barr"), "proc", "proc", "powr", "weap", "fix", "powr")
+YURIKO_OPENING_RIFLES = 6           # riflemen before the war factory (then the money waits for it)
+YURIKO_INFANTRY_BEFORE_TANKS = 12   # infantry while the depot isn't up
+YURIKO_PILLBOXES = ((160.0, 1), (215.0, 2))   # (game s, turrets)
+YURIKO_PUSH_SECONDS = 270.0         # the push from 4:30...
+YURIKO_PUSH_TANKS = 3               # ...with at least this many main battle tanks
+YURIKO_REGROUP_SHARE = 0.4          # it pushes until down to this share of its launch value...
+YURIKO_NEXT_GROWTH = 1.3            # ...the next once the army is this x the last launch...
+YURIKO_NEXT_GAP_SECONDS = 150.0     # ...or this long after regrouping
+YURIKO_LATE_REFINERY_SECONDS = 400.0   # a third refinery then (6:39)...
+YURIKO_SECOND_FACTORY_SECONDS = 480.0  # ...and a second war factory (assumed: her games ended by 6:50)
+YURIKO_TANK_DEPTH = 2
 
 # turtler
 TURTLE_DEFENSES = ((150.0, 2), (240.0, 3), (330.0, 4), (420.0, 5), (510.0, 6), (600.0, 7), (720.0, 8))  # (game s, turrets)
@@ -238,6 +262,115 @@ class Rusher(Archetype):
         return out
 
 
+class Yuriko(Archetype):
+    name = "yuriko"
+    expands = False
+    raids = False
+    skip_confirm = True
+
+    def __init__(self) -> None:
+        self._launch_value: float | None = None
+        self._last_launch = 0.0
+        self._regrouped_at: float | None = None
+
+    def mode(self, view, cheese_since, policy: Mode = Mode.BUILD) -> Mode | None:
+        """The push from ``YURIKO_PUSH_SECONDS`` once ``YURIKO_PUSH_TANKS``
+        main battle tanks stand, reinforced until down to
+        ``YURIKO_REGROUP_SHARE`` of its launch value; the next at
+        ``YURIKO_NEXT_GROWTH`` x the last launch or ``YURIKO_NEXT_GAP_SECONDS``
+        after regrouping. A defend/retreat call stands."""
+        from .brain import _defend
+
+        if not view.has_building(C.CONSTRUCTION_YARD) or not view.has_building(C.BARRACKS):
+            return None
+        if cheese_since is not None:
+            return _defend(view)
+        if policy in DEFENSIVE:
+            return policy
+        t, army = view.game_seconds, view.army_value
+        if self._launch_value is not None:
+            if army >= YURIKO_REGROUP_SHARE * self._launch_value:
+                return Mode.ALL_IN
+            self._launch_value, self._regrouped_at = None, t
+            return Mode.BUILD
+        tanks = len(view.units_of(C.MAIN_BATTLE_TANKS))
+        if self._regrouped_at is None:
+            go = t >= YURIKO_PUSH_SECONDS and tanks >= YURIKO_PUSH_TANKS
+        else:
+            since = t - self._regrouped_at
+            go = army >= YURIKO_NEXT_GROWTH * self._last_launch or (since >= YURIKO_NEXT_GAP_SECONDS
+                                                                    and army >= self._last_launch)
+        if go:
+            self._launch_value = self._last_launch = army
+            return Mode.ALL_IN
+        return Mode.BUILD
+
+    def build(self, view, depleted=frozenset()) -> list[dict]:
+        """Her build order; a third refinery at 6:40, a second war factory later."""
+        from . import buildplan
+
+        step = buildplan.walk_build_order(view, YURIKO_BUILD_ORDER)
+        if step:
+            return step
+        money, t = view.cash + view.ore, view.game_seconds
+        late = []
+        if t >= YURIKO_LATE_REFINERY_SECONDS:
+            late.append(("proc", 3))
+        if t >= YURIKO_SECOND_FACTORY_SECONDS:
+            late.append(("weap", 2))
+        for item, want in late:
+            avail = buildplan._available(view, item)
+            if (avail and money >= C.KNOWN_COSTS.get(item, 1000) and not view.queued_count(avail)
+                    and buildplan._count_built_and_queued(view, (item,)) < want):
+                return [orders.build(avail)]
+        return []
+
+    def defense(self, view, under_attack: bool) -> list[dict] | None:
+        """Pillboxes on her schedule (the usual turrets while attacked)."""
+        from . import buildplan
+
+        if under_attack:
+            return None
+        defense = buildplan._available(view, C.BUILD_TURRETS)
+        if defense is None or any(view.queued_count(d) for d in C.TURRETS) or any(
+                p.get("ready") and str(p.get("item") or "").lower() in C.TURRETS for p in view.production):
+            return []
+        have = sum(1 for b in view.buildings if b.type in C.TURRETS and not b.wreck)
+        if have < _scheduled(YURIKO_PILLBOXES, view.game_seconds, 0):
+            return [orders.build(defense)]
+        return []
+
+    def production(self, view, mode: Mode) -> list[dict]:
+        """Six riflemen, then nothing until the war factory; a few more
+        riflemen until the depot; then tanks nonstop with rocket soldiers and
+        riflemen alternating (harvesters come first, as ours do)."""
+        out = []
+        rifle = C.resolve((C.RIFLE,), view.available)
+        rocket = C.resolve((C.ROCKET,), view.available)
+        tank = C.resolve(C.TANK_PREFERENCE, view.available)
+        rax, weap = view.has_building(C.BARRACKS), view.has_building(C.WAR_FACTORY)
+        infantry = len(view.units_of(C.RIFLE)) + len(view.units_of(C.ROCKET))
+        queued_inf = (view.queued_count(rifle) if rifle else 0) + (view.queued_count(rocket) if rocket else 0)
+        if not rax:
+            return out
+        if not weap:
+            if rifle and len(view.units_of(C.RIFLE)) + view.queued_count(rifle) < YURIKO_OPENING_RIFLES:
+                out.append(orders.train(rifle, count=1))
+            return out
+        if not view.has_building(C.SERVICE_DEPOT):
+            if rifle and infantry + queued_inf < YURIKO_INFANTRY_BEFORE_TANKS and view.queued_count(rifle) < 1:
+                out.append(orders.train(rifle, count=1))
+            return out
+        if tank and view.queued_count(tank) < YURIKO_TANK_DEPTH:
+            out.append(orders.train(tank, count=1))
+        if queued_inf < 1:
+            rockets, rifles = len(view.units_of(C.ROCKET)), len(view.units_of(C.RIFLE))
+            pick = rocket if rocket and rockets <= rifles else rifle
+            if pick:
+                out.append(orders.train(pick, count=1))
+        return out
+
+
 class Turtler(_Pusher):
     name = "turtler"
     raids = False
@@ -308,7 +441,7 @@ class Macro(_Pusher):
         return Advice(made_at=view.game_seconds, enemy_style="standard", balance="more_economy", expand="now")
 
 
-_BY_NAME = {"rusher": Rusher, "turtler": Turtler, "macro": Macro}
+_BY_NAME = {"rusher": Rusher, "yuriko": Yuriko, "turtler": Turtler, "macro": Macro}
 
 
 def _scheduled(schedule, t: float, start: int) -> int:

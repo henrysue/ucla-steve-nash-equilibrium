@@ -120,7 +120,12 @@ with the second war factory at the depot and a third once two expansions
 stand: we out-build it) (the strongest offered, never
 light tanks once better ones exist), riflemen and rockets 3:1 shifting to 1:1
 as their armor grows — judged from the enemy units our scouts saw in the last
-3 minutes, not just those in sight. Siege units once enemy turrets are known; against
+3 minutes, not just those in sight — and at most 2:1 against a tank timing
+push (intel.tank_push: their war factory seen before 3:00, their depot before
+4:00 or their main battle tanks before 5:30, held until 10:00; Yuriko's build,
+yuriko-vs-abu, pushes 5-6 medium tanks at 4:30-5:30). A scout looks at their
+army at 3:20 (after the early circuits); what it sees goes to the advisor as
+scouting.army_report, with rules_read.tank_push. Siege units once enemy turrets are known; against
 a turtle about one per turret (3–6) before any attack.
 
 ### 3. Information
@@ -509,6 +514,12 @@ logged placements)
     factory ~11:30, no expansion; nonstop riflemen then main battle tanks; waves from ~3:00 (18+ fighters),
     each later one once the army is 1.4x the last launch (2.5-5 min after regrouping), pushing until
     down to 40% of its launch value.
+  - `RA_SPARRING=yuriko`: Yuriko's current build (yuriko-vs-abu x2, won both by ~6:45): power, one
+    barracks, two refineries, power, war factory, depot, power; six riflemen then nothing until the
+    war factory, a few more riflemen, pillboxes at 2:40 and 3:35; from the depot tanks nonstop with
+    rocket soldiers and riflemen alternating; the push from 4:30 with 3+ tanks, reinforced until down to
+    40% of its launch value, the next at 1.3x it (or 2:30 later); a third refinery at 6:40, a second war
+    factory at 8:00 (assumed), no expansion.
   - `RA_SPARRING=turtler`: our build plus a growing turret ring (2 at 2:30 up to 8 by 12:00), army at
     home, no raids; attacks only from 15:00 with a 1.3 edge, or with an 18000 army — or at once when the
     rules see a 2x edge (it punishes a blunder; the macro too).

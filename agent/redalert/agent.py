@@ -170,7 +170,8 @@ class RedAlertAgent:
         self._intel.update(view)
         view = dataclasses.replace(view, enemy_turtling=self._intel.turtling(view),
                                    enemy_mix=self._intel.recent_mix(view, C.ENEMY_MIX_SECONDS),
-                                   enemy_passive=self._passive(view))
+                                   enemy_passive=self._passive(view),
+                                   enemy_tank_push=self._intel.tank_push(view))
         self._patrol.update(view, taken={*self._raid.unit_ids, *self._garrison.unit_ids})
         if self._patrol.alarm(view):
             self._intel.scouts_lost(view)
@@ -618,6 +619,7 @@ class RedAlertAgent:
                 "last_seen_map": self._lastseen.summary(view),
                 "scouting": {**self._intel.report(view),
                              "base_report": self._patrol.base_report,
+                             "army_report": self._patrol.army_report,
                              "scouts_alive": dict(self._patrol.roles),
                              "scouts_lost": [{"t": round(t), "cell": list(c)} for t, c, _ in self._patrol._lost]},
                 "intel": {"enemy_opening": self._intel.opening(),

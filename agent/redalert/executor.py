@@ -323,6 +323,8 @@ def _production_orders(view: View, mode: Mode, *, sparring=None, threat: bool = 
                      and spare < unit_cost(tank) + unit_cost(rifle or "e1"))
     if has_barracks and rifle and spare >= unit_cost(rifle) and not hold_infantry:
         ratio = C.RIFLE_TO_ROCKET if funds(view) >= C.ROCKET_RATIO_CREDIT_SWITCH else C.RIFLE_TO_ROCKET_EARLY
+        if view.enemy_tank_push:                     # their tanks are coming: rockets kill tanks
+            ratio = min(ratio, C.TANK_PUSH_RIFLE_TO_ROCKET)
         # The counter: more rockets as their army turns to armor (a rifleman
         # does 125/s to a tank, a rocket soldier 2500/s).
         theirs = list(view.enemy_mix) or strength.enemy_kinds(view)   # the last few minutes' sightings
