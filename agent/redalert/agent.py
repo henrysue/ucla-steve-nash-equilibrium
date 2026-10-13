@@ -274,7 +274,12 @@ class RedAlertAgent:
         squads = {*self._patrol.unit_ids, *self._raid.unit_ids, *self._garrison.unit_ids}
         micro_orders, micro_ids = micro.plan(view, self._mode, frozenset(squads), scout.choke_cell(view))
         # Their main base razed: as many search cells as fanned-out groups.
-        k = max(C.HUNT_GROUPS, len(view.combat_units) // C.FAN_GROUP_UNITS) if hunting else C.HUNT_GROUPS
+        # Their base razed (hunting) — or simply beaten (overwhelming, well
+        # ahead on trades) with a handful of buildings left: the army splits
+        # over them instead of walking to one at a time (a4a78f76: 4-8 known,
+        # their army 0-200 against our 21000-29000, no hunt for 90 s).
+        finishing = self._finishing(view, hunting)
+        k = max(C.HUNT_GROUPS, len(view.combat_units) // C.FAN_GROUP_UNITS) if finishing else C.HUNT_GROUPS
         hunt = self._hunter.targets(view, k) if self._mode is Mode.ALL_IN else []
         sell = buildplan.sell_for_income(view)
         if sell is not None and view.game_seconds - self._sold_at >= C.SELL_FOR_INCOME_SECONDS:
@@ -302,7 +307,7 @@ class RedAlertAgent:
             threat=threat,
             probe=self._probe_point(view),
             warning=self._intel.suspect(view),
-            fan=hunting and brain._overwhelming(view),   # (their army alive: the army stays together)
+            fan=finishing,                               # (their army alive: the army stays together)
             attacked=attacked,
             responding=self._responding,
             home_memory=self._home_memory,
@@ -764,10 +769,15 @@ class RedAlertAgent:
         if hunting or view.game_seconds < self._ignore_advice_until:
             return dataclasses.replace(advice, army_target=None)
         if self._mode is Mode.ALL_IN:
-            target = self._latched_target or tuple(advice.army_target)
+            target = (executor._advised_target(view, dataclasses.replace(advice, army_target=self._latched_target))
+                      if self._latched_target else None) or executor._advised_target(view, advice)                 or tuple(advice.army_target)
             army = [u.cell for u in view.combat_units if u.cell is not None
                     and u.id not in {*self._patrol.unit_ids, *self._raid.unit_ids, *self._garrison.unit_ids}]
-            if army and dist2(_army_cell(army), target) <= C.ADVICE_TARGET_REACHED_CELLS ** 2:
+            # Reached when the front half of the army is there: the whole army's
+            # centre, with reinforcements walking up from home, never got
+            # within 6 cells (a4a78f76: 12 cells behind the front).
+            front = sorted(army, key=lambda c: dist2(c, target))[:max(1, len(army) // 2)]
+            if front and dist2(_army_cell(front), target) <= C.ADVICE_TARGET_REACHED_CELLS ** 2:
                 self._latched_target = None
                 self._ignore_advice_until = view.game_seconds + C.ADVICE_REACHED_IGNORE_SECONDS
                 return dataclasses.replace(advice, army_target=None)
@@ -869,6 +879,15 @@ class RedAlertAgent:
         self._believed_mark = (spent, view.kills_cost, view.game_seconds)
         self._believed = max(self._believed, floor, 0.0)
         return self._believed
+
+    @staticmethod
+    def _finishing(view, hunting: bool) -> bool:
+        """The army splits over their last buildings: overwhelming, and their
+        main base razed (hunting) or simply beaten with at most
+        ``FAN_MAX_KNOWN_BUILDINGS`` of theirs known."""
+        known = [b for b in list(view.enemy_buildings) + list(view.known_enemy_buildings) if not b.wreck]
+        return brain._overwhelming(view) and (
+            hunting or (brain.beaten(view) and len(known) <= C.FAN_MAX_KNOWN_BUILDINGS))
 
     def _passive(self, view) -> bool:
         """The passive read (intel.passive) — ended at once when a push builds:

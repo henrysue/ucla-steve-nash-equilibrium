@@ -963,14 +963,19 @@ def _advised_target(view: View, advice) -> tuple[int, int] | None:
     """The advisor's army target, only while a known enemy (visible, or a
     remembered building) stands within ``ADVICE_TARGET_SUPPORT_CELLS`` of it:
     a stale pick must not hold the army. (Match b7fcbd4e: it named the razed
-    enemy main for 5 minutes while their last building stood 10 cells away.)"""
+    enemy main for 5 minutes while their last building stood 10 cells away.)
+    The cell returned is that enemy's — a building first, the nearest to the
+    pick — not the pick itself: an attack-move to an empty spot stops there
+    with the building out of range (a4a78f76: the army stood at (74, 53), the
+    middle of their razed base, 9 cells from their radar dome, until the end)."""
     cell = getattr(advice, "army_target", None)
     if cell is None:
         return None
     r2 = C.ADVICE_TARGET_SUPPORT_CELLS ** 2
-    known = list(view.enemy_buildings) + list(view.enemy_units) + list(view.known_enemy_buildings)
-    if any(a.cell is not None and not a.wreck and dist2(a.cell, cell) <= r2 for a in known):
-        return tuple(cell)
+    for group in (list(view.enemy_buildings) + list(view.known_enemy_buildings), list(view.enemy_units)):
+        near = [a.cell for a in group if a.cell is not None and not a.wreck and dist2(a.cell, cell) <= r2]
+        if near:
+            return tuple(min(near, key=lambda c: dist2(c, cell)))
     return None
 
 

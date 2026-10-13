@@ -2721,10 +2721,10 @@ def test_a_stale_advisor_target_does_not_hold_the_army_off_the_last_building():
     o = executor._army_orders(_view(buildings=BASE, units=units, visible_enemy_buildings=dome),
                               Mode.ALL_IN, advice=stale)
     assert o[0]["to"] == [13, 40]
-    fresh = types.SimpleNamespace(army_target=(15, 40))                              # beside a known building
+    fresh = types.SimpleNamespace(army_target=(15, 40))                              # beside a known building:
     o = executor._army_orders(_view(buildings=BASE, units=units, visible_enemy_buildings=dome),
                               Mode.ALL_IN, advice=fresh)
-    assert o[0]["to"] == [15, 40]
+    assert o[-1]["to"] == [13, 40]                                                   # onto the building itself (a4a78f76)
 
 
 @pytest.mark.usefixtures("visible_only")
@@ -5876,9 +5876,13 @@ def test_a_reached_advisor_target_hands_the_attack_back_to_the_rules():
     pick = dataclasses.replace(base_advice, army_target=(40, 53))
     v = _view(_t=550.0, units=far, visible_enemy_buildings=tower)
     assert agent._army_advice(pick, False, v).army_target == (40, 53)          # on its way: the advisor's point
+    assert executor._advised_target(v, pick) == (31, 51)                       # ...which leads onto the tower by it
     w = _view(_t=560.0, units=there, visible_enemy_buildings=tower)
-    assert agent._army_advice(pick, False, w).army_target is None              # reached: the rules lead on
-    assert agent._army_advice(pick, False, _view(_t=575.0, units=there, visible_enemy_buildings=tower)).army_target is None
+    assert agent._army_advice(pick, False, w).army_target == (40, 53)          # at the spot, 9 from the tower: go on
+    at_tower = [dict(u, x=33, y=51) for u in far]
+    w2 = _view(_t=570.0, units=at_tower, visible_enemy_buildings=tower)
+    assert agent._army_advice(pick, False, w2).army_target is None             # at the tower: the rules lead on
+    assert agent._army_advice(pick, False, _view(_t=585.0, units=at_tower, visible_enemy_buildings=tower)).army_target is None
 
 
 # -- the audit: sticky state releases ---------------------------------------------------------------
@@ -6011,3 +6015,20 @@ def test_a_squad_leads_far_attack_order_marches_fighting():
     near = [dict(u, x=14, y=37) for u in _raid_army()]
     vn = _view(_t=300.0, units=near, visible_enemies=[_ENEMY_HARV])
     assert squadlead.squad_orders(vn, [100, 101], d, None) == [{"cmd": "attack", "units": [100, 101], "target": 90}]
+
+
+def test_beaten_with_a_handful_of_buildings_left_the_army_fans_out():
+    """a4a78f76: their army 0-200 against our 21000-29000, 4-8 buildings
+    known, no hunt (it waits for 3 or fewer) — the army walked to one spot."""
+    agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
+    tanks = [{"id": 30 + i, "type": "3tnk", "x": 30, "y": 30, "hp": 100} for i in range(20)]
+    blds = [{"id": 90 + i, "type": "powr", "x": 6 + 14 * i, "y": 36, "hp": 100} for i in range(4)]
+    v = dataclasses.replace(_view(_t=1000.0, buildings=BASE, units=tanks, visible_enemy_buildings=blds,
+                                  military={"army_value": 23000, "kills_cost": 60000, "deaths_cost": 20000}),
+                            enemy_base_scouted=True)
+    assert brain.beaten(v) and agent._finishing(v, hunting=False)             # not "hunting", yet finishing
+    o = executor._army_orders(v, Mode.ALL_IN, fan=True, hunt_points=[(10, 10)])
+    assert len({tuple(x["to"]) for x in o}) >= 2                               # split over their buildings (a squad each)
+    many = [{"id": 200 + i, "type": "powr", "x": 2 + 3 * i, "y": 44, "hp": 100} for i in range(C.FAN_MAX_KNOWN_BUILDINGS + 1)]
+    big = dataclasses.replace(v, enemy_buildings=read(_raw(visible_enemy_buildings=many)).enemy_buildings)
+    assert not agent._finishing(big, hunting=False)                            # a whole base still stands: together

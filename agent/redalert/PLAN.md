@@ -265,7 +265,10 @@ An attack goes on until the retreat rule ends it. No mass/attack flip within
   (from our concave the corridor is short and every lane looks long). A new
   route from where it stands when the target moves 12+ cells or the route runs out short of it (at most every
   15 s); the advisor's target stays for the attack while anything of theirs
-  stands by it — until the army reaches it, when the rules lead on to their
+  stands by it, and it leads onto the enemy building (or unit) nearest the
+  spot named, not the spot itself (an attack-move to an empty spot stops
+  there: a4a78f76 stood in their razed base 9 cells from their dome) — until
+  the front half of the army reaches it, when the rules lead on to their
   buildings for 30 s (d1615ac6 stood 60 s on a reached point by their flame
   towers, 10150 against 2350, while they rebuilt). Only within 15 cells of the target does it spread into three
   groups in a semi-concave, and only to points it walks to without a detour.
@@ -329,8 +332,9 @@ has hysteresis:
 ### 7. The end
 
 Protect a real lead in the last 2 minutes; level or behind in the last 3,
-attack regardless; once their base is razed, fan out and hunt every last
-building.
+attack regardless; once their base is razed — or they are simply beaten
+(overwhelming odds, well ahead on trades) with 10 or fewer buildings known —
+fan out and hunt every last building.
 
 ## Platform limits
 
