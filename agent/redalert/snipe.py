@@ -8,6 +8,9 @@ the tiebreak points within reach (a harvester is 1100). From
 Rangers or light tanks (``SNIPE_UNIT_TYPES``, the first offered; none for the
 Soviets) out of the main army. A run:
 
+With neither (the Soviets) it takes ``SNIPE_HEAVY_UNITS`` heavy tanks from
+the army: slower, but they kill a harvester fast and survive a pillbox.
+
 - **go**: from ``SNIPE_FROM_SECONDS``, while their push is in our half
   (scout.incoming_push: their army is away) or ``SNIPE_EVERY_SECONDS`` after
   the last run, to the edge of their main ore field out of their turrets'
@@ -54,20 +57,39 @@ class HarvesterSnipe:
         self.unit_ids = [i for i in self.unit_ids if i in alive]
         if view.game_seconds < C.SNIPE_TRAIN_FROM_SECONDS:
             return
-        main_tank = C.resolve(C.TANK_PREFERENCE, view.available)
-        kinds = [k for k in C.SNIPE_UNIT_TYPES if k != main_tank]
+        kinds, cap = self._kinds(view)
         for u in view.combat_units:
-            if len(self.unit_ids) >= C.SNIPE_MAX_UNITS:
+            if len(self.unit_ids) >= cap:
                 break
             if (u.id is not None and u.type in kinds and u.id not in self.unit_ids
                     and u.id not in taken and self.state == "gather"):
                 self.unit_ids.append(u.id)
 
+    @staticmethod
+    def _kinds(view: View) -> tuple[list, int]:
+        """(the unit types the squad takes, how many): Rangers or light tanks
+        that aren't the army's main tank, up to ``SNIPE_MAX_UNITS``; with
+        neither (the Soviets) ``SNIPE_HEAVY_UNITS`` heavy tanks."""
+        main_tank = C.resolve(C.TANK_PREFERENCE, view.available)
+        light = [k for k in C.SNIPE_UNIT_TYPES if k != main_tank and k in view.available]
+        if light:
+            return light, C.SNIPE_MAX_UNITS
+        if main_tank == "3tnk":
+            return ["3tnk"], C.SNIPE_HEAVY_UNITS
+        return [k for k in C.SNIPE_UNIT_TYPES if k != main_tank], C.SNIPE_MAX_UNITS
+
+    def _wanted(self, view: View) -> int:
+        """Units a run needs: ``SNIPE_UNITS``, or ``SNIPE_HEAVY_UNITS`` of heavy tanks."""
+        kinds, _ = self._kinds(view)
+        return C.SNIPE_HEAVY_UNITS if kinds == ["3tnk"] else C.SNIPE_UNITS
+
     def production(self, view: View, defending: bool) -> list[dict]:
         """One Ranger / light tank at a time while the squad is short (not
         while defending, nor with a harvester or war factory missing)."""
-        main_tank = C.resolve(C.TANK_PREFERENCE, view.available)
-        kind = C.resolve(tuple(k for k in C.SNIPE_UNIT_TYPES if k != main_tank), view.available)
+        kinds, _ = self._kinds(view)
+        if kinds == ["3tnk"]:
+            return []                          # heavy tanks come from the army's own production
+        kind = C.resolve(tuple(kinds), view.available)
         if (kind is None or defending or view.game_seconds < C.SNIPE_TRAIN_FROM_SECONDS
                 or not view.has_building(C.WAR_FACTORY) or len(self.unit_ids) >= C.SNIPE_UNITS
                 or view.queued_count(kind) or view.cash + view.ore < C.FUNDS_LOW):
@@ -124,7 +146,7 @@ class HarvesterSnipe:
         home = view.base_center
         if self.state == "gather":
             due = push_on or t - self._last_run_end >= C.SNIPE_EVERY_SECONDS
-            if len(members) >= C.SNIPE_UNITS and t >= C.SNIPE_FROM_SECONDS and due:
+            if len(members) >= self._wanted(view) and t >= C.SNIPE_FROM_SECONDS and due:
                 spot = self.target_spot(view)
                 if spot is not None:
                     route = self.route(view, centre, spot)

@@ -4590,12 +4590,16 @@ def test_the_army_fights_a_push_at_the_main_base_and_readies_for_one_at_an_expan
 
 
 def test_a_maxed_army_pushes_at_a_small_edge():
-    big = _view(_t=736.0, buildings=BASE, military={"army_value": 18500, "visible_enemy_value": 15000})
+    big = _view(_t=700.0, buildings=BASE, military={"army_value": 18500, "visible_enemy_value": 15000})
     assert brain._attack_threshold(big) == C.BIG_ARMY_EDGE
     assert brain.choose_mode(dataclasses.replace(big, enemy_army_peak=15000.0), cheese_since=None) is Mode.ALL_IN
     # At parity it holds: the defender's concave and turrets win (d1615ac6: 25150 into 24700 lost 6800 for 3950).
-    even = _view(_t=736.0, buildings=BASE, military={"army_value": 16200, "visible_enemy_value": 15000})
+    even = _view(_t=700.0, buildings=BASE, military={"army_value": 16200, "visible_enemy_value": 15000})
     assert brain.choose_mode(dataclasses.replace(even, enemy_army_peak=15000.0), cheese_since=None) is Mode.BUILD
+    # ...until 12:00: maxed armies trade (4e9828e1 stared at each other, 35k each, for 20 minutes).
+    late = dataclasses.replace(even, game_seconds=C.LATE_PARITY_SECONDS, enemy_army_peak=15000.0)
+    assert brain._attack_threshold(late) == C.LATE_PARITY_EDGE
+    assert brain.choose_mode(late, cheese_since=None) is Mode.ALL_IN
 
 
 def test_an_attack_winning_its_trades_keeps_going():
@@ -5995,8 +5999,8 @@ def test_a_strike_ends_with_its_expansion_unless_the_usual_bar_says_go_on(monkey
     v = lambda t, blds: dataclasses.replace(_view(_t=t, buildings=BASE, units=tanks, visible_enemy_buildings=blds,  # noqa: E731
                                                   military={"army_value": 16100}),
                                             enemy_army_peak=16000.0, enemy_base_scouted=True)
-    assert c.decide(v(700.0, exp)) is Mode.ALL_IN and c._strike_cell == (14, 43)
-    assert c.decide(v(720.0, [])) is Mode.RETREAT                              # it fell: home, not on into their main
+    assert c.decide(v(650.0, exp)) is Mode.ALL_IN and c._strike_cell == (14, 43)
+    assert c.decide(v(670.0, [])) is Mode.RETREAT                              # it fell: home, not on into their main
 
 
 def test_a_strike_below_the_retreat_line_keeps_marching_until_it_meets_them(monkeypatch):
@@ -6651,3 +6655,45 @@ def test_meeting_their_army_in_the_open_we_engage_in_a_concave_not_a_blob():
         assert executor._concave_engage(walled, fighters, v.enemy_units) is None
     finally:
         terrain_mod.choke_zone = real
+
+
+def test_raiders_clear_the_expansion_building_by_building_and_engage_whatever_is_in_range():
+    """4e9828e1: the raiders killed the refinery and stood idle beside the
+    yard (their target a cell, their stance "defend")."""
+    from agent.redalert.raid import _target
+    raiders = [{"id": 60 + i, "type": "e3", "x": 8, "y": 40, "hp": 100} for i in range(6)]
+    exp = [{"id": 85, "type": "proc", "x": 9, "y": 43, "hp": 100}, {"id": 86, "type": "fact", "x": 5, "y": 44, "hp": 100},
+           {"id": 87, "type": "powr", "x": 11, "y": 46, "hp": 100}]
+    v = _view(_t=600.0, units=raiders, visible_enemy_buildings=exp)            # their main (40, 40): 26+ cells away
+    members = list(v.combat_units)
+    assert _target(v, members) == 85                                           # the refinery first, by id
+    gone = _view(_t=610.0, units=raiders, visible_enemy_buildings=exp[1:])
+    assert _target(gone, list(gone.combat_units)) == 86                        # then the yard
+    last = _view(_t=620.0, units=raiders, visible_enemy_buildings=exp[2:])
+    assert _target(last, list(last.combat_units)) == 87                        # then the rest
+    out = executor.stance_orders(_view(units=[dict(r, stance="defend") for r in raiders]), Mode.BUILD, set(),
+                                 pushers={60, 61, 62, 63, 64, 65})
+    assert out == [{"cmd": "set_stance", "units": [60, 61, 62, 63, 64, 65], "stance": "attack_anything"}]
+
+
+def test_late_raids_are_bigger_and_an_outmatched_one_marks_its_target_at_once():
+    from agent.redalert.raid import Raid
+    army = [{"id": 100 + i, "type": "e3", "x": 10, "y": 10, "hp": 100} for i in range(60)]
+    exp = [{"id": 85, "type": "proc", "x": 14, "y": 43, "hp": 100}]
+    r = Raid()
+    r._form(_view(_t=400.0, units=army, visible_enemy_buildings=exp), None)
+    early = len(r.unit_ids)
+    r2 = Raid()
+    r2._form(_view(_t=C.RAID_LATE_SECONDS, units=army, visible_enemy_buildings=exp), None)
+    assert len(r2.unit_ids) == min(C.RAID_SQUAD_MAX_LATE, int(C.RAID_LATE_SHARE * 60)) > early
+    assert r2._aim == (14, 43)                                                 # aimed from the start
+
+
+def test_as_the_soviets_the_snipe_takes_three_heavy_tanks():
+    from agent.redalert.snipe import HarvesterSnipe
+    sn = HarvesterSnipe()
+    heavies = [{"id": 70 + i, "type": "3tnk", "x": 12, "y": 12, "hp": 100} for i in range(6)]
+    v = _view(_t=320.0, units=heavies, available_production=["3tnk", "e1"])
+    sn.update(v)
+    assert len(sn.unit_ids) == C.SNIPE_HEAVY_UNITS                              # three, not the whole army
+    assert sn.production(v, defending=False) == []                              # the army trains heavy tanks anyway

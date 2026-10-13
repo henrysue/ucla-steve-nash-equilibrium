@@ -234,6 +234,8 @@ ATTACK_ARMY_EDGE = 1.3             # our army / estimated enemy army (brain.enem
 ESCALATED_ARMY_EDGE = 1.15         # ...lowered after ESCALATE_AFTER_SECONDS (1.0 attacked at parity and retreated within seconds: ef66403c)...
 CATCH_UP_ARMY_EDGE = 1.0           # ...and to this when behind at the end
 BIG_ARMY_VALUE = 15000             # an army this big pushes at...
+LATE_PARITY_SECONDS = 720.0        # from 12:00 a big army (BIG_ARMY_VALUE) attacks at even odds: maxed armies
+LATE_PARITY_EDGE = 1.0             # trade instead of staring at each other (4e9828e1: 20 minutes, 35k each, no attack)
 BIG_ARMY_EDGE = 1.2                # ...this edge (c7a982ac: two 20k+ armies idled 10 minutes at ~1.1; but
                                    # d1615ac6 attacked 25150 into 24700 at 1.05 and lost 6800 for 3950: at
                                    # parity the defender's concave, turrets and short reinforcement win)
@@ -377,6 +379,8 @@ SNIPE_TIMEOUT_SECONDS = 120.0      # ...this long in all...
 SNIPE_LOSS_SHARE = 0.5             # ...and home once it has lost this share of its units
 SNIPE_THREAT_CELLS = 7             # ...or their fighters and turrets this close outmatch it
 SNIPE_HOME_CELLS = 10              # back home this close to the base centre
+SNIPE_HEAVY_UNITS = 3              # with neither Rangers nor light tanks (the Soviets): this many heavy tanks
+                                   # from the army (they kill a harvester fast and survive a pillbox)
 RAID_START_SECONDS = 150.0
 RAID_SQUAD_SIZE = 4
 RAID_SQUAD_SIZE_MACRO = 6          # against a macro-heavy enemy (the advisor's read): a bigger party...
@@ -384,7 +388,12 @@ RAID_FLANK_MIN_CELLS = 20          # ...that goes round the flank when its targe
 RAID_MIN_SIZE = 3
 RAID_UNIT_TYPES = ("e3", "e1", "jeep", "ftrk", "1tnk")   # rockets first: harvesters are armored
 RAID_COOLDOWN_SECONDS = 30.0
-RAID_SQUAD_MAX = 8                 # the squad grows with the army: one per RAID_ARMY_SHARE fighters, up to this
+RAID_SQUAD_MAX = 8                 # the squad grows with the army: one per RAID_ARMY_SHARE fighters, up to this...
+RAID_LATE_SECONDS = 600.0          # ...from 10:00 bigger, more decisive squads:
+RAID_LATE_SHARE = 0.25             # ...a quarter of our fighters...
+RAID_SQUAD_MAX_LATE = 16           # ...up to this many (all squads still within RAID_MAX_ARMY_SHARE)
+RAID_CLEAR_CELLS = 10              # a squad this close to an expansion clears it: its buildings by id, the
+                                   # refinery first, then the yard, production, the rest (not turrets for infantry)
 RAID_ARMY_SHARE = 6
 # Healthy macro (HEALTHY_HARVESTERS+ harvesters, not outgunned): the longer the
 # game goes, the more raid squads hunt for an edge instead of a big army idling.

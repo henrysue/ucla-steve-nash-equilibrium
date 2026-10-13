@@ -323,7 +323,8 @@ class RedAlertAgent:
             responding=self._responding,
             home_memory=self._home_memory,
         ) + self._unstick.orders(view, set(self._garrison.unit_ids)) + executor.stance_orders(
-            view, self._mode, set(self._garrison.unit_ids), getattr(advice, "army_stance", None))
+            view, self._mode, set(self._garrison.unit_ids), getattr(advice, "army_stance", None),
+            pushers={*self._raid.unit_ids, *self._snipe.unit_ids})
         now = self._clock()
         batch_orders = [
             o for o in self._steady(planned, view, now)

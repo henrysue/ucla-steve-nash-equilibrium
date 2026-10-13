@@ -338,6 +338,8 @@ def _attack_threshold(view: View) -> float:
     tiebreak requires acting), higher early (don't throw away the deathball)."""
     if _catching_up(view):
         return C.CATCH_UP_ARMY_EDGE      # behind at the end: a coin flip beats a sure loss
+    if view.army_value >= C.BIG_ARMY_VALUE and view.game_seconds >= C.LATE_PARITY_SECONDS:
+        return C.LATE_PARITY_EDGE        # late and maxed: trade (the estimate reads them at our velocity)
     if view.army_value >= C.BIG_ARMY_VALUE:
         return C.BIG_ARMY_EDGE           # a maxed army idling wastes its edge; production refills it
     if view.game_seconds >= C.ESCALATE_AFTER_SECONDS:

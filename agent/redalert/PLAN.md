@@ -230,7 +230,9 @@ in the last minute) as evidence beside the estimate; it never changes it.
 5. **RETREAT**: our attack is losing (odds under 0.8, or losing the trades
    after the first 15 s).
 6. **ATTACK** when the odds against their army plus the turrets at the target
-   reach the bar: 1.3, 1.15 after 7:00, 1.2 with a 15000+ army (at parity the
+   reach the bar: 1.3, 1.15 after 7:00, 1.2 with a 15000+ army, 1.0 with one
+   from 12:00 (4e9828e1: two 35k armies stared at each other for 20 minutes
+   on estimates of each other's velocity) (at parity the
    defender wins: d1615ac6 lost 6800 for 3950 at 1.05), 1.0 behind
    at the end. Trading up is no reason to go in (9cada749 went in at 1.06
    after trading 15250 for 10800, was out in 31 s, and their next push took
@@ -343,7 +345,8 @@ An attack goes on until the retreat rule ends it. No mass/attack flip within
   Stragglers wait to go 6 together; no flank before 10:00 unless far ahead.
   Scouts and raid squads walk in legs too.
 - **Harvester snipe** (snipe.py): from 5:00 we keep 4-6 Rangers (else light
-  tanks that aren't our main tank; none for the Soviets) out of the army.
+  tanks that aren't our main tank) out of the army — as the Soviets, with
+  neither, 3 heavy tanks from the army.
   From 5:30, while their push is in our half or 2:30 after the last run,
   they slip by plain moves round their sight lines (the chokes, the front of
   their base, their turrets: the scouts' avoid zone; failing a way round,
@@ -352,6 +355,14 @@ An attack goes on until the retreat rule ends it. No mass/attack flip within
   fighters or turrets there outmatch them, after losing half, 25 s on
   target or 2 minutes in all. For an opponent with no expansion to raid
   (Yuriko takes none before ~6:40): a harvester is 1100 of tiebreak.
+- **Raids clear what they reach**: at an expansion with no harvester in
+  sight a squad takes its buildings by id — the refinery, the yard,
+  production, the rest (not turrets, nor anything in their reach, for
+  infantry) — and raid and snipe squads always engage what is in range
+  ("attack anything": "defend" left 4e9828e1's raiders idle beside the yard
+  after the refinery fell). From 10:00 a squad takes up to a quarter of our
+  fighters (at most 16), all squads still within 35%. An outmatched squad
+  marks its target failed even if it hadn't aimed yet.
 - **Raids**: only at their remote expansions — any building of theirs 25+
   cells from their main base (not its edge; a building there means a yard,
   even if the first one seen is its turret) — that our scouts found; more squads the

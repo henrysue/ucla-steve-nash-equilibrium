@@ -183,20 +183,24 @@ def _rally_orders(view: View, mode: Mode | None = None) -> list[dict]:
     ]
 
 
-def stance_orders(view: View, mode: Mode, holders: set, prefer: str | None = None) -> list[dict]:
+def stance_orders(view: View, mode: Mode, holders: set, prefer: str | None = None,
+                  pushers: set = frozenset()) -> list[dict]:
     """Waiting and guarding units hold (``STANCE_HOLD``: fight in range, don't
     chase into traps); attacking and base-defending units engage freely
     (``STANCE_PUSH``). ``holders`` (home guard, garrison) always hold.
     ``prefer``: the advisor's stance for the waiting army (one of
-    ``ARMY_STANCES``; "auto" or None keeps the rule). Only units whose
-    reported stance differs get an order."""
+    ``ARMY_STANCES``; "auto" or None keeps the rule). ``pushers`` (the raid
+    and snipe squads) always engage freely: out on a raid, "defend" left
+    4e9828e1's raiders idle beside the buildings they came for. Only units
+    whose reported stance differs get an order."""
     push = mode in (Mode.ALL_IN, Mode.DEFEND_BASE, Mode.DEFEND_RUSH)
     waiting = prefer if prefer in C.ARMY_STANCES else C.STANCE_HOLD
     want: dict[str, list[int]] = {}
     for u in view.combat_units:
         if u.id is None or u.stance is None:
             continue
-        target = C.STANCE_HOLD if u.id in holders else (C.STANCE_PUSH if push else waiting)
+        target = (C.STANCE_HOLD if u.id in holders
+                  else C.STANCE_PUSH if (push or u.id in pushers) else waiting)
         if u.stance != target:
             want.setdefault(target, []).append(u.id)
     return [orders.set_stance(ids[:orders.MAX_UNITS_PER_ORDER], stance) for stance, ids in want.items()]

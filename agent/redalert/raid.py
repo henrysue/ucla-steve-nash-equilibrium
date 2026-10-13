@@ -252,6 +252,11 @@ class Raid:
         size = C.RAID_SQUAD_SIZE_MACRO if getattr(self._advice, "enemy_style", None) == "macro" else C.RAID_SQUAD_SIZE
         # The squad grows with the army: a big army idling at home annoys them more.
         size = max(size, min(C.RAID_SQUAD_MAX, len(fighters) // C.RAID_ARMY_SHARE))
+        # Late, a bigger, more decisive party: a quarter of the fighters
+        # (4e9828e1's raids were 8-12 of a 35k army; still within
+        # RAID_MAX_ARMY_SHARE for all squads together).
+        if view.game_seconds >= C.RAID_LATE_SECONDS:
+            size = max(size, min(C.RAID_SQUAD_MAX_LATE, int(C.RAID_LATE_SHARE * len(fighters))))
         # Mid-game, an expansion our scouts found goes in force: the army
         # doesn't just mass at home while their economy grows.
         from .expand import enemy_expansions
@@ -274,6 +279,10 @@ class Raid:
             self.unit_ids = []
             return
         self._formed_size = len(self.unit_ids)
+        # Its target from the start: outmatched at once, it still marks the
+        # spot failed (4e9828e1: three squads died in 4-10 s at the same
+        # expansion, each released before it had aimed anywhere).
+        self._aim = _cell_of(view, _target(view, self._members(view), self._advice, self.avoid))
         self._legs = None                          # a fresh route (not a released squad's leftover)
         self._start = (view.kills_cost, view.deaths_cost)
         self._formed_at = view.game_seconds
@@ -441,9 +450,41 @@ class RaidCorps:
 
 def _cell_of(view: View, target) -> tuple[int, int] | None:
     if isinstance(target, int):
-        hit = next((a for a in view.enemy_units if a.id == target and a.cell is not None), None)
+        actors = list(view.enemy_units) + list(view.enemy_buildings) + list(view.known_enemy_buildings)
+        hit = next((a for a in actors if a.id == target and a.cell is not None), None)
         return hit.cell if hit is not None else None
     return tuple(target) if target is not None else None
+
+
+_CLEAR_ORDER = {C.REFINERY: 0, C.CONSTRUCTION_YARD: 1, C.WAR_FACTORY: 2, "tent": 2, "barr": 2}
+
+
+def _clear_target(view: View, squad, origin, remote, avoid) -> int | None:
+    """At an expansion (``RAID_CLEAR_CELLS``): the next building of theirs
+    there, by id — the refinery first, then the yard, production, the rest;
+    not their turrets, nor anything in a turret's reach, for infantry
+    (4e9828e1's raiders killed the refinery and stood idle beside the
+    rest). None when not at one, or it is clear."""
+    if origin is None:
+        return None
+    c2 = C.RAID_CLEAR_CELLS ** 2
+    here = [r for r in remote if dist2(r, origin) <= c2]
+    if not here:
+        return None
+    armored = _armored(squad) >= C.RAID_ARMOR_UNITS
+    zone = frozenset() if armored else turret_zone(view)
+    by2 = (C.EXPAND_CLUSTER_CELLS + 4) ** 2
+    s2 = C.RAID_SPREAD_CELLS ** 2
+    seen: dict = {}
+    for b in list(view.enemy_buildings) + list(view.known_enemy_buildings):
+        if (b.id is None or b.cell is None or b.wreck or (b.type in C.TURRETS and not armored)
+                or b.cell in zone or not any(dist2(b.cell, r) <= by2 for r in here)
+                or any(dist2(b.cell, a) <= s2 for a in avoid)):
+            continue
+        seen[b.id] = b
+    if not seen:
+        return None
+    return min(seen.values(), key=lambda b: (_CLEAR_ORDER.get(b.type, 3), dist2(b.cell, origin))).id
 
 
 def _target(view: View, members: list[Actor], advice=None, avoid=(), squad=None) -> int | tuple[int, int] | None:
@@ -493,6 +534,11 @@ def _target(view: View, members: list[Actor], advice=None, avoid=(), squad=None)
                and spot(a.cell) == a.cell]
     if visible:
         return min(visible, key=lambda a: dist2(a.cell, origin) if origin else 0).id
+    # At the expansion with no harvester in sight: clear it, building by building.
+    if members:
+        building = _clear_target(view, squad, origin, remote, avoid)
+        if building is not None:
+            return building
     # A known enemy expansion: its refinery is where its harvesters unload,
     # and a fresh expansion has the least protection.
     for cells in (enemy_expansions(view),
