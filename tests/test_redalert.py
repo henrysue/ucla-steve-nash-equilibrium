@@ -6404,3 +6404,44 @@ def test_a_scout_checks_their_army_at_3_20_and_the_advisor_gets_its_make_up():
     agent._poll_advisor(read(_raw(_t=215.0, buildings=BASE)))
     assert captured["scouting"]["army_report"]["tanks"] == 1
     assert captured["scouting"]["rules_read"]["tank_push"] is True
+
+
+def test_a_practice_disguise_plays_the_archetype_only_against_the_named_opponent(monkeypatch, tmp_path):
+    """RA_SPARRING_AGAINST: practice games against Yuriko played as the
+    rusher — never in a tournament, never against anyone unnamed or else."""
+    monkeypatch.setattr(sparring, "_MARKER_DIR", tmp_path)
+    monkeypatch.setenv("RA_SPARRING", "rusher")
+    monkeypatch.delenv("REDALERT_OPPONENT", raising=False)
+
+    def ctx(opponents=(), tournament=None, session="prac-1"):
+        return DecisionContext(session_id=session, tournament_id=tournament, game_type="red_alert",
+                               agent_id="me", seat_position=0, opponents=opponents)
+
+    monkeypatch.delenv("RA_SPARRING_AGAINST", raising=False)
+    assert sparring.Sparring().resolve(ctx(("YurikoRed",))) is None              # no disguise asked for
+    monkeypatch.setenv("RA_SPARRING_AGAINST", "yuriko_red, someone")
+    s = sparring.Sparring()
+    assert s.resolve(ctx(("YurikoRed",))).name == "rusher" and s.active         # named: the rusher, at once
+    assert sparring.Sparring().resolve(ctx(("YurikoRed",), tournament="t-1")) is None   # never in a tournament
+    assert sparring.Sparring().resolve(ctx(("Abu",))) is None                    # anyone else: our real agent
+    assert sparring.Sparring().resolve(ctx(())) is None                          # unnamed: our real agent
+    monkeypatch.setenv("REDALERT_OPPONENT", "YurikoRed")
+    assert sparring.Sparring().resolve(ctx(())).name == "rusher"                 # named by the operator
+
+
+def test_a_disguised_game_is_not_saved_to_the_opponents_history(monkeypatch, tmp_path):
+    import types
+
+    from agent.redalert import opponents, postgame
+    agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
+    agent._opponents = ("YurikoRed",)
+    saved = []
+    monkeypatch.setattr(opponents, "save", lambda names, record: saved.append(names) or True)
+    agent._sparring._archetype = sparring.Rusher()
+    agent.on_match_end(types.SimpleNamespace(raw={"result": {"your_return": 1}}, final_result=None), CTX)
+    assert saved == []
+    agent._sparring._archetype = None
+    monkeypatch.setattr(agent, "_analyze_opponent", lambda: None)
+    monkeypatch.setattr(postgame, "launch", lambda *a, **k: True)
+    agent.on_match_end(types.SimpleNamespace(raw={"result": {"your_return": 1}}, final_result=None), CTX)
+    assert saved == [("YurikoRed",)]

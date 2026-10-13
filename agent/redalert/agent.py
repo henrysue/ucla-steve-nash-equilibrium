@@ -380,7 +380,9 @@ class RedAlertAgent:
         """Record how the match ended (the runner calls this once), and what we
         learned about the opponent for next time (opponents.py)."""
         self._matchlog.end(final_state, context)
-        if self._opponents:
+        # Not when we played a sparring archetype ourselves (a practice
+        # disguise): their play against a fake isn't how they play against us.
+        if self._opponents and not self._sparring.active:   # sparring: TEST ONLY
             try:
                 # The game first (it always gets saved), then Claude's analysis
                 # in a process of its own: the supervisor stops this worker

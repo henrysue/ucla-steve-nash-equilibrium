@@ -528,3 +528,7 @@ logged placements)
   - Every archetype still defends the usual way. `RA_SPARRING_SEAT` picks the seat (default 1); the old
     `RA_TEST_RUSH=1` means rusher. Three locks: the flag, no tournament id, and both seats of the session
     seen on this machine (marker files). Remove the module and the lines marked "sparring" to retire it.
+  - A practice disguise: `RA_SPARRING_AGAINST=YurikoRed` (comma-separated names) lets this seat play the
+    `RA_SPARRING` archetype against those named opponents off our machine — still never with a
+    tournament id, only when the opponent's name (the context's, or `REDALERT_OPPONENT`) matches; anyone
+    unnamed or else gets our real agent. Those games aren't saved to the opponent's history nor analysed.

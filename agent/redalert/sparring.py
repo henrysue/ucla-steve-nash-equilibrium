@@ -42,6 +42,14 @@ this machine (marker files ``<tmp>/redalert_selfplay/<session>-seat<k>``), so
 a tournament opponent can never be the other seat. ``RA_SPARRING_SEAT`` picks
 the seat (default 1). Remove this module and its call sites (grep
 "sparring") to retire it.
+
+A practice disguise: ``RA_SPARRING_AGAINST`` (comma-separated opponent names,
+e.g. ``YurikoRed``) lets this seat play the archetype against those named
+opponents outside our machine — still never with a ``tournament_id``, and
+only when the opponent's name (the context's, or ``REDALERT_OPPONENT``)
+matches; an unnamed opponent gets our real agent. Those games are not saved
+to the opponent's history nor analysed (the advisor would read their play
+against a fake as how they play against us).
 """
 
 from __future__ import annotations
@@ -467,6 +475,17 @@ def requested() -> str | None:
     return None
 
 
+def _norm(name: str) -> str:
+    """An opponent name compared loosely: lower case, letters and digits only."""
+    return "".join(ch for ch in name.lower() if ch.isalnum())
+
+
+def _against() -> set:
+    """The opponents ``RA_SPARRING_AGAINST`` names (normalised), or empty."""
+    raw = os.environ.get("RA_SPARRING_AGAINST", "")
+    return {_norm(n) for n in raw.split(",") if _norm(n)}
+
+
 def requested_seat() -> str:
     return (os.environ.get("RA_SPARRING_SEAT") or os.environ.get("RA_TEST_RUSH_SEAT") or str(DEFAULT_SEAT)).strip()
 
@@ -482,6 +501,11 @@ class Sparring:
 
     opponent: str | None = None    # the other seat's archetype as an opponent name ("sparring-macro"), self-play only
 
+    @property
+    def active(self) -> bool:
+        """This seat plays an archetype (self-play or a practice disguise)."""
+        return self._archetype is not None
+
     def resolve(self, context, your_seat=None) -> Archetype | None:
         """This seat's archetype in a test match against ourselves, else None.
         ``your_seat``: the observation's seat ("Multi1"), used when the
@@ -492,6 +516,16 @@ class Sparring:
         if name is None or getattr(context, "tournament_id", None) is not None:
             self._settled = True          # off unless asked for; never in a tournament game
             return None
+        # A practice disguise against named opponents (RA_SPARRING_AGAINST).
+        against = _against()
+        if against:
+            names = [n for n in (getattr(context, "opponents", None) or ()) if isinstance(n, str)]
+            if os.environ.get("REDALERT_OPPONENT", "").strip():
+                names.append(os.environ["REDALERT_OPPONENT"].strip())
+            if any(_norm(n) in against for n in names):
+                self._settled = True
+                self._archetype = _BY_NAME[name]()
+                return self._archetype
         session = getattr(context, "session_id", None)
         seat = getattr(context, "seat_position", None)
         if seat is None and your_seat is not None:
