@@ -74,6 +74,16 @@ class ScoutCorps:
         """One scout (for code that keeps a single scout out of the army)."""
         return next(iter(self.roles.values()), None)
 
+    def request_army_look(self) -> bool:
+        """A look at their army now (e.g. they just expanded): the first
+        free scout — not on a circuit or already looking — goes
+        (:meth:`_army_look`). False when none is free."""
+        for role in ("p1", "left", "right", "p0", "x0"):
+            if role in self.roles and role not in self._circling and role not in self._army_check:
+                self._army_check.add(role)
+                return True
+        return False
+
     def backing_off(self, view: View) -> bool:
         """``SCOUT_BACKOFF_LOSSES`` scouts lost within
         ``SCOUT_BACKOFF_WINDOW_SECONDS``: no looks or peeks until

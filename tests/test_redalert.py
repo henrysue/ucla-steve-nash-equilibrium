@@ -5812,3 +5812,18 @@ def test_their_army_grows_no_faster_than_their_fields_allow():
     before = agent._believed
     agent._enemy_peak(dataclasses.replace(_view(_t=630.0, military={"army_value": 7000}), ore_cells=ore))
     assert agent._believed - before == pytest.approx(0.5 * 6000)              # capped at 3/6, under 0.6
+
+
+def test_a_new_enemy_expansion_sends_a_scout_to_look_at_their_army_and_looks_are_logged(tmp_path):
+    """d1615ac6: they paid 12k for two expansions and their army fell to
+    6600 against our 14850, unseen. An expansion found is a cue to look."""
+    import json as _json
+    agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0, log_dir=str(tmp_path))
+    agent._patrol.roles = {"left": 30, "p1": 31}
+    out = [{"id": 80, "type": "proc", "x": 14, "y": 40, "hp": 100}]
+    agent._matchlog.start(_view(_t=0.0), {"map": "m"}) if hasattr(agent._matchlog, "start") else None
+    agent._flag_expansions(_view(_t=600.0, visible_enemy_buildings=out))
+    assert "p1" in agent._patrol._army_check                                   # a scout goes to look
+    agent._patrol.army_looked_at = 610.0
+    agent._flag_expansions(_view(_t=611.0, visible_enemies=[{"id": 900, "type": "3tnk", "x": 30, "y": 30, "hp": 100}]))
+    assert agent._look_logged == 610.0

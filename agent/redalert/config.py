@@ -203,6 +203,7 @@ ENEMY_GROWTH_SHARE = 0.6
 # (two starting patches and the natural) until we see a remote expansion,
 # then one more field each (every building goes up by a yard).
 ENEMY_HOME_FIELDS = 3
+EXPANSION_LOOK_AFTER_SECONDS = 240.0   # a new enemy expansion found after this sends a scout to look at their army
 BELIEF_LOOK_CELLS = 10             # this many of our army units (BELIEF_LOOK_UNITS) this close to their base...
 BELIEF_LOOK_UNITS = 3
 BELIEF_DECAY_SECONDS = 30.0        # ...and the unseen part of their army fades over this (it isn't there)

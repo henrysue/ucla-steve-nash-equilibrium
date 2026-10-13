@@ -69,6 +69,7 @@ class RedAlertAgent:
         self._hunting = False           # their main base is razed (last view): they build no more army
         self._float_low_at: float | None = None   # when spare money was last under FLOAT_FUNDS
         self._expansions_flagged: list = []   # enemy expansions found (each logged once)
+        self._look_logged: float | None = None   # the last army look written to the match log
         # The batch play_action answers next; refused order key -> blocked
         # until (clock); army (cmd, destination) -> (last sent, unit ids).
         self._last_sent: list[dict] = []
@@ -812,6 +813,19 @@ class RedAlertAgent:
                 self._expansions_flagged.append(cell)
                 self._matchlog.note("expansion_found", {"t": round(view.game_seconds), "cell": list(cell)})
                 self._log(f"[redalert] {view.game_seconds:.0f}s enemy expansion found at {list(cell)}: a raid target")
+                # They just paid for an expansion: their army may be thin
+                # (d1615ac6: two expansions, 12k of buildings, their army fell
+                # to 6600 against our 14850) — a scout looks at it now.
+                if view.game_seconds >= C.EXPANSION_LOOK_AFTER_SECONDS:
+                    self._patrol.request_army_look()
+        # Each army look, what it saw against what we believed: the data to
+        # learn how far a look can be trusted (the other seat logs the truth
+        # in self-play).
+        looked = self._patrol.army_looked_at
+        if looked is not None and looked != self._look_logged:
+            self._look_logged = looked
+            self._matchlog.note("army_look", {"t": round(looked), "seen": round(view.enemy_army_value),
+                                              "believed": round(self._believed), "ours": round(view.army_value)})
 
     def _believe(self, view, floor: float) -> float:
         """Their army as we believe it: never less than ``floor`` (what we see
