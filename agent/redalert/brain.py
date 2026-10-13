@@ -163,6 +163,13 @@ def choose_mode(
             and not can_attack and not early and _has_real_army(view) and built and not cooling_down and regrown
             and attack_odds(view, busy_ids, busy_value) >= threshold):
         can_attack = True
+    # A remote expansion of theirs we clearly beat: strike it, short of the
+    # whole-army bar — they have to come out of their concave to save it
+    # (d1615ac6: raids killed its harvesters for two minutes while the army,
+    # 14850 against a believed 18900, sat at home).
+    if (not can_attack and not early and built and not cooling_down and regrown and _has_real_army(view)
+            and edge >= C.STRIKE_MIN_EDGE and expansion_strike(view) is not None):
+        can_attack = True
     policy_choice = Mode.ALL_IN if can_attack else Mode.BUILD
 
     # The model may hold an attack back — but not when we clearly outnumber
@@ -175,6 +182,31 @@ def choose_mode(
         return Mode.BUILD
 
     return policy_choice
+
+
+def expansion_strike(view: View) -> tuple[int, int] | None:
+    """The remote expansion of theirs (raid.remote_expansions) nearest our
+    base that our whole army beats by ``STRIKE_LOCAL_ODDS`` — against the
+    turrets and the units we know there, not their whole army — or None.
+    The attack's target is the same one (executor._attack_target: a known
+    expansion first, nearest our base)."""
+    from .raid import remote_expansions
+
+    if view.base_center is None or not view.combat_units:
+        return None
+    ours = [u.type for u in view.combat_units]
+    r_t = (C.EXPAND_CLUSTER_CELLS + C.RAID_TURRET_CLEAR_CELLS) ** 2
+    r_u = C.EXPAND_CLUSTER_CELLS ** 2
+    for cell in sorted(remote_expansions(view), key=lambda c: dist2(c, view.base_center)):
+        there = [a.type for a in list(view.enemy_buildings) + list(view.known_enemy_buildings)
+                 if a.type in C.TURRETS and a.cell is not None and not a.wreck and dist2(a.cell, cell) <= r_t]
+        there += [a.type for a in list(view.enemy_units) + list(view.known_enemy_units)
+                  if a.type not in C.HARVESTER and a.type != C.MCV and a.cell is not None and not a.wreck
+                  and dist2(a.cell, cell) <= r_u]
+        if not there or strength.odds(view, ours, there) >= C.STRIKE_LOCAL_ODDS:
+            return tuple(cell)
+        return None                               # the nearest is too strong: not further afield
+    return None
 
 
 def _defend(view: View) -> Mode:

@@ -102,7 +102,10 @@ class Commander:
             mode = (forced(mode) or mode) if callable(forced) else forced
         if escorting and mode is Mode.ALL_IN and prev is not Mode.ALL_IN and not brain.must_attack(view) and not hunting:
             mode = Mode.BUILD                      # defend the haul: no new attack (one under way goes on)
-        mode = self._confirm(view, prev, mode, skip=rushing or hunting or up or brain._catching_up(view))
+        # A strike on an expansion needs no look at their army: we know what
+        # stands there (the raid or a scout just saw it).
+        strike = mode is Mode.ALL_IN and prev is not Mode.ALL_IN and brain.expansion_strike(view) is not None
+        mode = self._confirm(view, prev, mode, skip=rushing or hunting or up or brain._catching_up(view) or strike)
         if ({prev, mode} == {Mode.BUILD, Mode.ALL_IN}
                 and view.game_seconds - self.mode_since < C.MODE_MIN_DWELL_SECONDS):
             mode = prev                            # commit: no quick flip (a confirmation is kept)

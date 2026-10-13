@@ -793,7 +793,7 @@ def test_raid_disbands_when_the_base_needs_defending():
 def test_the_army_leaves_the_raid_squad_alone():
     agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
     state = _state(_t=400.0, buildings=BASE, units=_raid_army(4, 10), visible_enemies=[_ENEMY_HARV], visible_enemy_buildings=[_EXP_PROC],  # 4 rifles scout
-                   military={"army_value": 3000, "visible_enemy_value": 2500})   # massing, not attacking
+                   military={"army_value": 2900, "visible_enemy_value": 2500})   # massing (short of a push), not attacking
     orders_ = agent.choose_action(state, CTX).action["orders"]
     raid = [o for o in orders_ if o.get("target") == 90]
     others = [o for o in orders_ if o["cmd"] in ("attack_move", "move") and o.get("target") is None]
@@ -5827,3 +5827,24 @@ def test_a_new_enemy_expansion_sends_a_scout_to_look_at_their_army_and_looks_are
     agent._patrol.army_looked_at = 610.0
     agent._flag_expansions(_view(_t=611.0, visible_enemies=[{"id": 900, "type": "3tnk", "x": 30, "y": 30, "hp": 100}]))
     assert agent._look_logged == 610.0
+
+
+def test_the_army_strikes_a_remote_expansion_it_clearly_beats():
+    """d1615ac6: raids killed an expansion's harvesters for two minutes while
+    the army sat home, 14850 against a believed 18900. An expansion we beat
+    locally is struck, short of the whole-army bar."""
+    tanks = [{"id": 30 + i, "type": "3tnk", "x": 10, "y": 10, "hp": 100} for i in range(12)]
+    exp = [{"id": 85, "type": "proc", "x": 14, "y": 43, "hp": 100}]           # remote: 26+ from their main (40, 40)
+    v = dataclasses.replace(_view(_t=700.0, buildings=BASE, units=tanks, visible_enemy_buildings=exp,
+                                  military={"army_value": 13800, "visible_enemy_value": 0}),
+                            enemy_army_peak=16000.0, enemy_base_scouted=True)
+    assert brain.army_odds(v) < C.ESCALATED_ARMY_EDGE                          # the whole-army bar says no...
+    assert brain.expansion_strike(v) == (14, 43)
+    assert brain.choose_mode(v, cheese_since=None) is Mode.ALL_IN               # ...the expansion says go
+    guarded = [{"id": 900 + i, "type": "3tnk", "x": 15, "y": 44, "hp": 100} for i in range(10)]
+    g = dataclasses.replace(_view(_t=700.0, buildings=BASE, units=tanks, visible_enemy_buildings=exp,
+                                  visible_enemies=guarded, military={"army_value": 13800}),
+                            enemy_army_peak=16000.0, enemy_base_scouted=True)
+    assert brain.expansion_strike(g) is None                                    # defended: no strike
+    far_behind = dataclasses.replace(v, enemy_army_peak=40000.0)
+    assert brain.choose_mode(far_behind, cheese_since=None) is Mode.BUILD       # outnumbered overall: no

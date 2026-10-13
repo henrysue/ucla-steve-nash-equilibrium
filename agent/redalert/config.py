@@ -277,6 +277,8 @@ REINFORCE_GAP_CELLS = 14           # in an attack, units this far behind the fro
 REINFORCE_GROUP_UNITS = 6          # ...until this many can go together (no trickling through a choke one by one)
 REINFORCE_HOLD_CELLS = 8           # only units still this close to the massing point wait: none is ever sent back
 DETOUR_MAX_RATIO = 1.6             # an attack goes round the chokes between the bases when that is at most this much longer
+STRIKE_LOCAL_ODDS = 2.0           # the army strikes a remote expansion of theirs it beats this clearly (its turrets and units)...
+STRIKE_MIN_EDGE = 0.75             # ...while not worse than this against their whole army (they must come out to it)
 MARCH_DETOUR_MAX_RATIO = 2.5       # ...measured from where the army stands (at our concave by the choke's mouth the
                                    # corridor is short and every lane long: d1615ac6 went down Sidestep's gap)
 CHOKE_ATTACK_FACTOR = 1.5          # with no way round, an attack through the choke needs this x the usual edge (their concave

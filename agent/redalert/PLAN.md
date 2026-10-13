@@ -201,6 +201,12 @@ behind/outgunned. The blind check reads only what was actually seen.
    - **Never**: before 3:00 and a war factory, a new attack while the MCV
      travels, within 60 s of a retreat, into a turtle without 3 siege units
      (unless the odds are 2.5+).
+   - **Strike an expansion**: a remote expansion of theirs our army beats 2x
+     (its turrets and the units we know there) is attacked even short of the
+     whole-army bar, if we are at least 0.75x their whole army — they must
+     come out of their concave to save it; no look needed (we know what is
+     there). d1615ac6's raids killed one expansion's harvesters for two
+     minutes while the army sat home at a believed 0.79x (really 1.3x).
    - **Through a choke with no way round** (terrain.choke_between): 1.5x
      the bar, unless 3+ siege units come to shell their concave.
    - **The advisor's "hold"** delays an attack the rules call by at most 90 s,
