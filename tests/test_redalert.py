@@ -5531,7 +5531,9 @@ def test_finished_raids_are_logged_with_their_trades():
     assert corps.drain() == []
 
 
-def test_our_sparring_partner_is_profiled_and_analysed_like_a_tournament_opponent(tmp_path, monkeypatch):
+def test_test_games_against_our_sparring_partner_keep_no_opponent_history(tmp_path, monkeypatch):
+    """Opponent history is for tournament matches only: a sparring game
+    neither writes it nor reads it."""
     from agent.redalert import postgame, sparring
     monkeypatch.setenv("RA_SPARRING", "macro")
     monkeypatch.setenv("RA_SPARRING_SEAT", "1")
@@ -5553,13 +5555,12 @@ def test_our_sparring_partner_is_profiled_and_analysed_like_a_tournament_opponen
         return agents, ctx
 
     (us, spar), ctx = seats("s1")
-    assert us._opponents == ("sparring-macro",) and spar._opponents == ()        # only we profile them
+    assert us._opponents == ("sparring-macro",) and spar._opponents == ()        # named, as before
     us.on_match_end(types.SimpleNamespace(raw={"result": {"your_return": 1}}, final_result=None), ctx[0])
     spar.on_match_end(types.SimpleNamespace(raw={"result": {"your_return": 0}}, final_result=None), ctx[1])
-    (record,) = __import__("agent.redalert.opponents", fromlist=["load"]).load(["sparring-macro"])
-    assert record["analysis"]["how_to_beat"].startswith("Hold the first push")
+    assert __import__("agent.redalert.opponents", fromlist=["load"]).load(["sparring-macro"]) == []   # not saved
     (us2, _), _ = seats("s2")                                                     # the next sparring game
-    assert "AGAINST THIS OPPONENT" in us2._advisor.addendum and us2._advisor.opponent_history
+    assert not us2._advisor.addendum and not us2._advisor.opponent_history       # nothing read
 
 
 def test_the_analysis_keeps_whole_sentences_and_drops_filler():
@@ -5647,7 +5648,12 @@ def test_a_test_match_opponent_can_be_named_by_hand(tmp_path, monkeypatch):
     agent.choose_action(_state(_t=60.0, buildings=BASE), CTX)                    # no opponents in the context
     assert agent._opponents == ("yuriko_red",)
     agent.on_match_end(types.SimpleNamespace(raw={"result": {"your_return": 1}}, final_result=None), CTX)
-    assert opponents.load(["yuriko_red"])[0]["result"] == 1
+    assert opponents.load(["yuriko_red"]) == []                                  # a test match: no history
+    tournament = dataclasses.replace(CTX, tournament_id="t-1")
+    agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0, log_dir=str(tmp_path / "logs"))
+    agent.choose_action(_state(_t=60.0, buildings=BASE), tournament)
+    agent.on_match_end(types.SimpleNamespace(raw={"result": {"your_return": 1}}, final_result=None), tournament)
+    assert opponents.load(["yuriko_red"])[0]["result"] == 1                      # a tournament match: saved
 
 
 def test_only_a_look_at_their_army_makes_an_attack_call_not_blind():
@@ -6441,6 +6447,7 @@ def test_a_disguised_game_is_not_saved_to_the_opponents_history(monkeypatch, tmp
     agent.on_match_end(types.SimpleNamespace(raw={"result": {"your_return": 1}}, final_result=None), CTX)
     assert saved == []
     agent._sparring._archetype = None
+    agent._history_on = True                                                     # (a tournament match)
     monkeypatch.setattr(agent, "_analyze_opponent", lambda: None)
     monkeypatch.setattr(postgame, "launch", lambda *a, **k: True)
     agent.on_match_end(types.SimpleNamespace(raw={"result": {"your_return": 1}}, final_result=None), CTX)

@@ -97,6 +97,7 @@ class RedAlertAgent:
         self._kills_seen = (0.0, 0.0)               # (kills_cost, game time it last changed)
         self._ignore_advice_until = float("-inf")   # advisor's army target ignored until (stall breaker)
         self._sparring = sparring.Sparring()       # sparring: TEST ONLY
+        self._history_on = False                   # opponent history read and written: tournament matches only
         self._models_checked = False                # REDALERT_MODELS_OFF_SEAT applied yet
         self._clearing: dict = {}   # building item -> game time its spot was first found occupied
         self._responding: dict = {}  # unit id -> (cell, enemy ids, when): units sent to answer a group (executor.respond)
@@ -382,7 +383,7 @@ class RedAlertAgent:
         self._matchlog.end(final_state, context)
         # Not when we played a sparring archetype ourselves (a practice
         # disguise): their play against a fake isn't how they play against us.
-        if self._opponents and not self._sparring.active:   # sparring: TEST ONLY
+        if self._opponents and self._history_on and not self._sparring.active:   # sparring: TEST ONLY
             try:
                 # The game first (it always gets saved), then Claude's analysis
                 # in a process of its own: the supervisor stops this worker
@@ -651,7 +652,11 @@ class RedAlertAgent:
     _attacks = property(lambda self: self._commander.attacks)
 
     def _start_profile(self, raw: dict, context) -> None:
-        """Our past games against this opponent go to the advisor's memory."""
+        """Our past games against this opponent go to the advisor's memory —
+        in tournament matches only (a tournament id): practice and test games
+        neither read nor write it (practice opponents play differently, and a
+        test game's history would mislead the advisor in the real match)."""
+        self._history_on = getattr(context, "tournament_id", None) is not None
         self._opponents = tuple(n for n in (getattr(context, "opponents", None) or ()) if isinstance(n, str))
         if not self._opponents and os.environ.get("REDALERT_OPPONENT", "").strip():
             # A test match whose assignment names no opponent: name it by hand
@@ -663,7 +668,7 @@ class RedAlertAgent:
         self._load_profile()
 
     def _load_profile(self) -> None:
-        if self._advisor is not None and self._opponents:
+        if self._advisor is not None and self._opponents and self._history_on:
             history = opponents.load(self._opponents)
             self._advisor.opponent_history = [{k: v for k, v in r.items() if k != "analysis"} for r in history]
             self._advisor.addendum = postgame.addendum(history)

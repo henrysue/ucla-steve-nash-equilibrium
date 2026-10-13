@@ -27,7 +27,9 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
   happened since it was last asked (trades, losses, sightings, mode changes),
   how our recent attacks went, and our past games against this opponent
   (`opponents.py`, saved at each match end under `REDALERT_PROFILE_DIR` or
-  `<REDALERT_LOG_DIR>/opponents`). Each answer gives a confidence and its
+  `<REDALERT_LOG_DIR>/opponents`) — in tournament matches only (a tournament
+  id): practice and test games neither read nor write it, nor run the
+  post-game analysis. Each answer gives a confidence and its
   evidence: an "aggressive" read raises turrets only at 0.6+, and at 0.8+ with
   evidence a change takes effect without waiting for a second answer; with no
   evidence from this game it is at most 0.5 sure (the opponent history is a
