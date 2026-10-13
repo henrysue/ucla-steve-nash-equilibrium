@@ -461,7 +461,10 @@ class RedAlertAgent:
             mission = (getattr(self._advice_now, "raid_mission", "")
                        or squadlead.raid_mission(_cell_of(view, target) if target is not None else None))
             d = lead.poll(view, ids, mission, {"rules_target": target})
-            o = squadlead.squad_orders(view, ids, d, scout.choke_cell(view)) if d is not None else None
+            # It watches: applied only when the squad is idle or it retargets
+            # to a higher-priority enemy (squadlead.should_apply).
+            o = (squadlead.squad_orders(view, ids, d, scout.choke_cell(view))
+                 if d is not None and squadlead.should_apply(view, ids, d, target) else None)
             if o is not None:
                 return o
         elif lead is not None:
@@ -509,7 +512,8 @@ class RedAlertAgent:
             d = lead.poll(view, ids, f"Hold our expansion; post at {list(post)}. Engage threats near it; don't chase far.",
                           {"post": list(post)})
             leashed = d is not None and (d.cell is None or dist2(d.cell, post) <= C.GARRISON_LEASH_CELLS ** 2)
-            o = squadlead.squad_orders(view, ids, d, post) if leashed else None
+            o = (squadlead.squad_orders(view, ids, d, post)
+                 if leashed and squadlead.should_apply(view, ids, d) else None)
             if o is not None:
                 return o
         elif lead is not None:

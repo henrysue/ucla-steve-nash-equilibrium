@@ -1992,10 +1992,13 @@ def test_the_raid_follows_its_lead_and_falls_back_to_rules_on_failure():
     good = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0,
                          squad_lead_factory=leads(_FakeLead({"action": "move", "target_id": None, "cell": [33, 33], "reasoning": ""})))
     good._raid.unit_ids = [100, 101, 102]
-    v = _view(_t=300.0, buildings=BASE, units=_raid_army(), visible_enemies=[_ENEMY_HARV], visible_enemy_buildings=[_EXP_PROC])
+    idle = [dict(u, idle=True) for u in _raid_army()]
+    v = _view(_t=300.0, buildings=BASE, units=idle, visible_enemies=[_ENEMY_HARV], visible_enemy_buildings=[_EXP_PROC])
     good._raid_orders(v)
     good._leads["raid"]._future.result()
-    assert good._raid_orders(v) == [{"cmd": "attack_move", "units": [100, 101, 102], "to": [33, 33]}]
+    assert good._raid_orders(v) == [{"cmd": "attack_move", "units": [100, 101, 102], "to": [33, 33]}]   # idle: its call
+    busy = dataclasses.replace(v, units=_view(units=_raid_army()).units)
+    assert good._raid_orders(busy)[-1]["to"] == [14, 40]                      # busy: it watches, the rules go on
     bad = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0, squad_lead_factory=leads(Boom()))
     bad._raid.unit_ids = [100, 101, 102]
     bad._raid_orders(v)
@@ -6722,3 +6725,18 @@ def test_the_raid_lead_gets_its_mission_from_the_advisor_or_a_default_at_the_rul
     agent._advice_now = None
     agent._raid_orders(v)
     assert asked[-1] == squadlead.raid_mission((9, 43))                             # the default, at the rules' target
+
+
+def test_a_squad_lead_mostly_watches_and_steps_in_only_when_idle_or_for_a_priority_enemy():
+    harv = {"id": 90, "type": "harv", "x": 14, "y": 40, "hp": 100}
+    guard = {"id": 91, "type": "e1", "x": 15, "y": 41, "hp": 100}
+    refinery = {"id": 85, "type": "proc", "x": 14, "y": 43, "hp": 100}
+    busy = _view(units=_raid_army(), visible_enemies=[harv, guard], visible_enemy_buildings=[refinery])
+    ids = [100, 101, 102]
+    on = lambda action, tid=None, cell=None: squadlead.Directive(made_at=0.0, action=action, target_id=tid, cell=cell)  # noqa: E731
+    assert not squadlead.should_apply(busy, ids, on("move", cell=(30, 30)), 90)      # busy: it watches
+    assert squadlead.should_apply(busy, ids, on("attack", 91), 90)                    # their fighter over a harvester
+    assert not squadlead.should_apply(busy, ids, on("attack", 85), 90)                # a building isn't
+    assert squadlead.should_apply(busy, ids, on("attack", 90), 85)                    # a harvester over a building
+    idle = _view(units=[dict(u, idle=True) for u in _raid_army()], visible_enemies=[harv])
+    assert squadlead.should_apply(idle, ids, on("move", cell=(30, 30)), 90)           # idle: its call

@@ -48,7 +48,9 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
   `REDALERT_SQUAD_LEADS=on`. The raid squad's lead is given its mission by the advisor
   (`raid_mission`, e.g. "Harass the expansion around [x, y]: defenders, then harvesters, then
   buildings; pull back before the squad is lost"), else that mission at the rules' raid target;
-  the fight in front of the squad (defenders, outmatched) stays the rules' call.
+  the fight in front of the squad (defenders, outmatched) stays the rules' call. A lead mostly
+  watches: its call replaces the rules' orders only when the squad is idle (half its units) or
+  it retargets to a higher-priority enemy (their fighters, then harvesters, then buildings).
 - **Logs**: `matchlog.py` writes a JSONL and a summary per match to
   `matchlogs/` (samples every 15 s, mode changes, refusals, advice, attacked
   spots, the outbox, first sightings — kind "scouted" — with a "What the scouts

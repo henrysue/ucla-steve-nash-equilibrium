@@ -7,6 +7,12 @@ picks what it does next: attack one enemy, attack-move to a cell, hold, or
 pull back. A fast, cheap model (Haiku) is enough for a handful of units and
 a narrow question; a few calls per squad, never one per unit.
 
+It mostly watches: its call is applied only when the squad is idle (at
+least half its units), or when it retargets to a higher-priority enemy
+than the rules' target — their fighters, then harvesters, then buildings
+(:func:`should_apply`). Otherwise the rules' orders stand (5e840776: 80% of
+its calls repeated the rules' move 2 s late, re-pathing the squad each time).
+
 Like the advisor, it never blocks a view: the call runs on a background
 thread and the newest still-fresh answer (``SQUAD_LEAD_TTL_SECONDS``) is used.
 Answers are checked (only enemy ids we can see, only cells on the map); a
@@ -118,6 +124,29 @@ def squad_orders(view: View, ids: list[int], d: Directive, home: tuple[int, int]
     if d.action == "retreat" and home is not None:
         return [orders.attack_move(ids, list(home))]   # never walk away under fire without shooting back
     return None
+
+
+def _rank(view: View, target) -> int:
+    """A target's priority: an enemy fighter 0, a harvester 1, a building 2;
+    a cell or nothing 3."""
+    if isinstance(target, int) and not isinstance(target, bool):
+        unit = next((a for a in view.enemy_units if a.id == target), None)
+        if unit is not None:
+            return 1 if unit.type in C.HARVESTER else 0
+        if any(b.id == target for b in list(view.enemy_buildings) + list(view.known_enemy_buildings)):
+            return 2
+    return 3
+
+
+def should_apply(view: View, ids: list[int], d: Directive, rules_target=None) -> bool:
+    """Whether the lead's call replaces the rules' orders: the squad is idle
+    (at least half its units), or the call is an attack on a higher-priority
+    enemy than the rules' target (fighters, then harvesters, then
+    buildings). Otherwise it only watches."""
+    squad = [u for u in view.units if u.id in set(ids)]
+    if squad and sum(1 for u in squad if u.idle) * 2 >= len(squad):
+        return True
+    return d.action == "attack" and _rank(view, d.target_id) < _rank(view, rules_target)
 
 
 def raid_mission(cell) -> str:
