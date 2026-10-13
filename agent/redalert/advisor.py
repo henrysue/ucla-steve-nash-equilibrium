@@ -125,7 +125,8 @@ have seen — buildings_known, first_seen (enemy type -> game second), recent_si
 own read and our scouts alive/lost — and base_report: what our scouts saw in their base in the \
 first 4 minutes (riflemen and every unit type counted by unit, the buildings present by type), \
 with the second scout walking round the back of their base into its centre 30 s after the first \
-(reached_their_base_centre_at). Many riflemen and one refinery there is a rush coming. Predict their posture from it as soon as our scouts reach \
+(reached_their_base_centre_at). Many riflemen and one refinery there is a rush coming.
+situation.last_seen_map is what we last saw where, refreshed every moment from our vision (8-cell squares): enemy_army_as_last_seen (each unit where we last saw it, and how old the oldest sighting is), their_base and the squares with enemies, each with seen_ago and scouted_ago, plus the share of the map seen in the last minute and when a scout last saw anything. It is evidence, not the estimate: when enemy.army_value_estimate is far above what was last seen and the last look is fresh, say so — the estimate assumes they built what we didn't see. Predict their posture from it as soon as our scouts reach \
 their base (~1:00-1:40), and say in plan when and from where you expect their first push. Tells:
   rush: one refinery by 1:40, a second barracks or an early war factory, 5+ riflemen in front of \
   their base before 2:00, our scouts killed on the way in;

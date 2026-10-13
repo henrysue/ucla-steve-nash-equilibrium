@@ -185,7 +185,11 @@ ratio. Turrets fight in it. Their army is what we saw lately or, if more,
 what they could have built since: it grows by 0.6 of what we spend on our
 army (both sides have the same money) — never more than their fields over
 ours allow (at most 3 at home, two starting patches and the natural, plus
-one per remote expansion seen) — and loses half our kills; it stops
+one per remote expansion seen), scaled down by what we destroyed of their
+income and production (memory.growth_scale: the lesser of the refineries —
+2 harvesters each — and harvesters, and the barracks and war factories,
+left against what they had; each loss fading over 3 minutes as they
+rebuild unseen; never under 0.2) — and loses half our kills; it stops
 growing once their main base is razed and the unseen part fades while our
 main army (not raiders or scouts) stands in their main base and finds nothing
 (5a4bc83f: raiders by an expansion yard faded it from 14480 to 8300). (Seen-only read 1.3-12x low on
@@ -193,6 +197,14 @@ our self-play logs; this is unbiased there with half the error.) The part we
 believe in but can't see counts as a mirror of our own mix. Every decision
 reads it: attack, retreat, meeting a push, raids, the base's defense,
 behind/outgunned. The blind check reads only what was actually seen.
+
+The last-seen map (lastseen.py) mirrors what we last saw where: 8-cell
+squares, each stamped every view our vision covers it (and scouted when a
+scout does) with the enemies in it then — an empty look clears it, a unit
+seen elsewhere moves there. It goes to the advisor only
+(situation.last_seen_map: the army as last seen and how old, their base's
+square, the squares with enemies and their ages, the share of the map seen
+in the last minute) as evidence beside the estimate; it never changes it.
 
 ### 5. The army's one decision each view (first match wins)
 

@@ -534,6 +534,17 @@ RALLY_TOLERANCE_CELLS = 2
 # -- enemy memory ----------------------------------------------------------------------------------
 ENEMY_UNIT_MEMORY_SECONDS = 90.0   # forget an unseen enemy unit after this
 MEMORY_CLEAR_RADIUS_CELLS = 4      # or when we stand on its last cell and it isn't there
+HARVESTER_KILL_CELLS = 6           # an enemy harvester gone from sight this close to our fighters, as our kills jump
+                                   # by most of its price, was killed (memory.EnemyMemory)
+HARVESTER_KILL_PRICE_SHARE = 0.8   # ...the jump: at least this share of its price
+ECONOMY_REBUILD_SECONDS = 180.0    # a destroyed refinery or production building (or killed harvester) weighs on their
+                                   # believed growth fully at first, fading to nothing over this (they rebuild unseen)
+ECONOMY_GROWTH_MIN_SCALE = 0.2     # their believed growth never scales below this share
+HARVESTERS_PER_REFINERY = 2        # their income counted in harvesters: a refinery is this many
+LASTSEEN_SECTOR_CELLS = 8          # the last-seen map (lastseen.py): squares this big...
+LASTSEEN_VISION_CELLS = 7          # ...seen when one of our actors stands in one or within this of its centre
+LASTSEEN_FRESH_SECONDS = 60.0      # ...the share of the map seen this lately
+LASTSEEN_MAX_SECTORS = 8           # ...at most this many squares with enemies go to the advisor
 ATTACK_STALL_SECONDS = 40.0        # attacking with no kills and nothing in sight this long: a stale target
 TRANSFORM_RADIUS_CELLS = 4         # an enemy MCV this close to a remembered yard: the yard packed up
 HOME_RAID_RADIUS_CELLS = 10        # a group this close to the main base (buildings, trucks) also draws the idle units at home...

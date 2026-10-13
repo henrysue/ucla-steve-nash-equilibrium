@@ -6248,3 +6248,78 @@ def test_enemy_buildings_we_destroy_are_counted_for_the_advisor():
     agent._advisor = type("A", (), {"poll": lambda self, view, situation: captured.update(situation)})()
     agent._poll_advisor(read(_raw(_t=440.0, buildings=BASE)))
     assert captured["counters"]["enemy_buildings_destroyed"]["total"] == 2
+
+
+def test_their_believed_growth_scales_down_with_the_economy_and_production_we_destroy():
+    from agent.redalert.memory import EnemyMemory
+    mem = EnemyMemory()
+    blds = [{"id": 70, "type": "proc", "x": 40, "y": 40}, {"id": 71, "type": "proc", "x": 46, "y": 40},
+            {"id": 72, "type": "tent", "x": 40, "y": 46}, {"id": 73, "type": "weap", "x": 46, "y": 46}]
+    mem.update(_view(_t=400.0, visible_enemy_buildings=blds))
+    assert mem.growth_scale(_view(_t=400.0)) == 1.0                              # nothing destroyed
+    ours = [{"id": 30, "type": "3tnk", "x": 40, "y": 41, "hp": 100}]
+    mem.update(_view(_t=410.0, units=ours, visible_enemy_buildings=blds[1:]))   # a refinery gone under our nose
+    income = mem.growth_scale(_view(_t=410.0))
+    assert income == pytest.approx(2 / 3)                                          # 2 of 3 refineries' worth left
+    both = [{"id": 31, "type": "3tnk", "x": 46, "y": 47, "hp": 100}]
+    mem.update(_view(_t=420.0, units=ours + both, visible_enemy_buildings=blds[1:3]))   # and the war factory
+    assert mem.growth_scale(_view(_t=420.0)) < income                             # the worse of the two
+    assert mem.growth_scale(_view(_t=420.0 + C.ECONOMY_REBUILD_SECONDS)) == 1.0   # rebuilt (unseen) by now
+    # A harvester gone next to our fighters as our kills jump by its price: killed.
+    harv = [{"id": 90, "type": "harv", "x": 60, "y": 60, "hp": 30}]
+    hunter = [{"id": 32, "type": "3tnk", "x": 62, "y": 60, "hp": 100}]
+    mem.update(_view(_t=500.0, units=hunter, visible_enemies=harv, military={"kills_cost": 1000}))
+    mem.update(_view(_t=501.0, units=hunter, military={"kills_cost": 1000}))      # gone, no kill: it drove off
+    assert mem.destroyed["harvesters_killed"] == 0
+    mem.update(_view(_t=502.0, units=hunter, visible_enemies=harv, military={"kills_cost": 1000}))
+    mem.update(_view(_t=503.0, units=hunter, military={"kills_cost": 2100}))
+    assert mem.destroyed["harvesters_killed"] == 1
+
+
+def test_the_believed_enemy_grows_less_once_we_wrecked_their_economy():
+    agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
+    v0 = _view(_t=600.0, military={"army_value": 5000})
+    agent._believe(v0, 0.0)
+    normal = agent._believe(_view(_t=700.0, military={"army_value": 15000}), 0.0)
+    wrecked = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
+    wrecked._memory._destroyed = [(690.0, "proc", 1400.0), (690.0, "proc", 1400.0), (690.0, "weap", 2000.0)]
+    wrecked._believe(v0, 0.0)
+    assert wrecked._believe(_view(_t=700.0, military={"army_value": 15000}), 0.0) < 0.6 * normal   # about half
+
+
+def test_the_last_seen_map_mirrors_what_our_vision_and_scouts_saw():
+    from agent.redalert.lastseen import LastSeenMap
+    m = LastSeenMap()
+    scout_ = [{"id": 40, "type": "e1", "x": 36, "y": 36, "hp": 100}]
+    foes = [{"id": 90 + i, "type": "e1", "x": 37, "y": 37, "hp": 100} for i in range(4)]
+    foes.append({"id": 95, "type": "2tnk", "x": 38, "y": 36, "hp": 100})
+    blds = [{"id": 70, "type": "tent", "x": 39, "y": 39}]
+    v = dataclasses.replace(_view(_t=200.0, units=scout_, visible_enemies=foes, visible_enemy_buildings=blds),
+                            bounds=(0, 0, 48, 48))
+    m.update(v, scout_ids=[40])
+    s = m.summary(v)
+    assert s["enemy_army_as_last_seen"]["units"] == {"e1": 4, "2tnk": 1} and s["last_scouted_at"] == 200
+    assert s["sectors_with_enemies"][0]["buildings"] == {"tent": 1} and s["sectors_with_enemies"][0]["scouted_ago"] == 0
+    # The scout leaves: the record stays, aging; two of them walk to another square we see — one place only.
+    moved = [dict(foes[0], x=20, y=12), dict(foes[1], x=21, y=12)]
+    watcher = [{"id": 41, "type": "e1", "x": 20, "y": 10, "hp": 100}]
+    w = dataclasses.replace(_view(_t=260.0, units=watcher, visible_enemies=moved), bounds=(0, 0, 48, 48))
+    m.update(w, scout_ids=[40])
+    s = m.summary(w)
+    assert s["enemy_army_as_last_seen"]["units"] == {"e1": 4, "2tnk": 1}           # not 6
+    assert s["enemy_army_as_last_seen"]["oldest_sighting_ago"] == 60
+    old = next(x for x in s["sectors_with_enemies"] if x["buildings"])
+    assert old["seen_ago"] == 60 and old["scouted_ago"] == 60
+    assert s["last_scouted_at"] == 200                                              # the watcher isn't a scout
+    # Looking again at the old square and finding it empty clears it.
+    e = dataclasses.replace(_view(_t=300.0, units=scout_), bounds=(0, 0, 48, 48))
+    m.update(e, scout_ids=[40])
+    s = m.summary(e)
+    assert s["enemy_army_as_last_seen"]["units"] == {"e1": 2}
+    assert not any(x["buildings"] for x in s["sectors_with_enemies"])
+    agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
+    agent._lastseen = m
+    captured = {}
+    agent._advisor = type("A", (), {"poll": lambda self, view, situation: captured.update(situation)})()
+    agent._poll_advisor(read(_raw(_t=300.0, buildings=BASE)))
+    assert captured["last_seen_map"]["enemy_army_as_last_seen"]["units"] == {"e1": 2}

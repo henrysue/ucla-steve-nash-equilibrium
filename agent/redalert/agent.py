@@ -33,6 +33,7 @@ from .guard import Garrison
 from .raid import RaidCorps
 from . import config as C
 from .matchlog import MatchLog
+from .lastseen import LastSeenMap
 from .memory import EnemyMemory
 from .harvest import HarvestManager
 from .movement import Unstick
@@ -85,6 +86,7 @@ class RedAlertAgent:
         self._patrol = scouting.ScoutCorps()
         self._intel = intel.EnemyIntel()
         self._memory = EnemyMemory()
+        self._lastseen = LastSeenMap()   # what we last saw where, for the advisor only (lastseen.py)
         self._raid = RaidCorps()
         self._expansion = Expansion()
         self._garrison = Garrison()
@@ -143,6 +145,7 @@ class RedAlertAgent:
         self._models_switch(context)
         self._audit_placements(view)
         self._memory.update(view)
+        self._lastseen.update(view, self._patrol.unit_ids)
         view = self._memory.apply(view)
         self._failed_cells = {c: t for c, t in self._failed_cells.items()
                               if view.game_seconds - t < C.FAILED_SPOT_SECONDS}
@@ -612,6 +615,7 @@ class RedAlertAgent:
                 "raid_squad": {"ids": list(self._raid.unit_ids), "situation": raid_state,
                                "drawing_their_army": self._raid.distracting(view)},
                 "scouts": dict(self._patrol.roles),
+                "last_seen_map": self._lastseen.summary(view),
                 "scouting": {**self._intel.report(view),
                              "base_report": self._patrol.base_report,
                              "scouts_alive": dict(self._patrol.roles),
@@ -874,7 +878,10 @@ class RedAlertAgent:
         if self._believed_mark is not None:
             spent0, kills0, t0 = self._believed_mark
             if not self._hunting:
-                share = min(C.ENEMY_GROWTH_SHARE, self._field_share(view))
+                # Scaled down by what we destroyed of their income and
+                # production (memory.growth_scale): they can't build as we do
+                # without refineries, trucks and factories.
+                share = min(C.ENEMY_GROWTH_SHARE, self._field_share(view)) * self._memory.growth_scale(view)
                 self._believed += share * max(0.0, spent - spent0)
             self._believed -= C.KILL_ARMY_SHARE * max(0.0, view.kills_cost - kills0)
             if self._believed > floor and self._at_their_base(view):
