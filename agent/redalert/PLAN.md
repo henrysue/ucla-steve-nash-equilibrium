@@ -73,7 +73,11 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
 ### 1. Economy
 
 - **Opening**: power, barracks, refinery, refinery, power, war factory (the
-  pros' double refinery), its money set aside. Then the service depot (it
+  pros' double refinery), its money set aside — but the war factory waits
+  for an army worth 2000 or 2:30, whichever comes first, so the barracks
+  keeps training for the push at ~3:00 (2fe84e1f and 9cada749: the barracks
+  idled saving for it, and the push took the war factory); not against a
+  passive enemy. Then the service depot (it
   unlocks the main battle tanks) and a third refinery, unless outgunned; more
   barracks only after those. Under a rush read everything goes into units —
   except a lost war factory's rebuild and the harvesters in production.
@@ -97,8 +101,13 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
   floating — 1000+ beyond the build order's needs for 30 s, the queues can't
   spend the income — buys the second war factory without its price in hand,
   then a third, then barracks up to 3 (d2d8dc27 floated 1000-3000 from 11:00).
-- **Behind on army** (odds at most 1/1.3) or outgunned: units first — no money
-  held for an MCV, refineries, the depot or the dome. A lost war factory is
+- **Behind on army** (odds at most 1/1.3, or the advisor's "more_army" past
+  3:00) or outgunned: units first — no money held for an MCV, refineries,
+  the depot or the dome. On "more_army" the follow-up's third refinery and
+  the expansion to the natural still go; later expansions, refineries past
+  the third, the kennel and the dome wait (9cada749 built them through two
+  minutes of "more_army" while the rusher grew from 2350 to 10100 against
+  our 5900). A lost war factory is
   rebuilt first. Broke with no harvester: sell a spare building.
 
 ### 2. The army's make-up

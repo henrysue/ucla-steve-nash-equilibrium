@@ -62,6 +62,10 @@ BUILD_ORDER = (
 # Then, unless outgunned (units first): the third refinery and the service
 # depot (tanks and the expansion MCV).
 FOLLOW_UP = (SERVICE_DEPOT, REFINERY)   # the depot first: it unlocks the main battle tanks (and the MCV)
+OPENING_ARMY_VALUE = 2000          # the war factory waits for an army worth this (1.5x the opening's ~1300)...
+OPENING_ARMY_SECONDS = 150.0       # ...until this at the latest (2fe84e1f: the barracks idled 1:05-2:37 saving for
+                                   # it, 6 infantry met a 15-unit push at 3:16 and lost the war factory; 9cada749
+                                   # again, 2:04-2:51, and lost it at 3:39)
 WAR_FACTORY_REBUILD_AFTER_SECONDS = 180.0   # past the opening, a lost (or missing) war factory is rebuilt first...
 OPTIONAL_BUILDINGS = ("dome", "fix", "kenn", "silo")   # ...cancelling any of these ahead of it in the Building queue
 POWER_MARGIN = 25                  # build power when provided - drained falls below this

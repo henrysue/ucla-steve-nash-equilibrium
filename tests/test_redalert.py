@@ -1285,8 +1285,9 @@ def test_double_refinery_order():
     eco = {"power_provided": 300, "power_drained": 100}
     have = [{"id": 10, "type": "fact"}]
     expected = ["powr", "tent", "proc", "proc", "powr", "weap", "fix", "proc"]
-    for i, item in enumerate(expected):
-        order = buildplan.next_build_orders(_view(buildings=have, units=_harvs(3), available_production=avail, economy=eco))
+    for i, item in enumerate(expected):                                 # past OPENING_ARMY_SECONDS: no wait
+        order = buildplan.next_build_orders(_view(_t=C.OPENING_ARMY_SECONDS, buildings=have, units=_harvs(3),
+                                                  available_production=avail, economy=eco))
         assert order == [{"cmd": "build", "item": item}], (i, order)
         have = have + [{"id": 20 + i, "type": item}]
 
@@ -6065,3 +6066,53 @@ def test_trading_up_is_no_reason_to_counterattack():
     even = _view(_t=500.0, buildings=BASE + [{"id": 12, "type": "weap"}],
                  military={"army_value": 3300, "visible_enemy_value": 3000})                 # 1.1
     assert brain.choose_mode(even, cheese_since=None, traded_up=True) is Mode.BUILD
+
+
+def test_the_war_factory_waits_for_the_opening_army():
+    """2fe84e1f: the barracks idled 1:05-2:37 while the war factory's 2000
+    was set aside; 6 infantry met a 15-unit push at 3:16 and lost the war
+    factory. Units first until the army is worth OPENING_ARMY_VALUE (or
+    OPENING_ARMY_SECONDS), then the war factory."""
+    blds = [{"id": 10, "type": "fact"}, {"id": 11, "type": "powr"}, {"id": 12, "type": "tent"},
+            {"id": 13, "type": "proc"}, {"id": 14, "type": "proc"}, {"id": 15, "type": "powr"}]
+    avail = ["powr", "tent", "proc", "weap", "e1", "e3"]
+    eco = {"power_provided": 300, "power_drained": 100, "cash": 900}
+    few = [{"id": 30 + i, "type": "e1", "x": 20, "y": 20, "hp": 100} for i in range(6)]
+    v = dataclasses.replace(_view(_t=100.0, buildings=blds, units=_harvs(2) + few, available_production=avail,
+                                  economy=eco), army_value=1300.0)                 # the opening's 6-7 infantry
+    assert buildplan.next_build_orders(v) == []                                     # no war factory yet...
+    assert buildplan.build_reserve(v) == 0                                          # ...nor its money held
+    assert any(o.get("item") in ("e1", "e3") for o in executor._production_orders(v, Mode.BUILD))
+    w = dataclasses.replace(v, army_value=float(C.OPENING_ARMY_VALUE))
+    assert buildplan.next_build_orders(w) == [{"cmd": "build", "item": "weap"}]    # the army is there: now
+    late = dataclasses.replace(v, game_seconds=C.OPENING_ARMY_SECONDS)
+    assert buildplan.next_build_orders(late) == [{"cmd": "build", "item": "weap"}]  # not later than this
+    calm = dataclasses.replace(v, enemy_passive=True)
+    assert buildplan.next_build_orders(calm) == [{"cmd": "build", "item": "weap"}]  # no push is coming
+
+
+def test_the_advisors_more_army_counts_as_behind():
+    """9cada749: through two minutes of "more_army" it built a dome, a
+    refinery, a kennel and an expansion while the rusher grew from 2350 to
+    10100 against our 5900 (we believed 6960, not "behind")."""
+    import types
+    done = [{"id": 10 + i, "type": t} for i, t in enumerate(("fact", "powr", "tent", "proc", "proc", "powr", "weap"))]
+    eco = {"power_provided": 300, "power_drained": 100}
+    offered = ["powr", "tent", "proc", "weap", "fix", "kenn", "e1", "harv"]
+    with_fix = _view(_t=400.0, buildings=done + [{"id": 30, "type": "fix"}], units=_harvs(3), economy=eco,
+                     available_production=offered)
+    assert buildplan.next_build_orders(with_fix, units_first=True) == [{"cmd": "build", "item": "proc"}]  # the third: fine
+    three = with_fix.buildings + read(_raw(buildings=[{"id": 31, "type": "proc"}])).buildings
+    full = dataclasses.replace(with_fix, buildings=three, available=frozenset(offered) - {"tent"})   # no more barracks
+    assert buildplan.next_build_orders(full) == [{"cmd": "build", "item": "proc"}]           # a fourth, by game time
+    assert buildplan.next_build_orders(full, units_first=True) == []                           # none past the third, no kennel
+    more = types.SimpleNamespace(expand="auto", balance="more_army")
+    e = Expansion()
+    v = _exp_view(t=600.0, military={"army_value": 7000, "kills_cost": 9000, "deaths_cost": 3000})
+    e._ore_running_out = False
+    assert e._gates(v, Mode.BUILD, more)                                                       # the natural still goes
+    e.done = [{"site": (40, 10), "ore": (42, 10), "asked_at": None}]
+    assert e._gates(v, Mode.BUILD, types.SimpleNamespace(expand="auto", balance="balanced"))
+    assert not e._gates(v, Mode.BUILD, more)                                                   # no later MCV now...
+    e._ore_running_out = True
+    assert e._gates(v, Mode.BUILD, more)                                                       # ...unless home runs dry

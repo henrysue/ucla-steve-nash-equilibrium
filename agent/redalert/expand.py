@@ -441,6 +441,12 @@ class Expansion:
         # seats on one expansion until 9:30 at even trades).
         even = abs(view.kills_cost - view.deaths_cost) <= C.EXPAND_EVEN_TRADE_BAND
         passive = view.enemy_passive
+        # The advisor's "more_army" counts as behind on army (buildplan.more_army):
+        # the natural still goes, no later MCV while the army comes first,
+        # unless home is running dry.
+        if (getattr(advice, "balance", None) == "more_army" and not passive and self.done
+                and view.game_seconds >= C.BEHIND_AFTER_SECONDS and not getattr(self, "_ore_running_out", False)):
+            return False
         if wish == "wait" and not self._push(view.game_seconds) and not getattr(self, "_ore_running_out", False) \
                 and not even and not passive:
             return False   # broke and trading even: income beats the advisor's caution

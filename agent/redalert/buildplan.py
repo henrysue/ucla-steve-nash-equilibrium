@@ -168,11 +168,23 @@ def next_build_orders(view: View, expansion_ore: tuple[int, int] | None = None,
     step = walk_build_order(view, _build_order(view))
     if step:
         return step
-    # A kennel once the war factory is up (Soviet: dogs, the best scouts).
+    # A kennel once the war factory is up (Soviet: dogs, the best scouts) —
+    # not while the army comes first.
     kennel = _available(view, C.KENNEL)
-    if kennel and view.has_building(C.WAR_FACTORY) and not recovering(view) and not _count_built_and_queued(view, (C.KENNEL,)):
+    if (kennel and view.has_building(C.WAR_FACTORY) and not recovering(view) and not more_army(view, units_first)
+            and not _count_built_and_queued(view, (C.KENNEL,))):
         return [orders.build(kennel)]
     return []
+
+
+def more_army(view: View, units_first: bool) -> bool:
+    """The advisor's "more_army" (``units_first``) past the opening counts
+    as behind on army: units before extra refineries (past the follow-up's
+    third), expansions after the natural, the kennel and tech.
+    9cada749 kept building a dome, a refinery, a kennel and an expansion
+    through two minutes of "more_army" while the rusher grew from 2350 to
+    10100 against our 5900 (we believed 6960: not "behind")."""
+    return units_first and view.game_seconds >= C.BEHIND_AFTER_SECONDS and not view.enemy_passive
 
 
 def _build_order(view: View) -> tuple:
@@ -194,6 +206,19 @@ def follow_up(view: View) -> tuple:
     if refinery_room(view):
         return C.FOLLOW_UP
     return tuple(s for s in C.FOLLOW_UP if s != C.REFINERY)
+
+
+def opening_army_first(view: View) -> bool:
+    """The opening's war factory waits (not queued, its money not set aside)
+    while our army is worth less than ``OPENING_ARMY_VALUE``, until
+    ``OPENING_ARMY_SECONDS``: the early push comes at about 3:00 and the
+    war factory's 2000 starved the barracks for 90 s (2fe84e1f). Not
+    against a passive enemy (no push is coming), nor once it is queued."""
+    weap = _available(view, C.WAR_FACTORY) or C.WAR_FACTORY
+    return (view.game_seconds < C.OPENING_ARMY_SECONDS and not view.enemy_passive
+            and view.has_building(C.BARRACKS) and not view.has_building(C.WAR_FACTORY)
+            and not view.queued_count(weap) and not view.ready_in_queue(weap)
+            and view.army_value < C.OPENING_ARMY_VALUE)
 
 
 def factory_lost(view: View) -> bool:
@@ -292,6 +317,8 @@ def build_reserve(view: View, units_first: bool = False) -> float:
         seen[_ids(step)] = want = seen.get(_ids(step), 0) + 1
         if _count_built_and_queued(view, _ids(step)) >= want:
             continue
+        if _ids(step) == _ids(C.WAR_FACTORY) and opening_army_first(view):
+            break                      # the opening army first: its money goes to units
         resolved = _available(view, step) or (step if isinstance(step, str) else step[0])
         nxt = cost(resolved)
         break
@@ -307,6 +334,9 @@ def walk_build_order(view: View, build_order) -> list[dict]:
     seen: dict = {}
     for step in build_order:
         seen[_ids(step)] = want = seen.get(_ids(step), 0) + 1
+        if (_ids(step) == _ids(C.WAR_FACTORY) and _count_built_and_queued(view, _ids(step)) < want
+                and opening_army_first(view)):
+            return []                  # the opening army first (opening_army_first)
         resolved = _available(view, step)
         if resolved is None:
             # Not offered yet (its prerequisite is still building): wait for it
