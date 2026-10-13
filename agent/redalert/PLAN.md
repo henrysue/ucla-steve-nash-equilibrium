@@ -73,7 +73,11 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
 ### 1. Economy
 
 - **Opening**: power, barracks, refinery, refinery, power, war factory (the
-  pros' double refinery), its money set aside. Then the service depot (it
+  pros' double refinery), its money set aside — but the war factory waits
+  for an army worth 2000 (1.5x the opening's ~1300) or 2:30, whichever comes
+  first, so the barracks keeps training for the push at ~3:00 (2fe84e1f: the
+  barracks idled 1:05-2:37 saving for it, 6 infantry met a 15-unit push at
+  3:16 and lost the war factory). Not against a passive enemy. Then the service depot (it
   unlocks the main battle tanks) and a third refinery, unless outgunned; more
   barracks only after those. Under a rush read everything goes into units —
   except a lost war factory's rebuild and the harvesters in production.
@@ -253,8 +257,11 @@ An attack goes on until the retreat rule ends it. No mass/attack flip within
   - **Everything else** — a small group, a raid on the
     trucks, a spot we were hit at with no attacker in sight
     (`under_attack`/`unit_lost` events, vanished units) → the idle units
-    within 12 cells (and, for a small group at the main base, the idle units
-    at home), just enough to win clearly — counting the units already sent at
+    within 12 cells (and, for a small group at the main base — by its
+    buildings or trucks or within 16 cells of a yard — the idle units at
+    home, sent after it by id so a walking scout isn't lost: 2fe84e1f's
+    second scout shot our power plant and trucks for 40 s), just enough to
+    win clearly — counting the units already sent at
     it for 20 s or until they get there (c1c37a10: a lone scout drew two more
     every view until the whole concave stood at the back of the base).
   - **Expansions**: the outpost (2 infantry, the engine's guard order), one

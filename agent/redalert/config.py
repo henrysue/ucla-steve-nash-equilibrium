@@ -62,6 +62,9 @@ BUILD_ORDER = (
 # Then, unless outgunned (units first): the third refinery and the service
 # depot (tanks and the expansion MCV).
 FOLLOW_UP = (SERVICE_DEPOT, REFINERY)   # the depot first: it unlocks the main battle tanks (and the MCV)
+OPENING_ARMY_VALUE = 2000          # the war factory waits for an army worth this (1.5x the opening's ~1300)...
+OPENING_ARMY_SECONDS = 150.0       # ...until this at the latest (2fe84e1f: the barracks idled 1:05-2:37 saving for
+                                   # it, 6 infantry met a 15-unit push at 3:16 and lost the war factory)
 WAR_FACTORY_REBUILD_AFTER_SECONDS = 180.0   # past the opening, a lost (or missing) war factory is rebuilt first...
 OPTIONAL_BUILDINGS = ("dome", "fix", "kenn", "silo")   # ...cancelling any of these ahead of it in the Building queue
 POWER_MARGIN = 25                  # build power when provided - drained falls below this
@@ -529,6 +532,7 @@ ATTACK_STALL_SECONDS = 40.0        # attacking with no kills and nothing in sigh
 TRANSFORM_RADIUS_CELLS = 4         # an enemy MCV this close to a remembered yard: the yard packed up
 HOME_RAID_RADIUS_CELLS = 10        # a group this close to the main base (buildings, trucks) also draws the idle units at home...
 SMALL_RAID_VALUE = 1500            # ...and a group worth at most this is the idle units' job, more is the army's
+BASE_INTRUDER_CELLS = 16           # ...as is one this close to a yard of ours (a scout walking round the back of the base)
 RUSH_MIN_VALUE = 600               # in the opening, enemies at our base worth less are scouts, not a rush
 SECOND_FACTORY_SECONDS = 360.0     # a second war factory from this (service depot up, its price in hand or money floating)
 STALL_FORGET_CELLS = 10            # ...forget remembered buildings this close to the army...

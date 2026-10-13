@@ -196,6 +196,19 @@ def follow_up(view: View) -> tuple:
     return tuple(s for s in C.FOLLOW_UP if s != C.REFINERY)
 
 
+def opening_army_first(view: View) -> bool:
+    """The opening's war factory waits (not queued, its money not set aside)
+    while our army is worth less than ``OPENING_ARMY_VALUE``, until
+    ``OPENING_ARMY_SECONDS``: the early push comes at about 3:00 and the
+    war factory's 2000 starved the barracks for 90 s (2fe84e1f). Not
+    against a passive enemy (no push is coming), nor once it is queued."""
+    weap = _available(view, C.WAR_FACTORY) or C.WAR_FACTORY
+    return (view.game_seconds < C.OPENING_ARMY_SECONDS and not view.enemy_passive
+            and view.has_building(C.BARRACKS) and not view.has_building(C.WAR_FACTORY)
+            and not view.queued_count(weap) and not view.ready_in_queue(weap)
+            and view.army_value < C.OPENING_ARMY_VALUE)
+
+
 def factory_lost(view: View) -> bool:
     """Past the opening (``WAR_FACTORY_REBUILD_AFTER_SECONDS``, a barracks and
     a refinery up) with no war factory standing: it was destroyed (or never
@@ -292,6 +305,8 @@ def build_reserve(view: View, units_first: bool = False) -> float:
         seen[_ids(step)] = want = seen.get(_ids(step), 0) + 1
         if _count_built_and_queued(view, _ids(step)) >= want:
             continue
+        if _ids(step) == _ids(C.WAR_FACTORY) and opening_army_first(view):
+            break                      # the opening army first: its money goes to units
         resolved = _available(view, step) or (step if isinstance(step, str) else step[0])
         nxt = cost(resolved)
         break
@@ -307,6 +322,9 @@ def walk_build_order(view: View, build_order) -> list[dict]:
     seen: dict = {}
     for step in build_order:
         seen[_ids(step)] = want = seen.get(_ids(step), 0) + 1
+        if (_ids(step) == _ids(C.WAR_FACTORY) and _count_built_and_queued(view, _ids(step)) < want
+                and opening_army_first(view)):
+            return []                  # the opening army first (opening_army_first)
         resolved = _available(view, step)
         if resolved is None:
             # Not offered yet (its prerequisite is still building): wait for it

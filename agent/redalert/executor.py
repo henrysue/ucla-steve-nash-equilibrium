@@ -613,6 +613,7 @@ def respond(view: View, mode: Mode, scout_id: int | None, reserved: frozenset, h
     ``responding`` (the agent's, kept between views): the units already sent
     and where. Returns (orders, unit ids used)."""
     from .guard import _at_home
+    from .scout import our_yards
 
     if mode is Mode.RETREAT:
         return [], set()
@@ -641,6 +642,7 @@ def respond(view: View, mode: Mode, scout_id: int | None, reserved: frozenset, h
     main_assets = [a.cell for a in list(view.buildings) + list(view.units_of(C.HARVESTER))
                    if a.cell is not None and not a.wreck]
     half_skipped: list = []
+    yards = [y for y in our_yards(view) if y is not None]
 
     for g in sorted(groups, key=lambda g: -_value(view, g)):
         if mode not in AGGRESSIVE and held is not None and any(dist2(a.cell, held[0]) <= r2 for a in g):
@@ -651,8 +653,12 @@ def respond(view: View, mode: Mode, scout_id: int | None, reserved: frozenset, h
             continue                                       # on their side: not ours to chase (into their concave)
         centre = _centre(g)
         cell = min(g, key=lambda a: dist2(a.cell, centre)).cell
+        # In the base: by its buildings or trucks, or anywhere near a yard —
+        # 2fe84e1f's second scout walked round the back of the base, 13 cells
+        # from our buildings, and nobody went for it.
         small_home = (_value(view, g) <= C.SMALL_RAID_VALUE
-                      and any(dist2(a.cell, c) <= C.HOME_RAID_RADIUS_CELLS ** 2 for a in g for c in main))
+                      and (any(dist2(a.cell, c) <= C.HOME_RAID_RADIUS_CELLS ** 2 for a in g for c in main)
+                           or any(dist2(a.cell, y) <= C.BASE_INTRUDER_CELLS ** 2 for a in g for y in yards)))
         targets.append((cell, small_home, g))
     # A hit spot with a group by it is that group's (the concave's own fire
     # included) — but not a group on their side we leave alone.
@@ -700,7 +706,15 @@ def respond(view: View, mode: Mode, scout_id: int | None, reserved: frozenset, h
         if not near:
             continue
         ids = [u.id for u in near][:orders.MAX_UNITS_PER_ORDER]
-        out.append(orders.attack_move(ids, list(cell)))
+        mark = [a for a in group if a.id is not None]
+        if small_home and mark:
+            # In our base: after it by id — an attack-move to where a scout
+            # stood lost it as it walked on (2fe84e1f: 40 s shooting our
+            # power plant and trucks). RESPONSE_HOLD_SECONDS bounds the chase.
+            target = min(mark, key=lambda a: dist2(a.cell, near[0].cell))
+            out.append(orders.attack(ids, target.id))
+        else:
+            out.append(orders.attack_move(ids, list(cell)))
         used.update(ids)
         for i in ids:
             sent[i] = (tuple(cell), gids, t)

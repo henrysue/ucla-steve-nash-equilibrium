@@ -1250,8 +1250,9 @@ def test_double_refinery_order():
     eco = {"power_provided": 300, "power_drained": 100}
     have = [{"id": 10, "type": "fact"}]
     expected = ["powr", "tent", "proc", "proc", "powr", "weap", "fix", "proc"]
-    for i, item in enumerate(expected):
-        order = buildplan.next_build_orders(_view(buildings=have, units=_harvs(3), available_production=avail, economy=eco))
+    for i, item in enumerate(expected):                                 # past OPENING_ARMY_SECONDS: no wait
+        order = buildplan.next_build_orders(_view(_t=C.OPENING_ARMY_SECONDS, buildings=have, units=_harvs(3),
+                                                  available_production=avail, economy=eco))
         assert order == [{"cmd": "build", "item": item}], (i, order)
         have = have + [{"id": 20 + i, "type": item}]
 
@@ -3180,7 +3181,7 @@ def test_units_at_home_kill_a_small_raid_while_the_army_is_out():
     away = [{"id": 40 + i, "type": "3tnk", "x": 38, "y": 38, "hp": 100} for i in range(6)]
     v = _view(_t=600.0, buildings=BASE, units=home + away, visible_enemies=ranger)
     o, ids = executor.respond(v, Mode.ALL_IN, None, frozenset())
-    assert o == [{"cmd": "attack_move", "units": [30, 31], "to": [9, 10]}] and ids == {30, 31}
+    assert o == [{"cmd": "attack", "units": [30, 31], "target": 70}] and ids == {30, 31}   # after it, by id
     army = executor._army_orders(v, Mode.ALL_IN, reserved=frozenset(ids))
     assert not any(set(x["units"]) & ids for x in army)                         # the army leaves them to it
     big = [{"id": 70 + i, "type": "3tnk", "x": 9, "y": 10, "hp": 100} for i in range(6)]       # 6900: the army's fight
@@ -5550,7 +5551,7 @@ def test_a_lone_scout_in_the_base_draws_a_pair_not_the_concave():
     scout_ = [{"id": 900, "type": "e1", "x": 3, "y": 26, "hp": 100}]           # by the trucks, far from the concave
     v = _view(_t=300.0, buildings=blds, units=trucks + army, visible_enemies=scout_)
     (o,), used = executor.respond(v, Mode.BUILD, None, frozenset())
-    assert o["to"] == [3, 26] and len(o["units"]) == 2                          # 2 riflemen beat 1 (9ff91807)
+    assert o["target"] == 900 and len(o["units"]) == 2                          # 2 riflemen beat 1 (9ff91807)
     tanks = [{"id": 900 + i, "type": "2tnk", "x": 3, "y": 26, "hp": 100} for i in range(1)]
     (o,), _ = executor.respond(dataclasses.replace(v, enemy_units=read(_raw(visible_enemies=tanks)).enemy_units),
                                Mode.BUILD, None, frozenset())
@@ -6040,3 +6041,38 @@ def test_near_the_retreat_line_the_advisor_decides_whether_to_fight_on():
     w = _view(_t=600.0, buildings=BASE, military={"army_value": 3000, "visible_enemy_value": 3450})   # 0.87, over 0.8
     assert brain.choose_mode(w, **kw) is Mode.ALL_IN
     assert brain.choose_mode(w, model_pref=Mode.BUILD, **kw) is Mode.RETREAT           # its "hold": pull back
+
+
+def test_the_war_factory_waits_for_the_opening_army():
+    """2fe84e1f: the barracks idled 1:05-2:37 while the war factory's 2000
+    was set aside; 6 infantry met a 15-unit push at 3:16 and lost the war
+    factory. Units first until the army is worth OPENING_ARMY_VALUE (or
+    OPENING_ARMY_SECONDS), then the war factory."""
+    blds = [{"id": 10, "type": "fact"}, {"id": 11, "type": "powr"}, {"id": 12, "type": "tent"},
+            {"id": 13, "type": "proc"}, {"id": 14, "type": "proc"}, {"id": 15, "type": "powr"}]
+    avail = ["powr", "tent", "proc", "weap", "e1", "e3"]
+    eco = {"power_provided": 300, "power_drained": 100, "cash": 900}
+    few = [{"id": 30 + i, "type": "e1", "x": 20, "y": 20, "hp": 100} for i in range(6)]
+    v = dataclasses.replace(_view(_t=100.0, buildings=blds, units=_harvs(2) + few, available_production=avail,
+                                  economy=eco), army_value=1300.0)                 # the opening's 6-7 infantry
+    assert buildplan.next_build_orders(v) == []                                     # no war factory yet...
+    assert buildplan.build_reserve(v) == 0                                          # ...nor its money held
+    assert any(o.get("item") in ("e1", "e3") for o in executor._production_orders(v, Mode.BUILD))
+    w = dataclasses.replace(v, army_value=float(C.OPENING_ARMY_VALUE))
+    assert buildplan.next_build_orders(w) == [{"cmd": "build", "item": "weap"}]    # the army is there: now
+    late = dataclasses.replace(v, game_seconds=C.OPENING_ARMY_SECONDS)
+    assert buildplan.next_build_orders(late) == [{"cmd": "build", "item": "weap"}]  # not later than this
+    calm = dataclasses.replace(v, enemy_passive=True)
+    assert buildplan.next_build_orders(calm) == [{"cmd": "build", "item": "weap"}]  # no push is coming
+
+
+def test_a_scout_round_the_back_of_the_base_is_chased_down():
+    """2fe84e1f: the second scout walked round the back of the base, 13
+    cells from our buildings, then shot our power plant and trucks for 40 s
+    while responders walked to where it had stood."""
+    blds = [{"id": 10, "type": "fact", "x": 20, "y": 20}, {"id": 11, "type": "tent", "x": 18, "y": 16}]
+    army = [{"id": 100 + i, "type": "e1", "x": 30 + i % 3, "y": 20 + i // 3, "hp": 100, "idle": True} for i in range(6)]
+    scout_ = [{"id": 900, "type": "e1", "x": 8, "y": 26, "hp": 100}]               # 13 cells behind the yard
+    v = _view(_t=110.0, base_center=[20, 20], buildings=blds, units=army, visible_enemies=scout_)
+    (o,), used = executor.respond(v, Mode.BUILD, None, frozenset())
+    assert o["cmd"] == "attack" and o["target"] == 900 and len(o["units"]) == 2
