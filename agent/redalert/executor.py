@@ -457,6 +457,13 @@ def _army_orders(
             units = combat[:orders.MAX_UNITS_PER_ORDER]
             if waiting and not units:
                 return waiting
+            # The last stand (behind at the end): in two halves, by both flanks.
+            from .brain import last_stand
+
+            if last_stand(view):
+                both = _two_flanks(view, [i for i in combat], target)
+                if both:
+                    return both
             # Their army ahead in the open, a fight we take: meet it in a
             # concave rather than marching into it as a column.
             marching = [u for u in view.combat_units if u.id in set(units) and u.cell is not None]
@@ -825,6 +832,34 @@ def _army_home(view: View, mode: Mode, scout_id: int | None = None, reserved: fr
             return _form(view, fighters, point, facing)
     held = scout.concave_point(view)       # at the choke's mouth when there is one
     return _form(view, fighters, held[0], held[1]) if held is not None else []
+
+
+def _two_flanks(view: View, ids: list, target) -> list[dict] | None:
+    """The army in two halves, split by where they stand across the line to
+    ``target``, each attack-moving by a flank point on its own side
+    (``LAST_STAND_FLANK_FRACTION`` of the way to the target, sideways, half
+    way there) and on to the target: an all-in from both flanks. None with
+    fewer than ``LAST_STAND_MIN_UNITS``."""
+    units = [u for u in view.combat_units if u.id in set(ids) and u.cell is not None]
+    if len(units) < C.LAST_STAND_MIN_UNITS or target is None:
+        return None
+    cx = sum(u.cell[0] for u in units) / len(units)
+    cy = sum(u.cell[1] for u in units) / len(units)
+    dx, dy = target[0] - cx, target[1] - cy
+    d = (dx * dx + dy * dy) ** 0.5
+    if d < 1:
+        return None
+    px, py = -dy / d, dx / d
+    off = C.LAST_STAND_FLANK_FRACTION * d
+    mid = (cx + dx / 2, cy + dy / 2)
+    side = sorted(units, key=lambda u: (u.cell[0] - cx) * px + (u.cell[1] - cy) * py)
+    half = len(side) // 2
+    out = []
+    for group, sign in ((side[:half], -1), (side[half:], 1)):
+        via = scout._open_cell(view, (round(mid[0] + sign * px * off), round(mid[1] + sign * py * off)))
+        ids_ = [u.id for u in group][:orders.MAX_UNITS_PER_ORDER]
+        out += [orders.attack_move(ids_, list(via)), orders.attack_move(ids_, list(target), queued=True)]
+    return out
 
 
 def _concave_engage(view: View, fighters, foes) -> list[dict] | None:

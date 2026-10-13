@@ -80,6 +80,11 @@ def choose_mode(
     # attack winning its trades keeps going: c7a982ac pulled back from a won fight).
     if _should_protect_lead(view) and not (prev_mode in AGGRESSIVE and winning_trades):
         return Mode.PROTECT_LEAD
+    # The last stand: behind in the last 2 minutes, attack whatever the odds
+    # (from both flanks: executor) — sitting is a sure loss, and losses past
+    # it change nothing (91da02f3 sat out the end 14700 behind).
+    if last_stand(view):
+        return Mode.ALL_IN
 
     # Offensive decision: do we commit the deathball? Every fight is judged
     # the same way (strength.odds); their turrets at the target fight too
@@ -437,6 +442,15 @@ def _overwhelming_known(view: View) -> bool:
     four buildings instead of finishing)."""
     return (view.army_value >= C.MIN_ATTACK_ARMY_VALUE and view.kills_cost >= view.deaths_cost
             and army_odds(view) >= C.OVERWHELMING_ODDS)
+
+
+def last_stand(view: View) -> bool:
+    """Behind on kills - losses in the last ``LAST_STAND_REMAINING_SECONDS``,
+    with an army to attack with: all in, whatever the odds."""
+    return (view.remaining_seconds is not None
+            and view.remaining_seconds <= C.LAST_STAND_REMAINING_SECONDS
+            and view.kills_cost - view.deaths_cost < 0
+            and view.army_value >= C.MIN_ATTACK_ARMY_VALUE)
 
 
 def _catching_up(view: View) -> bool:

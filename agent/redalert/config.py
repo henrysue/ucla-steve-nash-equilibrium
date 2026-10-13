@@ -353,6 +353,10 @@ PROTECT_LEAD_REMAINING_SECONDS = 300.0  # from 15:00 (the tiebreak: kills - loss
 PROTECT_LEAD_MIN_MARGIN = 1500
 PROTECT_LEAD_LAST_SECONDS = 60.0        # ...or the final minute with any lead
 CATCH_UP_REMAINING_SECONDS = 300.0      # behind or level from 15:00: force trades (attack at parity)
+LAST_STAND_REMAINING_SECONDS = 120.0    # behind in the last 2 minutes: attack whatever the odds — a sure loss
+                                        # otherwise (91da02f3, 748f8d89: the losing seat sat out the end)...
+LAST_STAND_FLANK_FRACTION = 0.3         # ...in two halves, each by a flank point this share of the way to the
+LAST_STAND_MIN_UNITS = 12               # target sideways (with at least this many units; fewer go as one)
 
 # -- squads: scout, raids, home guard, garrison ---------------------------------------------------
 SCOUT_INSET_CELLS = 8              # patrol ring this far inside the map edge

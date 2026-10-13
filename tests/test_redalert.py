@@ -6759,3 +6759,30 @@ def test_squad_leads_can_be_kept_to_one_seat_for_an_a_b_match(monkeypatch):
     both = agent()
     both._leads_for_seat(dataclasses.replace(CTX, seat_position=0), None)
     assert both._leads                                                                     # unset: every seat
+
+
+def test_behind_in_the_last_two_minutes_we_go_all_in_from_both_flanks():
+    """91da02f3 and 748f8d89: the losing seat sat out the end (14700 and 4050
+    behind). Sitting is a sure loss: attack whatever the odds, in two halves."""
+    def at(remaining, kills, deaths, army=9000, theirs=20000):
+        return _view(buildings=BASE, _r=remaining, military={"army_value": army, "visible_enemy_value": theirs,
+                                                             "kills_cost": kills, "deaths_cost": deaths})
+    assert brain.choose_mode(at(100.0, 20000, 25000), cheese_since=None) is Mode.ALL_IN     # behind: all in (0.45x)
+    assert brain.choose_mode(at(200.0, 20000, 25000), cheese_since=None) is not Mode.ALL_IN  # not yet
+    assert brain.choose_mode(at(100.0, 25000, 20000), cheese_since=None) is not Mode.ALL_IN  # ahead: no
+    assert brain.choose_mode(at(100.0, 20000, 25000, army=500), cheese_since=None) is not Mode.ALL_IN  # nothing to go with
+    from agent.redalert.commander import Commander
+    c = Commander()
+    c.mode, c.mode_since = Mode.BUILD, 1080.0
+    assert c.decide(dataclasses.replace(at(100.0, 20000, 25000), game_seconds=1100.0)) is Mode.ALL_IN   # no dwell
+    army = [{"id": 100 + i, "type": "3tnk", "x": 20, "y": 10 + (i % 8), "hp": 100} for i in range(16)]
+    blds = [{"id": 90, "type": "fact", "x": 60, "y": 13}]
+    v = dataclasses.replace(_view(buildings=BASE, units=army, visible_enemy_buildings=blds, _r=100.0,
+                                  military={"army_value": 18400, "visible_enemy_value": 30000,
+                                            "kills_cost": 1000, "deaths_cost": 5000}), bounds=(0, 0, 80, 40))
+    o = executor._army_orders(v, Mode.ALL_IN)
+    firsts = [x for x in o if not x.get("queued")]
+    assert len(firsts) == 2 and sum(len(x["units"]) for x in firsts) == 16          # two halves, everyone
+    ys = sorted(x["to"][1] for x in firsts)
+    assert ys[0] < 13 - 3 and ys[1] > 13 + 3                                       # by opposite flanks
+    assert all(x["to"] == [60, 13] for x in o if x.get("queued"))                  # then onto their base

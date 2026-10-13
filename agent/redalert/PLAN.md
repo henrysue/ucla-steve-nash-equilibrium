@@ -451,7 +451,10 @@ has hysteresis:
 The tiebreak decides an unfinished game (kills - losses, then assets), so
 from 15:00: a real lead (1500+) is protected — no new attacks — and level or
 behind we force trades (attack at parity); in the last minute any lead is
-protected; once their base is razed — or they are simply beaten
+protected; behind in the last 2 minutes, the last stand: all in whatever the
+odds (no confirmation, no dwell, no retreat), the army in two halves by both
+flanks onto their base — sitting is a sure loss (91da02f3 and 748f8d89: the
+losing seat sat out the end 14700 and 4050 behind); once their base is razed — or they are simply beaten
 (overwhelming odds, well ahead on trades) with 10 or fewer buildings known —
 fan out and hunt every last building.
 

@@ -133,7 +133,7 @@ class Commander:
                 and brain.attack_odds(view) < brain._attack_threshold(view)):
             mode = Mode.RETREAT
         mode = self._confirm(view, prev, mode, skip=rushing or hunting or up or brain._catching_up(view) or strike)
-        if ({prev, mode} == {Mode.BUILD, Mode.ALL_IN}
+        if ({prev, mode} == {Mode.BUILD, Mode.ALL_IN} and not brain.last_stand(view)
                 and view.game_seconds - self.mode_since < C.MODE_MIN_DWELL_SECONDS):
             mode = prev                            # commit: no quick flip (a confirmation is kept)
         if mode is Mode.ALL_IN:
