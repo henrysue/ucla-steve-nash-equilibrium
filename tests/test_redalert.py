@@ -6341,10 +6341,15 @@ def test_the_yuriko_sparring_build_saves_for_the_war_factory_then_pushes_tanks_a
     full = opening + [{"id": 13, "type": "proc"}, {"id": 14, "type": "proc"}, {"id": 15, "type": "powr"},
                       {"id": 16, "type": "weap"}, {"id": 17, "type": "fix"}]
     tanks = [{"id": 50 + i, "type": "2tnk", "x": 20, "y": 20, "hp": 100} for i in range(3)]
+    early = _view(_t=200.0, buildings=full, units=six, available_production=avail, economy=eco)
+    assert [o["item"] for o in y.production(early, Mode.BUILD)] == ["e1"]            # depot up: infantry until 4:05
     w = _view(_t=250.0, buildings=full, units=six + tanks, available_production=avail, economy=eco,
               military={"army_value": 3150})
     items = [o["item"] for o in y.production(w, Mode.BUILD)]
     assert "2tnk" in items and "e3" in items                                         # tanks, rockets alternating
+    late = _view(_t=sparring.YURIKO_SECOND_FACTORY_SECONDS, buildings=full + [{"id": 18, "type": "powr"}], units=six,
+                 available_production=avail, economy=eco)
+    assert y.build(late) == [{"cmd": "build", "item": "weap"}]                       # a second war factory at 5:54
     assert y.mode(w, None, Mode.BUILD) is Mode.BUILD                                  # not before 4:30
     push = dataclasses.replace(w, game_seconds=sparring.YURIKO_PUSH_SECONDS)
     assert y.mode(push, None, Mode.BUILD) is Mode.ALL_IN

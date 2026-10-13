@@ -17,11 +17,12 @@ instead of our game plan, so the other seat's reads and answers get tested:
   Sidestep, October 13; she won both by ~6:45): power, one barracks, two
   refineries, power, war factory (placed 2:39), depot (3:20), power; six
   riflemen at 0:32-0:42, then nothing until the war factory, a few more
-  riflemen, pillboxes at 2:40 and 3:35; from the depot, medium/heavy tanks
-  nonstop with rocket soldiers and riflemen. The push from
+  riflemen, pillboxes at 2:40 and 3:35; from 4:05 (the depot up),
+  medium/heavy tanks nonstop with rocket soldiers and riflemen. The push from
   ``YURIKO_PUSH_SECONDS`` with ``YURIKO_PUSH_TANKS`` tanks, reinforced until
-  spent (``YURIKO_REGROUP_SHARE``), then the next; a third refinery at 6:40
-  and no expansion.
+  spent (``YURIKO_REGROUP_SHARE``), then the next; a second war factory at
+  5:54, a third refinery at 6:05 and no expansion (checked against
+  yuriko-vs-abu-3 too).
 - ``turtler``: our build plus a growing ring of turrets (``TURTLE_DEFENSES``
   over time, up to ``TURTLE_MAX_DEFENSES``), the army at home, no raids. It
   only attacks late (``TURTLE_PUSH_SECONDS`` with an edge) or with a huge army
@@ -75,19 +76,22 @@ RUSH_REGROUP_SHARE = 0.4         # a wave pushes until the army falls below this
 RUSH_INFANTRY_DEPTH = 2
 RUSH_TANK_DEPTH = 2
 
-# yuriko (current, yuriko-vs-abu x2: war factory 2:39, depot 3:20, pillboxes 2:55 and 3:58, tanks from 4:10,
-# the push 4:30-5:30 with 5-6 medium tanks and 8-12 infantry, 9000 queued by 6:00, a third refinery 6:39)
+# yuriko (current, yuriko-vs-abu x3: war factory 2:39-2:43, depot 3:13-3:20, pillboxes 2:55 and 3:54-3:58,
+# 12-16 infantry then tanks from 4:08-4:20, the push 5:00-6:30 with 5-6 medium tanks, 9000 queued by 6:00, a
+# second war factory queued 5:54, a third refinery 6:05-6:44, the next push ~8:30 after regrouping)
 YURIKO_BUILD_ORDER = ("powr", ("tent", "barr"), "proc", "proc", "powr", "weap", "fix", "powr")
 YURIKO_OPENING_RIFLES = 6           # riflemen before the war factory (then the money waits for it)
 YURIKO_INFANTRY_BEFORE_TANKS = 12   # infantry while the depot isn't up
+YURIKO_TANKS_FROM_SECONDS = 245.0   # tanks from 4:05 (her depot stands ~3:15, the money first goes to a pillbox
+                                    # and power; 12-16 infantry queued before the first tank at 4:08-4:20)
 YURIKO_PILLBOXES = ((160.0, 1), (215.0, 2))   # (game s, turrets)
 YURIKO_PUSH_SECONDS = 270.0         # the push from 4:30...
 YURIKO_PUSH_TANKS = 3               # ...with at least this many main battle tanks
 YURIKO_REGROUP_SHARE = 0.4          # it pushes until down to this share of its launch value...
 YURIKO_NEXT_GROWTH = 1.3            # ...the next once the army is this x the last launch...
 YURIKO_NEXT_GAP_SECONDS = 150.0     # ...or this long after regrouping
-YURIKO_LATE_REFINERY_SECONDS = 400.0   # a third refinery then (6:39)...
-YURIKO_SECOND_FACTORY_SECONDS = 480.0  # ...and a second war factory (assumed: her games ended by 6:50)
+YURIKO_LATE_REFINERY_SECONDS = 365.0   # a third refinery then (queued 6:05-6:44)...
+YURIKO_SECOND_FACTORY_SECONDS = 354.0  # ...and a second war factory (queued 5:54, yuriko-vs-abu-3)
 YURIKO_TANK_DEPTH = 2
 
 # turtler
@@ -357,8 +361,9 @@ class Yuriko(Archetype):
             if rifle and len(view.units_of(C.RIFLE)) + view.queued_count(rifle) < YURIKO_OPENING_RIFLES:
                 out.append(orders.train(rifle, count=1))
             return out
-        if not view.has_building(C.SERVICE_DEPOT):
-            if rifle and infantry + queued_inf < YURIKO_INFANTRY_BEFORE_TANKS and view.queued_count(rifle) < 1:
+        if not view.has_building(C.SERVICE_DEPOT) or view.game_seconds < YURIKO_TANKS_FROM_SECONDS:
+            cap = YURIKO_INFANTRY_BEFORE_TANKS + (4 if view.has_building(C.SERVICE_DEPOT) else 0)   # 12-16
+            if rifle and infantry + queued_inf < cap and view.queued_count(rifle) < 1:
                 out.append(orders.train(rifle, count=1))
             return out
         if tank and view.queued_count(tank) < YURIKO_TANK_DEPTH:

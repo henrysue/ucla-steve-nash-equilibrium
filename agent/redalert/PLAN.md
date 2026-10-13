@@ -514,12 +514,12 @@ logged placements)
     factory ~11:30, no expansion; nonstop riflemen then main battle tanks; waves from ~3:00 (18+ fighters),
     each later one once the army is 1.4x the last launch (2.5-5 min after regrouping), pushing until
     down to 40% of its launch value.
-  - `RA_SPARRING=yuriko`: Yuriko's current build (yuriko-vs-abu x2, won both by ~6:45): power, one
-    barracks, two refineries, power, war factory, depot, power; six riflemen then nothing until the
-    war factory, a few more riflemen, pillboxes at 2:40 and 3:35; from the depot tanks nonstop with
-    rocket soldiers and riflemen alternating; the push from 4:30 with 3+ tanks, reinforced until down to
-    40% of its launch value, the next at 1.3x it (or 2:30 later); a third refinery at 6:40, a second war
-    factory at 8:00 (assumed), no expansion.
+  - `RA_SPARRING=yuriko`: Yuriko's current build (yuriko-vs-abu x3, won all three by 6:45-10:10):
+    power, one barracks, two refineries, power, war factory, depot, power; six riflemen then nothing
+    until the war factory, 12-16 infantry in all, pillboxes at 2:40 and 3:35; from 4:05 tanks nonstop
+    with rocket soldiers and riflemen alternating; the push from 4:30 with 3+ tanks, reinforced until
+    down to 40% of its launch value, the next at 1.3x it (or 2:30 later); a second war factory at 5:54,
+    a third refinery at 6:05, no expansion.
   - `RA_SPARRING=turtler`: our build plus a growing turret ring (2 at 2:30 up to 8 by 12:00), army at
     home, no raids; attacks only from 15:00 with a 1.3 edge, or with an 18000 army — or at once when the
     rules see a 2x edge (it punishes a blunder; the macro too).
