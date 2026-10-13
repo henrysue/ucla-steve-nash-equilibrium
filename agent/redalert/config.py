@@ -27,7 +27,7 @@ ROCKET = "e3"
 # tanks). Pro replays: heavy/medium tanks in every game, light tanks never.
 TANK_PREFERENCE = ("3tnk", "2tnk", "4tnk", "1tnk")
 MAIN_BATTLE_TANKS = ("3tnk", "2tnk", "4tnk")
-TANK_VALUE_SHARE = 0.5             # pros keep 45-55% of combat value in tanks: below this, tanks come first
+TANK_VALUE_SHARE = 0.4             # a balanced mix: about 40% of combat value in tanks (with infantry and siege)
 ENEMY_MIX_SECONDS = 180.0          # their army's make-up: the unit types our scouts saw this recently
 HARVESTER = ("harv",)
 SIEGE_UNITS = ("v2rl", "arty")     # Soviet V2 / Allied artillery: outrange defenses
@@ -52,18 +52,21 @@ KNOWN_COSTS = {                    # the skill guide's prices, when the rules gi
     "pbox": 600, "hbox": 750, "gun": 800, "ftur": 600, "tsla": 1200, "agun": 800, "sam": 700,
 }
 
-# -- opening: the pros' double refinery into the war factory (a repeated id = one more of it) --
-# The replays: refineries at 1:00 / 1:38, war factory 2:40. The advisor waits
-# until it stands (unless a rush is read).
+# -- opening: the standard double refinery (a repeated id = one more of it) --
+# Power by the yard (the refinery then sits against the ore), barracks (early
+# infantry against harassment), two refineries (two free trucks: income far
+# faster than buying trucks), war factory; then power to stay green and the
+# service depot, then the MCV to expand (dvoid's guide adds a third refinery,
+# more barracks and a fourth refinery for the first expansion). The replays:
+# refineries at 1:00 / 1:38, war factory 2:40. The advisor waits until it
+# stands (unless a rush is read).
 BUILD_ORDER = (
-    POWER_PLANT, BARRACKS, REFINERY, REFINERY,   # economy + infantry
-    POWER_PLANT, WAR_FACTORY,                    # power + war factory
+    POWER_PLANT, BARRACKS, REFINERY, REFINERY,   # power, infantry, the two free trucks
+    WAR_FACTORY,                                 # vehicles
 )
-# Then, unless outgunned (units first): the third refinery and the service
-# depot (tanks and the expansion MCV).
-FOLLOW_UP = (SERVICE_DEPOT, REFINERY)   # the depot first: it unlocks the main battle tanks (and the MCV)...
-DEPOT_AFTER_SECONDS = 600.0        # ...but not before this: its 1200 goes into the army (a passive enemy: at once,
-                                   # for the expansions' MCV); the radar dome takes its place (siege units)
+# Then, unless outgunned (units first): power, the service depot (main battle
+# tanks and the expansion MCV) and the third refinery.
+FOLLOW_UP = (POWER_PLANT, SERVICE_DEPOT, REFINERY)
 OPENING_ARMY_VALUE = 2000          # the war factory waits for an army worth this (1.5x the opening's ~1300)...
 OPENING_ARMY_SECONDS = 150.0       # ...until this at the latest (2fe84e1f: the barracks idled 1:05-2:37 saving for
                                    # it, 6 infantry met a 15-unit push at 3:16 and lost the war factory)

@@ -587,19 +587,13 @@ def test_a_just_sent_build_is_not_queued_twice():
     assert {"cmd": "build", "item": "powr"} in agent.choose_action(state, CTX).action["orders"]
 
 
-def test_the_dome_closes_the_opening_and_the_depot_waits_for_ten_minutes():
+def test_service_depot_closes_the_double_refinery_order():
     built = [{"id": 10, "type": "fact"}, {"id": 11, "type": "powr"}, {"id": 12, "type": "tent"},
              {"id": 13, "type": "proc"}, {"id": 14, "type": "weap"}, {"id": 15, "type": "proc"},
              {"id": 16, "type": "powr"}, {"id": 17, "type": "proc"}]
-    kw = dict(buildings=built, units=_harvs(3), available_production=["powr", "tent", "proc", "weap", "fix", "dome"],
+    v = _view(buildings=built, units=_harvs(3), available_production=["powr", "tent", "proc", "weap", "fix"],
               economy={"power_provided": 300, "power_drained": 100})
-    assert buildplan.next_build_orders(_view(**kw)) == [{"cmd": "build", "item": "dome"}]
-    domed = dict(kw, buildings=built + [{"id": 18, "type": "dome"}])
-    assert buildplan.next_build_orders(_view(**domed)) == [{"cmd": "build", "item": "tent"}]  # army, not the depot
-    assert "fix" not in buildplan.follow_up(_view(**domed))
-    assert "fix" in buildplan.follow_up(_view(_t=C.DEPOT_AFTER_SECONDS, **domed))             # from 10:00
-    calm = dataclasses.replace(_view(_t=300.0, **domed), enemy_passive=True)
-    assert "fix" in buildplan.follow_up(calm)                                                 # passive: the MCV needs it
+    assert buildplan.next_build_orders(v) == [{"cmd": "build", "item": "fix"}]
 
 
 def test_engineers_medics_and_husks_are_not_army():
@@ -1251,11 +1245,11 @@ def test_a_model_defense_side_behind_the_base_is_ignored():
 
 
 def test_double_refinery_order():
-    """Power, barracks, refinery, refinery, power, war factory, dome (siege; the depot waits), refinery."""
-    avail = ["powr", "tent", "proc", "weap", "fix", "dome"]
+    """Power, barracks, refinery, refinery, war factory, power, depot (tanks, the MCV), refinery."""
+    avail = ["powr", "tent", "proc", "weap", "fix"]
     eco = {"power_provided": 300, "power_drained": 100}
     have = [{"id": 10, "type": "fact"}]
-    expected = ["powr", "tent", "proc", "proc", "powr", "weap", "dome", "proc"]
+    expected = ["powr", "tent", "proc", "proc", "weap", "powr", "fix", "proc"]
     for i, item in enumerate(expected):                                 # past OPENING_ARMY_SECONDS: no wait
         order = buildplan.next_build_orders(_view(_t=C.OPENING_ARMY_SECONDS, buildings=have, units=_harvs(3),
                                                   available_production=avail, economy=eco))
@@ -1963,16 +1957,13 @@ def test_the_build_order_waits_instead_of_jumping_to_the_second_power_plant():
     assert buildplan.next_build_orders(v) == []           # wait for barracks, don't queue powr #2
 
 
-def test_barracks_multiply_after_the_follow_up():
+def test_barracks_multiply_after_the_service_depot():
     base = _ECON_BASE + [{"id": 15, "type": "powr"}, {"id": 18, "type": "proc"}, {"id": 19, "type": "proc"}]
-    late = C.DEPOT_AFTER_SECONDS
-    assert buildplan.barracks_target(_view(_t=late, buildings=base)) == 1               # the depot is due: first
+    assert buildplan.barracks_target(_view(buildings=base)) == 1
     two_refineries = [b for b in base if b["id"] != 19] + [{"id": 16, "type": "fix"}]
-    assert buildplan.barracks_target(_view(_t=late, buildings=two_refineries)) == 1     # the third refinery comes first
+    assert buildplan.barracks_target(_view(buildings=two_refineries)) == 1    # the third refinery comes first
     assert buildplan.barracks_target(_view(buildings=base + [{"id": 16, "type": "fix"}])) == 2
     assert buildplan.barracks_target(_view(_t=340.0, buildings=base + [{"id": 16, "type": "fix"}])) == C.MAX_BARRACKS
-    assert buildplan.barracks_target(_view(buildings=base)) == 1                         # the dome first...
-    assert buildplan.barracks_target(_view(buildings=base + [{"id": 16, "type": "dome"}])) == 2   # ...in the depot's place
 
 
 def test_refineries_keep_coming_over_time(monkeypatch):
@@ -3677,18 +3668,18 @@ def test_the_advisor_reads_the_scouts_from_the_first_second():
     assert len(seen[-1][1]["recent_sightings"]) == 7     # each actor once, not every view
 
 
-def test_after_the_opening_the_dome_then_refinery_three_only_when_not_outgunned():
+def test_after_the_opening_the_depot_then_refinery_three_only_when_not_outgunned():
     done = [{"id": 10 + i, "type": t} for i, t in enumerate(("fact", "powr", "tent", "proc", "proc", "powr", "weap"))]
     eco = {"power_provided": 300, "power_drained": 100}
-    offered = ["powr", "tent", "proc", "weap", "fix", "dome", "e1", "e3", "harv"]
+    offered = ["powr", "tent", "proc", "weap", "fix", "e1", "e3", "harv"]
     calm = _view(_t=170.0, buildings=done, units=_harvs(2), economy=eco, available_production=offered)
     assert buildplan.opening_done(calm)
-    assert buildplan.next_build_orders(calm) == [{"cmd": "build", "item": "dome"}]      # siege unlocks first
-    with_dome = _view(_t=200.0, buildings=done + [{"id": 30, "type": "dome"}], units=_harvs(2), economy=eco,
-                      available_production=offered)
-    assert buildplan.next_build_orders(with_dome) == [{"cmd": "build", "item": "proc"}]
+    assert buildplan.next_build_orders(calm) == [{"cmd": "build", "item": "fix"}]       # tanks unlock first
+    with_fix = _view(_t=200.0, buildings=done + [{"id": 30, "type": "fix"}], units=_harvs(2), economy=eco,
+                     available_production=offered)
+    assert buildplan.next_build_orders(with_fix) == [{"cmd": "build", "item": "proc"}]
     hot = _view(_t=170.0, buildings=done, units=_harvs(2), economy=eco, visible_enemies=_push(8))
-    assert not any(o.get("item") in ("proc", "fix", "dome") for o in buildplan.next_build_orders(hot))
+    assert not any(o.get("item") in ("proc", "fix") for o in buildplan.next_build_orders(hot))
 
 
 # -- match 89356b51 ------------------------------------------------------------
@@ -4034,10 +4025,10 @@ def test_outnumbered_the_army_holds_behind_its_turret():
 def test_trucks_come_back_before_the_depot_and_the_kennel():
     built = [{"id": 10, "type": "fact"}, {"id": 11, "type": "powr"}, {"id": 12, "type": "barr"}, {"id": 13, "type": "proc"},
              {"id": 14, "type": "proc"}, {"id": 15, "type": "powr"}, {"id": 16, "type": "weap"}, {"id": 17, "type": "proc"}]
-    avail = ["powr", "barr", "proc", "weap", "fix", "dome", "kenn", "dog", "e1"]
+    avail = ["powr", "barr", "proc", "weap", "fix", "kenn", "dog", "e1"]
     eco = {"power_provided": 300, "power_drained": 100}
     assert buildplan.next_build_orders(_view(buildings=built, units=_harvs(3), available_production=avail,
-                                             economy=eco)) == [{"cmd": "build", "item": "dome"}]
+                                             economy=eco)) == [{"cmd": "build", "item": "fix"}]
     assert buildplan.next_build_orders(_view(buildings=built, units=_harvs(1), available_production=avail,
                                              economy=eco)) == []                  # one truck for three refineries: income first
 
@@ -6113,13 +6104,14 @@ def test_the_retreat_line_is_by_a_turret_out_at_the_war_factory():
     assert (line[0] - 32) ** 2 + (line[1] - 28) ** 2 <= 9                        # beside the pillbox, not the yard
 
 
-def test_the_radar_dome_goes_as_far_from_the_enemy_as_the_base_reaches():
+@pytest.mark.parametrize("item", ["dome", "fix"])
+def test_tech_goes_as_far_from_the_enemy_as_the_base_reaches(item):
     blds = [{"id": 10, "type": "fact", "x": 20, "y": 20}, {"id": 11, "type": "powr", "x": 16, "y": 20},
             {"id": 12, "type": "tent", "x": 24, "y": 20}]
     v = _view(base_center=[20, 20], buildings=blds)                               # enemy spawn guess: (40, 40)
-    spot = buildplan.placement_cell(v, "dome")
+    spot = buildplan.placement_cell(v, item)
     far = (40, 40)
-    others = buildplan.legal_spots(v, "dome")
+    others = buildplan.legal_spots(v, item)
     assert all((spot[0] - far[0]) ** 2 + (spot[1] - far[1]) ** 2 >= (s[0] - far[0]) ** 2 + (s[1] - far[1]) ** 2
                for s in others)
 
@@ -6136,3 +6128,50 @@ def test_siege_units_are_part_of_the_mix_once_the_dome_offers_them():
                  available_production=["e1", "e3", "1tnk", "arty", "harv"])
     assert not executor.siege_short(full)
     assert not any(o.get("item") == "arty" for o in executor._production_orders(full, Mode.BUILD))
+
+
+def test_new_units_rally_to_the_army_at_home_while_a_push_stands_at_the_massing_point():
+    """2fe84e1f at 4:05: riflemen fresh from the barracks walked to the
+    massing point one at a time, where the push stood, and were shot there."""
+    blds = [{"id": 10, "type": "fact", "x": 4, "y": 4}, {"id": 11, "type": "tent", "x": 8, "y": 4, "rally": None}]
+    calm = _view(buildings=blds)
+    stage = scout.choke_cell(calm)
+    assert executor._rally_orders(calm) == [{"cmd": "rally", "building": 11, "to": list(stage)}]
+    there = [{"id": 90, "type": "e1", "x": stage[0], "y": stage[1], "hp": 100}]
+    hot = _view(buildings=blds, visible_enemies=there)
+    (o,) = executor._rally_orders(hot)
+    assert o["to"] != list(stage) and tuple(o["to"]) == scout.home_line(hot, tuple(stage))   # at the army's line
+    (d,) = executor._rally_orders(calm, Mode.DEFEND_BASE)
+    assert tuple(d["to"]) == scout.home_line(calm)                                           # defending: the same
+
+
+def test_a_push_is_never_answered_in_packets():
+    """2fe84e1f at 3:51: 5-6 riflemen sent at two of a 15-unit push in sight
+    by the war factory died together. A push is the army's, whole."""
+    blds = [{"id": 10, "type": "fact", "x": 4, "y": 4}, {"id": 11, "type": "tent", "x": 8, "y": 4}]
+    idle = [{"id": 100 + i, "type": "e1", "x": 10 + i % 3, "y": 6 + i // 3, "hp": 100, "idle": True} for i in range(8)]
+    push = [{"id": 900 + i, "type": "e1", "x": 12 + i % 4, "y": 12 + i // 4, "hp": 100} for i in range(16)]   # 1600
+    v = _view(_t=300.0, buildings=blds, units=idle, visible_enemies=push)
+    assert executor.respond(v, Mode.ALL_IN, None, frozenset()) == ([], set())     # the units at home, the army out
+    scout._INTERCEPT.update(at=(9, 9), facing=(13, 13), group=[], seen=290.0)    # a push on, mostly unseen
+    few = _view(_t=300.0, buildings=blds, units=idle, visible_enemies=push[:2])
+    try:
+        assert executor.respond(few, Mode.ALL_IN, None, frozenset()) == ([], set())   # not even its few in sight
+    finally:
+        scout._INTERCEPT.update(at=None, facing=None, group=[], seen=-1e9)
+
+
+def test_the_army_judges_a_fight_at_home_against_the_whole_push_not_the_few_in_sight():
+    blds = [{"id": 10, "type": "fact", "x": 4, "y": 4}, {"id": 11, "type": "tent", "x": 8, "y": 4},
+            {"id": 12, "type": "weap", "x": 12, "y": 4}]
+    army = [{"id": 100 + i, "type": "e1", "x": 8 + i % 3, "y": 10 + i // 3, "hp": 100, "idle": True} for i in range(7)]
+    push = [{"id": 900 + i, "type": "e1", "x": 14 + i % 4, "y": 6 + i // 4, "hp": 100} for i in range(15)]
+    seen = _view(_t=300.0, buildings=blds, units=army, visible_enemies=push)
+    scout._INTERCEPT.update(at=None, facing=None, group=[], seen=-1e9)
+    try:
+        assert scout.incoming_push(seen) is not None                              # the push, seen whole
+        few = _view(_t=305.0, buildings=blds, units=army, visible_enemies=push[:2])
+        o = executor._army_orders(few, Mode.DEFEND_BASE)
+        assert not any(x["cmd"] == "attack_move" and tuple(x["to"]) in {(14, 6), (15, 6)} for x in o)   # held at the line
+    finally:
+        scout._INTERCEPT.update(at=None, facing=None, group=[], seen=-1e9)

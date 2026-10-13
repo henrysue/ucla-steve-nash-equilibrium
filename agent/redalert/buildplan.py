@@ -190,21 +190,10 @@ def _build_order(view: View) -> tuple:
 def follow_up(view: View) -> tuple:
     """The opening's follow-up — without its refinery when no field has a
     spot its trucks walk from (refinery_room: the build order queued one
-    10 steps out, d2d8dc27), and without the service depot while it waits
-    (:func:`depot_waits`)."""
-    steps = C.FOLLOW_UP if refinery_room(view) else tuple(s for s in C.FOLLOW_UP if s != C.REFINERY)
-    if depot_waits(view):                    # the radar dome in its place: siege units, not main battle tanks yet
-        steps = tuple(C.RADAR_DOME if s == C.SERVICE_DEPOT else s for s in steps)
-    return steps
-
-
-def depot_waits(view: View) -> bool:
-    """No service depot before ``DEPOT_AFTER_SECONDS``: its 1200 goes into
-    the army, and the radar dome takes its place in the follow-up (V2s /
-    artillery). Against a passive enemy it comes at once (the expansions'
-    MCV needs it)."""
-    return (view.game_seconds < C.DEPOT_AFTER_SECONDS and not view.enemy_passive
-            and not view.has_building(C.SERVICE_DEPOT))
+    10 steps out, d2d8dc27)."""
+    if refinery_room(view):
+        return C.FOLLOW_UP
+    return tuple(s for s in C.FOLLOW_UP if s != C.REFINERY)
 
 
 def opening_army_first(view: View) -> bool:
@@ -500,10 +489,10 @@ def placement_cell(view: View, item: str, defense_at: tuple[int, int] | None = N
     flank = _blend(side, enemy, C.PRODUCTION_FORWARD_BIAS)
     if item in C.BARRACKS:
         return grow_spot(view, flank, item, near=home)
-    if item in (C.WAR_FACTORY, C.SERVICE_DEPOT):
+    if item == C.WAR_FACTORY:
         return grow_spot(view, flank, item, near=home)
-    if item == C.RADAR_DOME:
-        # As far from the enemy as the base reaches: it can't be sniped.
+    if item in (C.RADAR_DOME, C.SERVICE_DEPOT):
+        # Tech as far from the enemy as the base reaches: it can't be sniped.
         spots = legal_spots(view, item, home)
         far = enemy_spawn_guess(view)
         if spots and far is not None:
@@ -1169,13 +1158,11 @@ def _ahead(view: View, money: float) -> bool:
 
 
 def barracks_target(view: View) -> int:
-    """1 barracks until the opening and its follow-up stand (service depot,
-    or the radar dome while the depot waits, and the third refinery: pros add the 2nd around 4:00-4:20, after them);
+    """1 barracks until the opening and its follow-up stand (service depot
+    and the third refinery: pros add the 2nd around 4:00-4:20, after them);
     then 2, and more by game time."""
     refineries = sum(1 for b in view.buildings if b.type == C.REFINERY and not b.wreck)
-    # The follow-up's building: the depot, or the dome while the depot waits.
-    depot = view.has_building(C.SERVICE_DEPOT) or (depot_waits(view) and view.has_building(C.RADAR_DOME))
-    if not depot or refineries < C.BUILD_ORDER.count(C.REFINERY) + follow_up(view).count(C.REFINERY):
+    if not view.has_building(C.SERVICE_DEPOT) or refineries < C.BUILD_ORDER.count(C.REFINERY) + follow_up(view).count(C.REFINERY):
         return 1
     want = 2
     for at, n in C.BARRACKS_SCHEDULE:

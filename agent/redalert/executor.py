@@ -82,7 +82,7 @@ def plan(
                                         expansion_site=exp_def if expansion is not None else None, home=home,
                                         attacked=mode in (Mode.DEFEND_RUSH, Mode.DEFEND_BASE))
     out += _economy_orders(view, harvest_orders)
-    out += _rally_orders(view)
+    out += _rally_orders(view, mode)
     out += _production_orders(view, mode, sparring=sparring, threat=threat,
                               units_first=units_first)
     out += list(scout_orders)
@@ -155,13 +155,25 @@ def _economy_orders(view: View, harvest_orders: list[dict] | None = None) -> lis
     return list(harvest_orders) + _repair_orders(view)
 
 
-def _rally_orders(view: View) -> list[dict]:
+def _rally_orders(view: View, mode: Mode | None = None) -> list[dict]:
     """Point every barracks' and war factory's rally at the staging point, so
     new units walk to the front by themselves (pros set rally points 11-46
-    times a game)."""
+    times a game) — but at the army's line at home (scout.home_line) while
+    their units stand at the staging point, a push is coming or we defend:
+    new units join the army instead of walking out one by one into theirs
+    (2fe84e1f at 4:05: riflemen fresh from the barracks shot one at a time
+    at the massing point, where the push stood)."""
     stage = scout.choke_cell(view)
     if stage is None:
         return []
+    near = _enemies_near(view, [stage])
+    push = scout.incoming_push(view)
+    if push is not None:
+        stage = push[0]
+    elif near:
+        stage = scout.home_line(view, _centre(near)) or stage
+    elif mode in DEFENSIVE:
+        stage = scout.home_line(view) or stage
     r2 = C.RALLY_TOLERANCE_CELLS ** 2
     return [
         orders.rally(b.id, stage) for b in view.buildings
@@ -656,6 +668,8 @@ def respond(view: View, mode: Mode, scout_id: int | None, reserved: frozenset, h
                    if a.cell is not None and not a.wreck]
     half_skipped: list = []
     yards = [y for y in our_yards(view) if y is not None]
+    push = scout.incoming_push(view)
+    push_at = push[1] if push is not None else None      # where the push stands (held a while out of sight)
 
     for g in sorted(groups, key=lambda g: -_value(view, g)):
         if mode not in AGGRESSIVE and held is not None and any(dist2(a.cell, held[0]) <= r2 for a in g):
@@ -709,6 +723,13 @@ def respond(view: View, mode: Mode, scout_id: int | None, reserved: frozenset, h
                 and (dist2(u.cell, cell) <= r2 or (small_home and _at_home(view, u.cell)))]
         near.sort(key=lambda u: dist2(u.cell, cell))       # just enough, nearest first
         theirs = [a.type for a in group]
+        # A push is the army's, whole (army_contact, incoming_push): never
+        # answered in packets — nor the few of it in sight while it is on
+        # (2fe84e1f sent 5-6 riflemen at two of a 15-unit push by its war
+        # factory, and they died together).
+        if theirs and (_value(view, group) > C.SMALL_RAID_VALUE
+                       or (push_at is not None and dist2(_centre(group), push_at) <= C.STAGE_ENGAGE_CELLS ** 2)):
+            continue
         picked: list = list(already)
         for u in near:
             if len(picked) >= C.RESPONSE_MIN_UNITS and (
@@ -767,7 +788,15 @@ def _army_home(view: View, mode: Mode, scout_id: int | None = None, reserved: fr
         t = view.game_seconds
         joined = mem.get("engaged_until", float("-inf")) >= t
         bar = C.ENGAGE_KEEP_EDGE if joined else C.ENGAGE_MIN_EDGE
-        if strength.odds(view, [u.type for u in fighters], [a.type for a in contact]) >= bar:
+        # Judged against the whole push as last seen (scout.incoming_push
+        # holds it a while), not the few of it in sight: 2fe84e1f at 3:51
+        # went at two of a 15-unit push by its war factory, met the rest
+        # and lost them all.
+        push = scout.incoming_push(view)
+        theirs = {a.id: a for a in contact}
+        if push is not None:
+            theirs.update({a.id: a for a in push[2] if a.id is not None})
+        if strength.odds(view, [u.type for u in fighters], [a.type for a in theirs.values()]) >= bar:
             mem["engaged_until"] = t + C.ENGAGE_HOLD_SECONDS
             base = view.base_center or centre
             target = min(contact, key=lambda a: dist2(a.cell, base)).cell

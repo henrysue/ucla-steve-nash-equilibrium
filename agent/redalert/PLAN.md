@@ -72,25 +72,27 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
 
 ### 1. Economy
 
-- **Opening**: power, barracks, refinery, refinery, power, war factory (the
-  pros' double refinery), its money set aside — but the war factory waits
+- **Opening**: the standard double refinery — power by the yard (so the
+  refinery sits against the ore), barracks (early infantry against
+  harassment), refinery, refinery (two free trucks: income far faster than
+  buying trucks), war factory, its money set aside — but the war factory waits
   for an army worth 2000 (1.5x the opening's ~1300) or 2:30, whichever comes
   first, so the barracks keeps training for the push at ~3:00 (2fe84e1f: the
   barracks idled 1:05-2:37 saving for it, 6 infantry met a 15-unit push at
-  3:16 and lost the war factory). Not against a passive enemy. Then the
-  radar dome (siege units), at the back of the base as far from the enemy as
-  it reaches so it can't be sniped, and a third refinery, unless outgunned;
-  more barracks after those. The service depot (main battle tanks, the MCV)
-  waits until 10:00 and its money goes into the army — against a passive
-  enemy it comes at once, for the expansions. Under a rush read everything goes into units —
+  3:16 and lost the war factory). Not against a passive enemy. Then power
+  to stay green, the service depot (main battle tanks, the MCV to expand)
+  and a third refinery, unless outgunned; more barracks after those (dvoid's
+  guide: depot, power, 3 barracks, a fourth refinery for the first
+  expansion). Tech — the depot and the radar dome — goes at the back of the
+  base, as far from the enemy as it reaches, so it can't be sniped. Under a
+  rush read everything goes into units —
   except a lost war factory's rebuild and the harvesters in production.
 - **Harvesters**: refineries + 2, at most 3 per refinery. **Refineries** by
   game time, spread over the fields by load (at most 3 per field), each
   beside the first field with room whose trucks walk to its ore in 6 steps;
   with none such (the base boxed in round its fields), no refinery now
   (d2d8dc27 on Shadowfiend paid 2000 for one 10 steps from its ore).
-- **Expansions**: to the natural after the depot (from 10:00, or ~3:45
-  against a passive enemy: the MCV needs it), then every 2
+- **Expansions**: to the natural after the depot (from ~3:45), then every 2
   minutes or sooner when the ore forecast runs dry; up to 3; none after 14:00.
   Against a passive enemy (below): from 3:00 and every minute, whatever our
   army odds or the advisor's "wait", and refineries keep coming.
@@ -111,7 +113,7 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
 
 ### 2. The army's make-up
 
-Half the combat value in main battle tanks (70% against a passive enemy,
+About 40% of the combat value in main battle tanks (70% against a passive enemy,
 with the second war factory at the depot and a third once two expansions
 stand: we out-build it) (the strongest offered, never
 light tanks once better ones exist), riflemen and rockets 3:1 shifting to 1:1
@@ -244,13 +246,19 @@ An attack goes on until the retreat rule ends it. No mass/attack flip within
   doesn't fit goes first next batch; lost orders are sent again.
 - **Defense, one handler** (`executor.respond`, `executor._army_home`):
   - **The army at home**: a fight in contact with it or the main base → it
-    attacks when the odds are 1.25+, else holds the main base's turret line
-    (`scout.home_line`: just behind our turret nearest them). A push seen in
+    attacks when the odds are 1.25+ — against the whole push as last seen
+    (held 20 s), not the few of it in sight (2fe84e1f at 3:51 went at two of
+    a 15-unit push by its war factory and lost everyone) — else holds the
+    main base's turret line (`scout.home_line`: just behind our turret
+    nearest them). A push seen in
     our half → it gets ready at that line facing it. Otherwise the concave
     holds the choke on their road in (a passage 7 cells or narrower, 10+ cells
     out and under 45% of the way to them): its kill point on the choke's mouth
     on our side, so the whole arc fires on them as they come through; with no
-    such choke, at the massing point. Rally points stay at the massing point.
+    such choke, at the massing point. Rally points are at the massing point,
+    but at the army's line while their units stand there, a push is coming
+    or we defend: new units join the army, not walk out one by one into
+    theirs (2fe84e1f at 4:05).
   - **Only our half**: the army's own fight and the idle units' answers
     count only enemies on our half of the map, and a spot we were hit at
     only by our buildings or trucks — their concave at the far mouth of a
@@ -261,6 +269,9 @@ An attack goes on until the retreat rule ends it. No mass/attack flip within
     fire on what comes in range, and a real push is the army's fight above
     (e2bc988e chased pokes through Sidestep's gap into their massed army
     for ten minutes and lost 10000 more than it killed).
+  - **A push is never answered in packets**: a group worth more than a
+    small raid, or any of a push in progress, draws no idle units — it is
+    the army's fight, whole.
   - **Everything else** — a small group, a raid on the
     trucks, a spot we were hit at with no attacker in sight
     (`under_attack`/`unit_lost` events, vanished units) → the idle units
