@@ -418,7 +418,10 @@ def _army_orders(
             if not flank_via and k >= 2:
                 return _groups(view, units, (hunt_points or [hunt])[:k])
             advice = None
-        target = _advised_target(view, advice) or _attack_target(view, hunt)
+        # Their buildings or base (route_goal), not whichever unit of theirs is
+        # nearest — a harvester coming into sight by our expansion turned
+        # the army round (attack-move fights what it meets on the way anyway).
+        target = route_goal(view, advice, hunt)
         if target is not None:
             waiting: list[dict] = []
             # attack_move (not attack-on-id) so the army fights whatever it
@@ -464,12 +467,15 @@ def _gather_stragglers(view: View, units: list[int], target, stage) -> tuple[lis
     # Only units still at the massing point wait; one already on its way keeps
     # going (match 906dbb32: infantry falling behind the tanks were sent back
     # and forth between the push and the massing point).
-    behind = [i for i in have if dist2(cells[i], front) > gap2 and dist2(cells[i], stage) <= hold2]
+    # Only idle ones (not already walking out) wait, where they stand: a
+    # group released and on its way was cut short and ordered back when its
+    # tanks pulled ahead (the rest fell under REINFORCE_GROUP_UNITS).
+    idle = {u.id for u in view.combat_units if u.idle}
+    behind = [i for i in have if i in idle and dist2(cells[i], front) > gap2 and dist2(cells[i], stage) <= hold2]
     if not behind or len(behind) >= C.REINFORCE_GROUP_UNITS:
         return units, []                      # none behind, or enough to go as a group
-    wait = [i for i in behind if dist2(cells[i], stage) > C.STAGING_RADIUS_CELLS ** 2]
     rest = [i for i in units if i not in set(behind)]
-    return rest, ([orders.attack_move(wait[:orders.MAX_UNITS_PER_ORDER], list(stage))] if wait else [])
+    return rest, []
 
 
 def _fan_out(view: View, units: list[int], points: list) -> list[dict]:
@@ -660,8 +666,11 @@ def respond(view: View, mode: Mode, scout_id: int | None, reserved: frozenset, h
     out, used = [], set()
     for cell, small_home, group in targets:
         gids = frozenset(a.id for a in group if a.id is not None)
+        # Already sent at this group: by its enemy ids, or to where it stands
+        # (units sent to a hit with nobody in sight, before the shooter
+        # showed; another member of the group in sight).
         already = [alive[i] for i, (c, ids0, _) in sent.items() if i not in used
-                   and ((gids & ids0) if gids else dist2(c, cell) <= C.GROUP_CELLS ** 2)]
+                   and ((gids and gids & ids0) or dist2(c, cell) <= C.GROUP_CELLS ** 2)]
         used.update(u.id for u in already)
         near = [u for u in idle if u.id not in used
                 and (dist2(u.cell, cell) <= r2 or (small_home and _at_home(view, u.cell)))]
@@ -1003,7 +1012,7 @@ def _attack_points(view: View, units: list[int], target) -> list[tuple[int, int]
     return out
 
 
-def route_goal(view: View, advice=None) -> tuple[int, int] | None:
+def route_goal(view: View, advice=None, hunt: tuple[int, int] | None = None) -> tuple[int, int] | None:
     """Where the attack's route leads: the advisor's target, else their
     buildings (an expansion first) or their base — never whichever of their
     units is nearest, which jumps about the map (d1615ac6: the route was
@@ -1011,7 +1020,7 @@ def route_goal(view: View, advice=None) -> tuple[int, int] | None:
     zig-zagged across the middle for 90 s before it arrived piecemeal)."""
     import dataclasses
 
-    return _advised_target(view, advice) or _attack_target(dataclasses.replace(view, enemy_units=()))
+    return _advised_target(view, advice) or _attack_target(dataclasses.replace(view, enemy_units=()), hunt)
 
 
 def _attack_target(view: View, hunt: tuple[int, int] | None = None) -> tuple[int, int] | None:

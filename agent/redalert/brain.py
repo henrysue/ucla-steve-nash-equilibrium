@@ -254,9 +254,9 @@ def army_odds(view: View) -> float:
 def turrets_at_target(view: View) -> list[str]:
     """The enemy turrets we know within ``DEFENSE_CLUSTER_CELLS`` of our
     attack target, by type."""
-    from .executor import _attack_target
+    from .executor import route_goal
 
-    target = _attack_target(view)
+    target = route_goal(view)
     if target is None:
         return []
     r2 = C.DEFENSE_CLUSTER_CELLS ** 2

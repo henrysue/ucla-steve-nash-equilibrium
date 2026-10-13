@@ -4486,11 +4486,15 @@ def test_no_retreat_on_first_contact_unless_clearly_outmatched():
 
 def test_stragglers_wait_at_the_massing_point_and_go_as_a_group():
     front = [{"id": 100 + i, "type": "1tnk", "x": 36, "y": 36, "hp": 100} for i in range(12)]
-    late = [{"id": 200 + i, "type": "e1", "x": 13, "y": 13, "hp": 100} for i in range(3)]   # fresh, at the massing point
+    late = [{"id": 200 + i, "type": "e1", "x": 13, "y": 13, "hp": 100, "idle": True} for i in range(3)]   # fresh, idle at the massing point
     v = _view(_t=600.0, buildings=BASE, units=front + late, visible_enemy_buildings=[{"id": 90, "type": "fact", "x": 40, "y": 40}])
     o = executor._army_orders(v, Mode.ALL_IN)
-    assert not any(set(x["units"]) & {200, 201, 202} and x["to"] != [11, 11] for x in o)   # three wait at the massing point
-    more = late + [{"id": 210 + i, "type": "e1", "x": 13, "y": 13, "hp": 100} for i in range(4)]
+    assert not any(set(x["units"]) & {200, 201, 202} for x in o)                # three wait where they stand
+    walking = [dict(u, idle=False, x=20, y=20) for u in late]                    # already released and on their way:
+    o3 = executor._army_orders(_view(_t=600.0, buildings=BASE, units=front + walking,
+                                     visible_enemy_buildings=[{"id": 90, "type": "fact", "x": 40, "y": 40}]), Mode.ALL_IN)
+    assert not any(x["to"] == [11, 11] for x in o3)                              # never sent back
+    more = late + [{"id": 210 + i, "type": "e1", "x": 13, "y": 13, "hp": 100, "idle": True} for i in range(4)]
     o2 = executor._army_orders(_view(_t=600.0, buildings=BASE, units=front + more,
                                      visible_enemy_buildings=[{"id": 90, "type": "fact", "x": 40, "y": 40}]), Mode.ALL_IN)
     assert not any(x["to"] == [11, 11] for x in o2)                           # seven: they go together

@@ -392,7 +392,7 @@ class RedAlertAgent:
         if self._confirm_at is None:
             return None
         stage = scout.choke_cell(view)
-        target = executor._attack_target(view)
+        target = executor.route_goal(view)
         if stage is None or target is None:
             return None
         f = C.PROBE_FRACTION

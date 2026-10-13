@@ -50,6 +50,7 @@ class ScoutCorps:
         self._peeking: set = set()                    # roles out on a look right now
         self._army_check: set = set()                 # roles that, round their base, now look at their army
         self._look_leg: dict[int, int] = {}           # scout id -> its look's stop (0 their exit, 1 their base)
+        self._fled_at: dict[str, float] = {}         # role -> when it last backed off from enemy fighters
         self._look_saw: set = set()                   # scout ids whose look has seen something (a stop or their army)
         self.unreachable: set = set()                 # places a scout can't reach without walking a choke corridor
         self.base_seen_at: float | None = None
@@ -211,11 +212,14 @@ class ScoutCorps:
             if threatened and view.base_center is not None:
                 # A picket backs off: it is there to see the push, not stop it.
                 self._end_peek(role, view)
+                self._fled_at[role] = view.game_seconds
                 back = _step_toward(u.cell, view.base_center, C.SCOUT_FLEE_CELLS)
                 self._sent[u.id] = back
                 self._legs.pop(u.id, None)
                 out.append(orders.move([uid], list(back)))
                 continue
+            if view.game_seconds - self._fled_at.get(role, float("-inf")) < C.SCOUT_FLEE_HOLD_SECONDS:
+                continue                             # backed off lately: it stays back (no back-and-forth)
             # The lane scouts don't stand idle at their posts: every
             # SCOUT_PEEK_SECONDS each takes a look at the enemy's exit from its
             # own side (their army and its moves), then goes back (3bd6e450:
