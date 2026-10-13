@@ -478,7 +478,10 @@ def placement_cell(view: View, item: str, defense_at: tuple[int, int] | None = N
         enemy = enemy_spawn_guess(view)
         if defense_at is not None and _within_degrees(base, defense_at, enemy, C.DEFENSE_SIDE_MAX_DEGREES):
             prefer = defense_at
-        return perimeter_spot(view, base, enemy, item, prefer=prefer, strict=False, near=home)
+        # The first one guards the war factory, out in front of it (away from
+        # the base centre), unless a threat or the advisor names the side.
+        guard = factory_guard_spot(view, item) if prefer is None and home is None else None
+        return guard or perimeter_spot(view, base, enemy, item, prefer=prefer, strict=False, near=home)
     ore_cell = _nearest_ore(view, base)
     ore = _unit(base, ore_cell)
     if item == C.REFINERY:
@@ -923,6 +926,41 @@ def _watch_spot(view: View, item: str, base, near=None) -> tuple[int, int] | Non
         return None                    # it has its watch tower
     spots = [s for s in legal_spots(view, item, near) if dist2(s, watch) <= r2]
     return _pick(view, item, spots, lambda s: dist2(s, watch)) if spots else None
+
+
+def factory_guard_spot(view: View, item: str = "pbox") -> tuple[int, int] | None:
+    """Out in front of our first war factory (the main base's nearest the
+    yard): beside it on its side toward the enemy, while no turret stands
+    within ``FACTORY_GUARD_CELLS`` of it. None otherwise (or with no legal
+    spot on that side: then the turret line). Toward the enemy, not merely
+    away from the yard: on Shadowfiend that put it behind the base."""
+    base = view.base_center
+    if base is None:
+        return None
+    r2 = C.DEFENSE_MAIN_RADIUS_CELLS ** 2
+    weaps = [b.cell for b in view.buildings if b.type == C.WAR_FACTORY and b.cell is not None and not b.wreck
+             and dist2(b.cell, base) <= r2]
+    if not weaps:
+        return None
+    weap = min(weaps, key=lambda c: dist2(c, base))
+    g2 = C.FACTORY_GUARD_CELLS ** 2
+    if any(b.type in C.TURRETS and b.cell is not None and not b.wreck and dist2(b.cell, weap) <= g2
+           for b in view.buildings):
+        return None
+    w, h = _footprint(C.WAR_FACTORY)
+    centre = (weap[0] + (w - 1) / 2, weap[1] + (h - 1) / 2)
+    out = _unit(centre, enemy_spawn_guess(view))
+    if out is None:
+        return None
+    reach = max(w, h) / 2 + 1.5
+    target = (centre[0] + out[0] * reach, centre[1] + out[1] * reach)
+    # On its enemy side only (its exit lane may hold the spot straight in
+    # front; the nearest legal one was then behind it): else the line.
+    spots = [s for s in legal_spots(view, item, None, C.TURRETS) if dist2(s, weap) <= g2
+             and (s[0] - centre[0]) * out[0] + (s[1] - centre[1]) * out[1] > 0]
+    if not spots:
+        return None
+    return min(spots, key=lambda s: (s[0] - target[0]) ** 2 + (s[1] - target[1]) ** 2)
 
 
 def perimeter_spot(view: View, base: tuple[int, int], toward, item: str = "pbox", near=None,

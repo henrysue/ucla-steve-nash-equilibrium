@@ -6116,3 +6116,50 @@ def test_the_advisors_more_army_counts_as_behind():
     assert not e._gates(v, Mode.BUILD, more)                                                   # no later MCV now...
     e._ore_running_out = True
     assert e._gates(v, Mode.BUILD, more)                                                       # ...unless home runs dry
+
+
+def test_new_units_rally_to_the_army_at_home_while_a_push_stands_at_the_massing_point():
+    """2fe84e1f at 4:05: riflemen fresh from the barracks walked to the
+    massing point one at a time, where the push stood, and were shot there."""
+    blds = [{"id": 10, "type": "fact", "x": 4, "y": 4}, {"id": 11, "type": "tent", "x": 8, "y": 4, "rally": None}]
+    calm = _view(buildings=blds)
+    stage = scout.choke_cell(calm)
+    assert executor._rally_orders(calm) == [{"cmd": "rally", "building": 11, "to": list(stage)}]
+    there = [{"id": 90, "type": "e1", "x": stage[0], "y": stage[1], "hp": 100}]
+    hot = _view(buildings=blds, visible_enemies=there)
+    (o,) = executor._rally_orders(hot)
+    assert o["to"] != list(stage) and tuple(o["to"]) == scout.home_line(hot, tuple(stage))   # at the army's line
+    (d,) = executor._rally_orders(calm, Mode.DEFEND_BASE)
+    assert tuple(d["to"]) == scout.home_line(calm)                                           # defending: the same
+
+
+def test_a_push_is_never_answered_in_packets():
+    """2fe84e1f at 3:51: 5-6 riflemen sent at two of a 15-unit push in sight
+    by the war factory died together. A push is the army's, whole."""
+    blds = [{"id": 10, "type": "fact", "x": 4, "y": 4}, {"id": 11, "type": "tent", "x": 8, "y": 4}]
+    idle = [{"id": 100 + i, "type": "e1", "x": 10 + i % 3, "y": 6 + i // 3, "hp": 100, "idle": True} for i in range(8)]
+    push = [{"id": 900 + i, "type": "e1", "x": 12 + i % 4, "y": 12 + i // 4, "hp": 100} for i in range(16)]   # 1600
+    v = _view(_t=300.0, buildings=blds, units=idle, visible_enemies=push)
+    assert executor.respond(v, Mode.ALL_IN, None, frozenset()) == ([], set())     # the units at home, the army out
+    scout._INTERCEPT.update(at=(9, 9), facing=(13, 13), group=[], seen=290.0)    # a push on, mostly unseen
+    few = _view(_t=300.0, buildings=blds, units=idle, visible_enemies=push[:2])
+    try:
+        assert executor.respond(few, Mode.ALL_IN, None, frozenset()) == ([], set())   # not even its few in sight
+    finally:
+        scout._INTERCEPT.update(at=None, facing=None, group=[], seen=-1e9)
+
+
+def test_the_army_judges_a_fight_at_home_against_the_whole_push_not_the_few_in_sight():
+    blds = [{"id": 10, "type": "fact", "x": 4, "y": 4}, {"id": 11, "type": "tent", "x": 8, "y": 4},
+            {"id": 12, "type": "weap", "x": 12, "y": 4}]
+    army = [{"id": 100 + i, "type": "e1", "x": 8 + i % 3, "y": 10 + i // 3, "hp": 100, "idle": True} for i in range(7)]
+    push = [{"id": 900 + i, "type": "e1", "x": 14 + i % 4, "y": 6 + i // 4, "hp": 100} for i in range(15)]
+    seen = _view(_t=300.0, buildings=blds, units=army, visible_enemies=push)
+    scout._INTERCEPT.update(at=None, facing=None, group=[], seen=-1e9)
+    try:
+        assert scout.incoming_push(seen) is not None                              # the push, seen whole
+        few = _view(_t=305.0, buildings=blds, units=army, visible_enemies=push[:2])
+        o = executor._army_orders(few, Mode.DEFEND_BASE)
+        assert not any(x["cmd"] == "attack_move" and tuple(x["to"]) in {(14, 6), (15, 6)} for x in o)   # held at the line
+    finally:
+        scout._INTERCEPT.update(at=None, facing=None, group=[], seen=-1e9)

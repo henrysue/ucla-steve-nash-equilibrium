@@ -162,7 +162,8 @@ EMPTY_CELLS = {"proc": ((0, 0), (2, 0)), "fix": ((0, 0), (2, 0), (0, 2), (2, 2))
 CENTRE_OFFSETS = {"proc": (1, 1), "fact": (1, 1)}
 
 # -- defenses and repairs ----------------------------------------------------------------------
-STANDING_DEFENSES = 1              # once the war factory is up
+STANDING_DEFENSES = 1              # once the war factory is up: out in front of it (factory_guard_spot)
+FACTORY_GUARD_CELLS = 5            # a turret this close to the war factory guards it
 MAX_DEFENSES = 3                   # only while under attack...
 DEFENSE_ADD_FUNDS = 600            # ...and each beyond the first only with this much money
 DEFENSE_LINE_OFFSETS = (0, -3, 3, -6, 6)   # turret slots: cells across the line from the base straight to the enemy

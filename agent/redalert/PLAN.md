@@ -246,7 +246,15 @@ An attack goes on until the retreat rule ends it. No mass/attack flip within
     holds the choke on their road in (a passage 7 cells or narrower, 10+ cells
     out and under 45% of the way to them): its kill point on the choke's mouth
     on our side, so the whole arc fires on them as they come through; with no
-    such choke, at the massing point. Rally points stay at the massing point.
+    such choke, at the massing point. A fight at home is judged against
+    the whole push as last seen (held 20 s), not the few of it in sight
+    (2fe84e1f at 3:51 went at two of a 15-unit push and lost everyone).
+    Rally points are at the massing point, but where the army holds while
+    their units stand there, a push is coming or we defend: new units join
+    the army, not walk out one by one into theirs (2fe84e1f at 4:05).
+  - **A push is never answered in packets**: a group worth more than a
+    small raid, or any of a push in progress, draws no idle units — it is
+    the army's fight, whole.
   - **Only our half**: the army's own fight and the idle units' answers
     count only enemies on our half of the map, and a spot we were hit at
     only by our buildings or trucks — their concave at the far mouth of a
@@ -305,9 +313,12 @@ An attack goes on until the retreat rule ends it. No mass/attack flip within
 - **Retreat**: a plain move to the main turret line; regroup there.
 - **Micro**: focus fire on the weakest enemy fighter within 4 cells; siege
   units shell turrets.
-- **Turrets**: a line on the base's front edge straight toward the enemy
-  (side by side across that line, within 35° of it, never behind the base);
-  when it is full, no more are built until the base grows that way.
+- **Turrets**: the first out in front of the first war factory (beside it
+  on its enemy side; where its exit lane leaves no spot there, the line),
+  unless a threat or the advisor names the side; the rest a line on the
+  base's front edge straight toward the enemy (side by side across that
+  line, within 35° of it, never behind the base); when it is full, no more
+  are built until the base grows that way.
 
 ### 6a. The advisor's vote: near the bars only
 
