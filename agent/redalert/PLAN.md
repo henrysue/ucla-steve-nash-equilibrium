@@ -45,7 +45,10 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
   this plan (its system prompt). By hand: `python -m agent.redalert.postgame
   <log.jsonl> --opponent NAME [--save]`. `REDALERT_ANALYST=off` switches it
   off, `REDALERT_ANALYST_MODEL` / `REDALERT_ANALYST_TIMEOUT` (90 s) tune it. Haiku squad leads (`squadlead.py`) are off unless
-  `REDALERT_SQUAD_LEADS=on`.
+  `REDALERT_SQUAD_LEADS=on`. The raid squad's lead is given its mission by the advisor
+  (`raid_mission`, e.g. "Harass the expansion around [x, y]: defenders, then harvesters, then
+  buildings; pull back before the squad is lost"), else that mission at the rules' raid target;
+  the fight in front of the squad (defenders, outmatched) stays the rules' call.
 - **Logs**: `matchlog.py` writes a JSONL and a summary per match to
   `matchlogs/` (samples every 15 s, mode changes, refusals, advice, attacked
   spots, the outbox, first sightings — kind "scouted" — with a "What the scouts

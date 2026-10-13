@@ -45,8 +45,10 @@ the squad (its units, health and cells), its mission, and the enemies near it. C
 
 Every time you issue an order your units will recalculate their pathfinding. Issue an order and leave them to do it: keep the same action and target from one call to the next unless the situation has really changed.
 
-Kill the high-value target the squad can actually win against; avoid defended spots; keep the \
-squad alive — a dead squad scores nothing. One short line of reasoning. Be decisive.\
+You are given a mission by our commander: follow it. Unless it says otherwise, deal as much \
+economic damage as possible in this order: kill the defending units, then the harvesters, then \
+the buildings (refinery, construction yard, production); keep out of turrets' reach; pull back \
+before the squad is lost — a dead squad scores nothing. One short line of reasoning. Be decisive.\
 """
 
 SQUAD_SCHEMA = {
@@ -116,6 +118,15 @@ def squad_orders(view: View, ids: list[int], d: Directive, home: tuple[int, int]
     if d.action == "retreat" and home is not None:
         return [orders.attack_move(ids, list(home))]   # never walk away under fire without shooting back
     return None
+
+
+def raid_mission(cell) -> str:
+    """The raid lead's default mission: harass the expansion at ``cell`` for
+    economic damage (the advisor's ``raid_mission`` replaces it)."""
+    where = f" around {list(cell)}" if cell is not None else ""
+    return (f"Harass the enemy expansion{where}. Deal as much economic damage as possible: kill the "
+            "defending units, then the harvesters, then the buildings (refinery, construction yard, "
+            "production). Pull back before the squad is lost.")
 
 
 def build_prompt(view: View, ids: list[int], mission: str, extra: dict) -> dict:

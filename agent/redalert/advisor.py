@@ -212,13 +212,18 @@ when the raid squad is drawing their army away.
 - raid_target_id / raid_target_cell: the raid squad's harvester (a visible harvester's id) or a \
 cell to sweep, at an enemy expansion (18+ cells from their main base; their main field is never \
 raided). It kills any defenders first.
+- raid_mission: the raid squad's mission for its lead (a fast model directing the squad), in one \
+or two sentences: where and what, e.g. "Harass the expansion around [52, 18]. Deal as much economic \
+damage as possible: kill the defending units, then the harvesters, then the buildings; pull back \
+before the squad is lost." Name a cell only inside map.bounds, at an expansion of theirs we know; \
+empty for the default (that, at the rules' raid target).
   army_target and the raid targets become orders: every time you change one, those units recalculate their pathfinding. Pick one and leave them to do it; change it only when the target is gone or the situation has really changed.
 - defense_at: [x, y] the side of our base the next turret should face (the enemy's approach).
-- army_stance: the waiting (massing) army's stance — "defend" (fire at what comes in range, hold \
-the line: the default), "attack_anything" (go after any enemy in sight: when they poke at the \
-concave from outside its range), "return_fire" (only shoot back), "hold_fire"; "auto" = the engine. \
+- army_stance: the waiting (massing) army's stance — "attack_anything" (go after any enemy in sight: when they poke at the \
+concave from outside its range: the default), "defend" (fire at what comes in range, hold \
+the line: for when we want to set up somewhere),  "return_fire" (only shoot back), "hold_fire"; "auto" = the engine. \
 Attacking and defending armies always engage freely.
-- guard: "on" (default): idle units of the massing army go at small groups that come within 12 cells \
+- guard: "on" (default): idle units of the massing army go at small groups that come within 14 cells \
 of them, then back to their slots; "off" keeps the concave still (a bait you don't want chased).
 - plan: your read of the game and plan for the next minute or two, in 1-2 short sentences.
 - reasoning: the evidence for it, in 1-2 short sentences.
@@ -247,6 +252,7 @@ ADVICE_SCHEMA = {
         "army_target": _CELL,
         "raid_target_id": {"type": ["integer", "null"]},
         "raid_target_cell": _CELL,
+        "raid_mission": {"type": "string"},
         "defense_at": _CELL,
         "army_stance": {"type": "string", "enum": ["auto", "defend", "attack_anything", "return_fire", "hold_fire"]},
         "guard": {"type": "string", "enum": ["on", "off"]},
@@ -256,7 +262,7 @@ ADVICE_SCHEMA = {
         "reasoning": {"type": "string"},
     },
     "required": ["enemy_style", "balance", "mistakes", "posture", "attack_route", "expand", "army_target", "raid_target_id", "raid_target_cell",
-                 "defense_at", "army_stance", "guard", "confidence", "evidence", "plan", "reasoning"],
+                 "raid_mission", "defense_at", "army_stance", "guard", "confidence", "evidence", "plan", "reasoning"],
     "additionalProperties": False,
 }
 
@@ -273,6 +279,7 @@ class Advice:
     army_target: tuple[int, int] | None = None
     raid_target_id: int | None = None
     raid_target_cell: tuple[int, int] | None = None
+    raid_mission: str = ""               # the raid squad lead's mission, in a sentence or two (squadlead.py)
     defense_at: tuple[int, int] | None = None
     army_stance: str = "auto"            # the waiting army's stance (executor.stance_orders)
     guard: str = "on"                    # the massing army's guard response
@@ -322,6 +329,7 @@ def parse_advice(answer: Any, view: View, made_at: float) -> Advice | None:
         army_target=cell(answer.get("army_target")),
         raid_target_id=raid_id if isinstance(raid_id, int) and not isinstance(raid_id, bool) else None,
         raid_target_cell=cell(answer.get("raid_target_cell")),
+        raid_mission=" ".join(str(answer.get("raid_mission") or "").split())[:300],
         defense_at=cell(answer.get("defense_at")),
         army_stance=answer.get("army_stance") if answer.get("army_stance") in C.ARMY_STANCES else "auto",
         guard="off" if answer.get("guard") == "off" else "on",

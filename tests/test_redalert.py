@@ -3549,7 +3549,8 @@ def test_the_commander_keeps_the_bookkeeping():
 def test_the_advisor_schema_has_only_fields_the_rules_use():
     props = set(ra_advisor.ADVICE_SCHEMA["properties"])
     assert props == {"enemy_style", "balance", "mistakes", "posture", "attack_route", "expand", "army_target",
-                     "raid_target_id", "raid_target_cell", "defense_at", "army_stance", "guard", "confidence",
+                     "raid_target_id", "raid_target_cell", "raid_mission", "defense_at", "army_stance", "guard",
+                     "confidence",
                      "evidence", "plan", "reasoning"}
     for word in ("double refinery", "rush", "concave", "army_value_estimate", "aggressive", "macro",
                  "over-index", "mistakes", "generally good"):
@@ -6697,3 +6698,27 @@ def test_as_the_soviets_the_snipe_takes_three_heavy_tanks():
     sn.update(v)
     assert len(sn.unit_ids) == C.SNIPE_HEAVY_UNITS                              # three, not the whole army
     assert sn.production(v, defending=False) == []                              # the army trains heavy tanks anyway
+
+
+def test_the_raid_lead_gets_its_mission_from_the_advisor_or_a_default_at_the_rules_target():
+    adv = ra_advisor.parse_advice({**_ANSWER, "raid_mission": "Harass the expansion around [9, 43]. Defenders, "
+                                   "then harvesters, then buildings."}, _view(), 100.0)
+    assert adv.raid_mission.startswith("Harass the expansion around [9, 43]")
+    assert ra_advisor.parse_advice(_ANSWER, _view(), 100.0).raid_mission == ""
+    assert squadlead.raid_mission((9, 43)).startswith("Harass the enemy expansion around [9, 43]. Deal as much economic")
+    assert "defending units, then the harvesters, then the buildings" in squadlead.raid_mission(None)
+
+    agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
+    asked = []
+    lead = type("L", (), {"poll": lambda self, view, ids, mission, extra=None: asked.append(mission) or None})()
+    agent._leads = {"raid": lead}
+    raiders = [{"id": 60 + i, "type": "e3", "x": 8, "y": 40, "hp": 100} for i in range(4)]
+    exp = [{"id": 85, "type": "proc", "x": 9, "y": 43, "hp": 100}]
+    v = _view(_t=600.0, units=raiders, visible_enemy_buildings=exp)
+    agent._raid.squads[0].unit_ids = [60, 61, 62, 63]
+    agent._advice_now = adv
+    agent._raid_orders(v)
+    assert asked[-1] == adv.raid_mission                                           # the advisor's mission
+    agent._advice_now = None
+    agent._raid_orders(v)
+    assert asked[-1] == squadlead.raid_mission((9, 43))                             # the default, at the rules' target

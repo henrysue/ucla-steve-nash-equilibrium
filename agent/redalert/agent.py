@@ -89,6 +89,7 @@ class RedAlertAgent:
         self._memory = EnemyMemory()
         self._lastseen = LastSeenMap()   # what we last saw where, for the advisor only (lastseen.py)
         self._snipe = HarvesterSnipe()    # Rangers / light tanks that kill a harvester at their main and leave
+        self._advice_now = None           # this view's advice
         self._raid = RaidCorps()
         self._expansion = Expansion()
         self._garrison = Garrison()
@@ -201,6 +202,7 @@ class RedAlertAgent:
             # build order to stand, ~3 minutes, so the scouts' look at their
             # base went unread).
             advice = self._poll_advisor(view)
+        self._advice_now = advice                         # the raid lead's mission (_raid_orders)
         hunting = self._hunting = self._hunter.hunting(view)
         self._break_stall(view)
         rushing = spar is not None and spar.skip_confirm
@@ -451,8 +453,14 @@ class RedAlertAgent:
                 lead.poll(view, [], "")
             return self._raid.orders(view, fight)
         if lead is not None and ids:
-            d = lead.poll(view, ids, "Hunt enemy harvesters and weakly defended expansions; avoid defenses.",
-                          {"rules_target": self._raid.target(view)})
+            # Its mission from the advisor (raid_mission), else harass the
+            # rules' raid target for economic damage.
+            from .raid import _cell_of
+
+            target = self._raid.target(view)
+            mission = (getattr(self._advice_now, "raid_mission", "")
+                       or squadlead.raid_mission(_cell_of(view, target) if target is not None else None))
+            d = lead.poll(view, ids, mission, {"rules_target": target})
             o = squadlead.squad_orders(view, ids, d, scout.choke_cell(view)) if d is not None else None
             if o is not None:
                 return o
