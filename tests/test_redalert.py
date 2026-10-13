@@ -1141,9 +1141,13 @@ def test_the_army_commits_instead_of_flip_flopping():
     assert agent._mode is Mode.ALL_IN                            # 10 s in: stays committed
     agent.choose_action(_state(_t=400.0, buildings=BASE, units=tanks, military=behind), CTX)
     assert agent._mode is Mode.ALL_IN                            # 30 s in: still committed (82908a24 flipped 9x)
-    beaten = {"army_value": 3500, "visible_enemy_value": 5000}   # edge 0.7: the retreat rule ends it
-    agent.choose_action(_state(_t=405.0, buildings=BASE, units=tanks, military=beaten), CTX)
-    assert agent._mode is Mode.RETREAT
+    beaten = {"army_value": 3500, "visible_enemy_value": 5000}   # edge 0.7: the retreat rule ends it...
+    met = [{"id": 900, "type": "e1", "x": 25, "y": 25, "hp": 100}]
+    agent.choose_action(_state(_t=405.0, buildings=BASE, units=tanks, military=beaten, visible_enemies=met), CTX)
+    assert agent._mode is Mode.ALL_IN                            # ...but only from first contact (just met them)
+    agent.choose_action(_state(_t=405.0 + C.MIN_ENGAGEMENT_SECONDS + 1, buildings=BASE, units=tanks, military=beaten,
+                               visible_enemies=met), CTX)
+    assert agent._mode is Mode.RETREAT                           # in the fight 15 s at 0.7: out
 
 
 def test_raids_use_light_vehicles_when_infantry_is_short_and_spare_other_squads():
@@ -5975,3 +5979,19 @@ def test_a_strike_ends_with_its_expansion_unless_the_usual_bar_says_go_on():
                                             enemy_army_peak=16000.0, enemy_base_scouted=True)
     assert c.decide(v(700.0, exp)) is Mode.ALL_IN and c._strike_cell == (14, 43)
     assert c.decide(v(720.0, [])) is Mode.RETREAT                              # it fell: home, not on into their main
+
+
+def test_a_strike_below_the_retreat_line_keeps_marching_until_it_meets_them():
+    """The retreat line (0.8) counts from first contact: a strike at 0.79
+    overall used to retreat 15 s in, still on its way to the expansion."""
+    from agent.redalert.commander import Commander
+    tanks = [{"id": 30 + i, "type": "3tnk", "x": 10, "y": 10, "hp": 100} for i in range(12)]
+    exp = [{"id": 85, "type": "proc", "x": 14, "y": 43, "hp": 100}]
+    v = lambda t: dataclasses.replace(_view(_t=t, buildings=BASE, units=tanks, visible_enemy_buildings=exp,  # noqa: E731
+                                            military={"army_value": 13800}),
+                                      enemy_army_peak=17500.0, enemy_base_scouted=True)
+    assert C.STRIKE_MIN_EDGE <= brain.army_odds(v(700.0)) < C.RETREAT_ARMY_EDGE
+    c = Commander()
+    c.mode, c.mode_since = Mode.BUILD, 0.0
+    assert c.decide(v(700.0)) is Mode.ALL_IN
+    assert c.decide(v(700.0 + C.MIN_ENGAGEMENT_SECONDS + 10)) is Mode.ALL_IN   # marching, no contact: on it goes

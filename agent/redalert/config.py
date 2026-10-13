@@ -280,8 +280,8 @@ REINFORCE_GROUP_UNITS = 6          # ...until this many can go together (no tric
 REINFORCE_HOLD_CELLS = 8           # only units still this close to the massing point wait: none is ever sent back
 DETOUR_MAX_RATIO = 1.6             # an attack goes round the chokes between the bases when that is at most this much longer
 STRIKE_LOCAL_ODDS = 2.0           # the army strikes a remote expansion of theirs it beats this clearly (its turrets and units)...
-STRIKE_MIN_EDGE = 0.9              # ...while not worse than this against their whole army (they must come out to it;
-                                   # above RETREAT_ARMY_EDGE, or the strike retreats 15 s in, still marching)
+STRIKE_MIN_EDGE = 0.75             # ...while not worse than this against their whole army (they must come out to it;
+                                   # the retreat line only counts from first contact, not while it marches)
 ARMY_ROUTE_MAX_RATIO = 4.0         # the march from where the army stands takes a way round up to this (from our concave
                                    # every lane looks long); terrain.choke_between judges base to base at MARCH_DETOUR_MAX_RATIO
 CONCAVE_FACING_BUCKET_DEGREES = 30  # the concave faces in steps of this (a drifting enemy centroid doesn't re-slot it)

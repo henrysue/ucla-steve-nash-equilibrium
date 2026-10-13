@@ -316,8 +316,10 @@ has hysteresis:
   ends it at once); a new squad's route starts fresh.
 - Rules agree: one remote-expansion definition (25+ cells) for raids, the
   strike and the attack's first target; the turtle gate holds for every way
-  into an attack; a strike needs 0.9x overall (above the 0.8 retreat line); a
-  distraction attack is judged on the odds it started on; "a way round"
+  into an attack; an attack's 15 s before the 0.8 retreat line applies count
+  from first contact, not from the call (a strike at 0.75-0.8 overall used to
+  retreat while still marching); a distraction attack is judged on the odds
+  it started on; "a way round"
   means the same ratio for the choke bar and the march; no forward expansion
   starts mid-attack; the follow-up's refinery needs a spot its trucks walk
   from; idle units answer a group at our buildings or trucks even across the
