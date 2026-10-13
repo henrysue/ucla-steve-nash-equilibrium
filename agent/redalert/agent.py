@@ -895,10 +895,9 @@ class RedAlertAgent:
                 # Scaled down by what we destroyed of their income and
                 # production (memory.growth_scale): they can't build as we do
                 # without refineries, trucks and factories.
-                # A tank timing push (intel.tank_push): they put nearly
-                # everything into the army (1da6311e: ~9750 against our 5450).
-                grow = C.TANK_PUSH_GROWTH_SHARE if self._intel.tank_push(view) else C.ENEMY_GROWTH_SHARE
-                share = min(grow, self._field_share(view)) * self._memory.growth_scale(view)
+                # At our velocity (ENEMY_GROWTH_SHARE) unless we destroyed
+                # their economy or production (memory.growth_scale).
+                share = C.ENEMY_GROWTH_SHARE * self._memory.growth_scale(view)
                 self._believed += share * max(0.0, spent - spent0)
             self._believed -= C.KILL_ARMY_SHARE * max(0.0, view.kills_cost - kills0)
             if self._believed > floor and self._at_their_base(view):
@@ -942,31 +941,6 @@ class RedAlertAgent:
         if scout.incoming_push(view) is not None:
             return False
         return brain.enemy_estimate(view) < C.PASSIVE_BREAK_SHARE * max(1.0, view.army_value)
-
-    def _field_share(self, view) -> float:
-        """Their ore fields over the fields we work: what their economy can
-        pay for next to ours (a field yields about the same to either side).
-        Theirs: the fields by their main base, at most ``ENEMY_HOME_FIELDS``
-        (two starting patches and the natural), plus each field by a remote
-        expansion of theirs we know (raid.remote_expansions: any building out
-        there means a yard). Ours: the fields our harvesters work."""
-        from .expand import _ore_fields
-        from .observe import enemy_spawn_guess
-        from .raid import remote_expansions
-
-        spawn = enemy_spawn_guess(view)
-        if spawn is None or not view.ore_cells:
-            return float("inf")                   # nothing to go on: no cap
-        fields = _ore_fields(view)
-        r2 = C.RAID_REMOTE_MIN_CELLS ** 2
-        home = sum(1 for _, centre, _ in fields if dist2(centre, spawn) <= r2)
-        home = min(C.ENEMY_HOME_FIELDS, max(1, home))
-        out2 = (C.EXPAND_CLUSTER_CELLS + 6) ** 2
-        remote_cells = remote_expansions(view)
-        remote = sum(1 for _, centre, _ in fields if dist2(centre, spawn) > r2
-                     and any(dist2(centre, c) <= out2 for c in remote_cells))
-        ours = max(1, len(getattr(self._harvest, "last_counts", {}) or {}))
-        return (home + remote) / ours
 
     def _at_their_base(self, view) -> bool:
         """``BELIEF_LOOK_UNITS`` of our main army (not scouts, raiders or the

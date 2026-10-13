@@ -82,8 +82,10 @@ one re-checks their base every 2.5 minutes. One refinery plus an early war facto
 or an early army, reads as a rush (intel.enemy_opening).
 - Every fight is judged by strength (unit types, hit points, damage per armor), not price: \
 riflemen barely scratch tanks. enemy.army_value_estimate is what we saw of their units lately or, \
-if more, what they could have built since (0.6 of what we spend on our army), less half our kills \
-since; turrets not included.
+if more, what they could have built since (as much as we spend on our army, scaled down by what we \
+destroyed of their refineries, harvesters and factories), less half our kills since; turrets not \
+included. It reads high on purpose: the main army defends near home and attacks only when clearly \
+ahead; raid squads harass the remote expansions our roaming scout finds.
 - The army masses in a concave at the main choke and holds it; it never walks out to an expansion \
 (an outpost, a turret and nearby units hold those). A push seen coming: it gets ready at the main \
 base's turret line. In a fight at the main base it attacks if it wins clearly, else holds at the \

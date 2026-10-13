@@ -179,7 +179,8 @@ def choose_mode(
     # whole-army bar — they have to come out of their concave to save it
     # (d1615ac6: raids killed its harvesters for two minutes while the army,
     # 14850 against a believed 18900, sat at home).
-    if (not can_attack and not early and built and not cooling_down and regrown and _has_real_army(view)
+    if (C.MAIN_ARMY_STRIKES and not can_attack and not early and built and not cooling_down and regrown
+            and _has_real_army(view)
             and advised(edge, C.STRIKE_MIN_EDGE, max(vote, 0)) and expansion_strike(view, max(vote, 0)) is not None):
         can_attack = True
     # The turtle gate holds for every way in (a distraction or a strike set

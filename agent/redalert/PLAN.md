@@ -165,12 +165,15 @@ a turtle about one per turret (3–6) before any attack.
   their base (never across the front); posts and looks stand outside those
   places (82bdca3e: the left scout's road ran through the gap, the right one
   cut across their front, and the flank picket died five times in the gap).
+- **From 3:00** a roamer checks remote ore fields for expansions — from
+  beyond each field's four extreme ore cells, since a yard can stand 12 cells
+  from a big field's centre (d2d8dc27 missed one so); from 8:00 a second
+  roamer joins it. Each expansion found is logged and flagged for the raids,
+  which harass it while the main army stays near home.
 - **From 5:00**: pickets on the flanks of their exit (never the centre lane),
   the lane scouts peek at their exit every 45 s, one runs round their base
-  every 2.5 min, a roamer checks remote ore fields for expansions — from
-  beyond each field's four extreme ore cells, since a yard can stand 12 cells
-  from a big field's centre (d2d8dc27 missed one so). From 8:00 a second
-  roamer joins it. Each expansion found is logged and flagged for the raids.
+  every 2.5 min — once 3 scouts have died on their side of the map, every 5
+  min and peeks every 90 s: scouting turns to their expansions.
 - **Rush read**: one refinery with an early war factory or second barracks;
   600 of army seen before 2:30 or 1000 before 4:00; or two scouts lost early.
   Turrets are not army.
@@ -190,10 +193,10 @@ a turtle about one per turret (3–6) before any attack.
 `strength.odds`: each side's damage per second against the other's armor mix
 times its hit points (Lanchester); 1.0 is even and it reads like a value
 ratio. Turrets fight in it. Their army is what we saw lately or, if more,
-what they could have built since: it grows by 0.6 of what we spend on our
-army (both sides have the same money) — never more than their fields over
-ours allow (at most 3 at home, two starting patches and the natural, plus
-one per remote expansion seen), scaled down by what we destroyed of their
+what they could have built since: it grows by all of what we spend on our
+army — they produce at our velocity (the plan, October 13; it reads them
+~1.8x high overall on the logs, ~3x when we are well ahead: the main army
+defends and attacks only when clearly ahead) — scaled down by what we destroyed of their
 income and production (memory.growth_scale: the lesser of the refineries —
 2 harvesters each — and harvesters, and the barracks and war factories,
 left against what they had; each loss fading over 3 minutes as they
@@ -247,7 +250,8 @@ in the last minute) as evidence beside the estimate; it never changes it.
      attacked Yuriko at 6:34 on a believed 3370 and met ~9750). Under that
      read their unseen army grows by all of what we spend on ours, not 0.6.
      While behind or against it, the army doesn't edge forward to confirm.
-   - **Strike an expansion**: a remote expansion of theirs our army beats 2x
+   - **Strike an expansion** (off: `MAIN_ARMY_STRIKES`; the main army stays
+     near home and raid squads harass their expansions): a remote expansion of theirs our army beats 2x
      (its turrets and the units we know there) is attacked even short of the
      whole-army bar, if we are at least 0.75x their whole army — they must
      come out of their concave to save it; no look needed (we know what is

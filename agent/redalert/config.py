@@ -102,8 +102,6 @@ TANK_PUSH_DEPOT_SECONDS = 240.0    # ...or their service depot before this...
 TANK_PUSH_TANK_SECONDS = 330.0     # ...or their main battle tanks before this (Yuriko yuriko-vs-abu: war factory
                                    # 2:39, depot 3:20, tanks from 4:10, the push 4:30-5:30)
 TANK_PUSH_HOLD_SECONDS = 600.0     # the read holds until this
-TANK_PUSH_GROWTH_SHARE = 1.0       # under the read their unseen army grows by this x our army spending (Yuriko puts
-                                   # nearly everything into it: ~9750 against our 5450 at 6:55, 1da6311e)
 LOOK_MIN_SHARE = 0.5               # a scout's look counts on sight of their army only when it sees at least this
                                    # share of what we believe (1da6311e: a glimpse of 1450 of a real 9750 cleared the
                                    # blind check and the attack went in)
@@ -215,12 +213,13 @@ KILL_ARMY_SHARE = 0.5              # a past sighting loses this share of our kil
 # spend on ours (army value + losses), unseen. On our self-play logs since the
 # "no guess" estimate (545fd344 .. d2d8dc27) it read 1.3-12x low, biased
 # -0.6 to -1.0 in log terms; with 0.6 the bias is about 0 and the error halved.
-ENEMY_GROWTH_SHARE = 0.6
-# ...but never more than their economy allows: their ore fields over the
-# fields we work, times what we spend — at most ENEMY_HOME_FIELDS at home
-# (two starting patches and the natural) until we see a remote expansion,
-# then one more field each (every building goes up by a yard).
-ENEMY_HOME_FIELDS = 3
+# The game plan (October 13): assume they produce at our velocity — all of
+# what we spend — unless we destroyed their economy or production
+# (memory.growth_scale). Backtest over every logged game: it reads them ~1.8x
+# high overall (bias +0.59; at 0.6 it was -0.15) and ~3x high when we are
+# well ahead: the main army defends and attacks rarely, the raids harass.
+# Dial back toward 0.6 if games stall.
+ENEMY_GROWTH_SHARE = 1.0
 EXPANSION_LOOK_AFTER_SECONDS = 240.0   # a new enemy expansion found after this sends a scout to look at their army
 BELIEF_LOOK_CELLS = 10             # this many of our army units (BELIEF_LOOK_UNITS) this close to their base...
 BELIEF_LOOK_UNITS = 3
@@ -300,6 +299,8 @@ REINFORCE_GAP_CELLS = 14           # in an attack, units this far behind the fro
 REINFORCE_GROUP_UNITS = 6          # ...until this many can go together (no trickling through a choke one by one)
 REINFORCE_HOLD_CELLS = 8           # only units still this close to the massing point wait: none is ever sent back
 DETOUR_MAX_RATIO = 1.6             # an attack goes round the chokes between the bases when that is at most this much longer
+MAIN_ARMY_STRIKES = False          # the main army strikes a remote expansion (brain.expansion_strike)? Off: it stays
+                                   # near home to defend; raid squads harass their expansions (the plan, October 13)
 STRIKE_LOCAL_ODDS = 2.0           # the army strikes a remote expansion of theirs it beats this clearly (its turrets and units)...
 STRIKE_MIN_EDGE = 0.75             # ...while not worse than this against their whole army (they must come out to it;
                                    # the retreat line only counts from first contact, not while it marches)
@@ -381,7 +382,8 @@ RAID_JOIN_FIGHT_CELLS = 25         # an extra squad joins the main army's fight 
 REMOTE_SITE_RECHECK_SECONDS = 120.0  # a remote ore field checked by a picket or the raid is skipped this long
 FIELD_WATCH_OUT_CELLS = 3          # a field is checked from beyond its 4 extreme ore cells, this far out...
 FIELD_WATCH_SEEN_CELLS = 5         # ...each seen once any unit of ours has been this close (about its sight)
-EXPANSION_ROAM_SECONDS = 480.0     # from 8:00 a second roamer checks the remote fields for their expansions...
+REMOTE_ROAM_FROM_SECONDS = 180.0   # from 3:00 (the early circuits done) a roamer checks the remote ore fields...
+EXPANSION_ROAM_SECONDS = 480.0     # ...from 8:00 a second roamer too...
 RAID_EXPANSION_SECONDS = 480.0     # ...and a raid at a found expansion goes in force:
 RAID_EXPANSION_SQUAD = 8           # at least this many (army and MIN_DEFENDERS allowing)
 RAID_REMOTE_MIN_CELLS = 25         # raids only at a yard or refinery of theirs this far from their main base (a remote expansion)
@@ -415,7 +417,10 @@ MID_PICKET_SECONDS = 300.0         # then picket posts across the approach...
 MID_PICKETS = 4                    # ...this many...
 PICKET_ALONG = 0.45                # ...this far toward the enemy...
 PICKET_SPREAD = 0.35               # ...spread this share of the base-to-base distance to each side
-BASE_CHECK_SECONDS = 150.0         # a picket runs round their base again this often
+BASE_CHECK_SECONDS = 150.0         # a picket runs round their base again this often...
+SCOUT_WARY_LOSSES = 3              # ...but once this many scouts died on their side of the map (more than 2)...
+BASE_CHECK_SECONDS_WARY = 300.0    # ...only this often...
+SCOUT_PEEK_SECONDS_WARY = 90.0     # ...and the lane scouts' looks at their exit this often
 CIRCUIT_OUTER_CELLS = 16           # the rounds of their base: the left scout this far from their spawn...
 CIRCUIT_ENTRY_CELLS = 8            # ...coming in from wide at their base's side, this much beyond its ring
 CIRCUIT_INNER_CELLS = 7            # ...the right scout this far (through the base): a scout sees ~5 cells

@@ -50,6 +50,7 @@ class ScoutCorps:
         self._centre_at: float | None = None          # when the second scout reached their base centre
         self._into_centre: str | None = None          # the role walking into their base centre
         self._army_checked = False                    # the ARMY_CHECK_SECONDS look was asked for
+        self._lost_their_side = 0                     # scouts killed on their side of the map
         self._army_report: dict | None = None         # their army's make-up at the last look that saw it
         self.visit: tuple[int, int] | None = None    # a one-off look (our expansion site)
         self.look: tuple[int, int] | None = None     # where their army masses, before a blind attack
@@ -140,6 +141,13 @@ class ScoutCorps:
         first look is asked for at ``ARMY_CHECK_SECONDS``. None until one."""
         return self._army_report
 
+    @property
+    def wary(self) -> bool:
+        """``SCOUT_WARY_LOSSES`` scouts killed on their side of the map: their
+        main is checked less often (``BASE_CHECK_SECONDS_WARY``, peeks every
+        ``SCOUT_PEEK_SECONDS_WARY``) — scouting turns to their expansions."""
+        return self._lost_their_side >= C.SCOUT_WARY_LOSSES
+
     def backing_off(self, view: View) -> bool:
         """``SCOUT_BACKOFF_LOSSES`` scouts lost within
         ``SCOUT_BACKOFF_WINDOW_SECONDS``: no looks or peeks until
@@ -166,8 +174,8 @@ class ScoutCorps:
         t = view.game_seconds
         if t < C.EARLY_SCOUT_END_SECONDS:
             return ["left", "right"]
-        if t < C.MID_PICKET_SECONDS:
-            return ["left", "right"]                 # back on their posts after the circuit
+        if t < C.MID_PICKET_SECONDS:                 # back on their posts after the circuit; a roamer on the fields
+            return ["left", "right"] + (["p0"] if t >= C.REMOTE_ROAM_FROM_SECONDS else [])
         roamers = ["x0"] if t >= C.EXPANSION_ROAM_SECONDS else []
         return ["left", "right"] + [f"p{i}" for i in range(max(0, C.MID_PICKETS - 2))] + roamers
 
@@ -181,6 +189,9 @@ class ScoutCorps:
                 if cell is not None:
                     self._lost.append((view.game_seconds, cell, role in self._circling))
                     self.scouts_lost += 1
+                    spawn, home = enemy_spawn_guess(view), view.base_center
+                    if spawn is not None and home is not None and dist2(cell, spawn) < dist2(cell, home):
+                        self._lost_their_side += 1
                 self._lost = self._lost[-6:]
                 del self.roles[role]
                 self._circling.discard(role)
@@ -208,7 +219,8 @@ class ScoutCorps:
         if not self._army_checked and view.game_seconds >= C.ARMY_CHECK_SECONDS and self.request_army_look():
             self._army_checked = True
         # Mid-game base check: one picket runs the circuit again.
-        if (view.game_seconds >= C.MID_PICKET_SECONDS and view.game_seconds - self._last_check >= C.BASE_CHECK_SECONDS
+        every = C.BASE_CHECK_SECONDS_WARY if self.wary else C.BASE_CHECK_SECONDS
+        if (view.game_seconds >= C.MID_PICKET_SECONDS and view.game_seconds - self._last_check >= every
                 and not self._circling):
             role = next((r for r in ("left", "right") if r in self.roles), None)
             if role is not None:
@@ -249,7 +261,7 @@ class ScoutCorps:
                 else:
                     out += moves
                     continue
-            if role in ("p0", "x0") and view.game_seconds >= C.MID_PICKET_SECONDS:
+            if role in ("p0", "x0") and view.game_seconds >= C.REMOTE_ROAM_FROM_SECONDS:
                 site = self._next_remote_site(view, u, role)
                 if site is not None:                 # the roamer: remote fields they may have expanded to
                     moves, arrived = self._go(view, u, site)
@@ -297,7 +309,8 @@ class ScoutCorps:
                 self._end_peek(role, view)
                 peek = None
             if peek is not None and role not in self._peeking and \
-                    view.game_seconds - self._peek_at.get(role, self._peek_offset(role)) >= C.SCOUT_PEEK_SECONDS:
+                    view.game_seconds - self._peek_at.get(role, self._peek_offset(role)) >= (
+                        C.SCOUT_PEEK_SECONDS_WARY if self.wary else C.SCOUT_PEEK_SECONDS):
                 self._peeking.add(role)
             if role in self._peeking and peek is not None:
                 moves, arrived = self._go(view, u, peek)

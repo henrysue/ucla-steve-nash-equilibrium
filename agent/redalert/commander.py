@@ -124,7 +124,7 @@ class Commander:
         # A strike on an expansion needs no look at their army: we know what
         # stands there (the raid or a scout just saw it).
         strike_at = (brain.expansion_strike(view, brain.vote_of(model_pref))
-                     if mode is Mode.ALL_IN and prev is not Mode.ALL_IN else None)
+                     if C.MAIN_ARMY_STRIKES and mode is Mode.ALL_IN and prev is not Mode.ALL_IN else None)
         strike = strike_at is not None and brain.attack_odds(view) < brain.attack_bar(view)
         # A strike that took its expansion ends there unless the usual bar
         # says go on (the audit: it carried on into their main base at 0.85).

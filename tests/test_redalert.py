@@ -5831,25 +5831,6 @@ def test_any_building_far_from_their_main_is_a_remote_expansion():
     assert remote_expansions(_view(_t=600.0, visible_enemy_buildings=near)) == []
 
 
-def test_their_army_grows_no_faster_than_their_fields_allow():
-    """Without a remote expansion seen they mine at most 3 fields (two
-    starting patches and the natural): against our 6 they can't match our
-    spending. Each remote expansion found adds a field."""
-    agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
-    ore = tuple((x, y) for cx, cy in ((40, 36), (36, 44), (44, 44), (10, 40), (40, 10), (8, 8))
-                for x in range(cx, cx + 3) for y in range(cy, cy + 2))
-    v = dataclasses.replace(_view(_t=600.0), ore_cells=ore)
-    agent._harvest.last_counts = {(k, k): 3 for k in range(6)}                  # we work 6 fields
-    assert agent._field_share(v) == pytest.approx(3 / 6)
-    out = [{"id": 80, "type": "proc", "x": 10, "y": 41, "hp": 100}]           # a remote expansion of theirs
-    seen = dataclasses.replace(_view(_t=600.0, visible_enemy_buildings=out), ore_cells=ore)
-    assert agent._field_share(seen) == pytest.approx(4 / 6)
-    agent._enemy_peak(dataclasses.replace(_view(_t=600.0, military={"army_value": 1000}), ore_cells=ore))
-    before = agent._believed
-    agent._enemy_peak(dataclasses.replace(_view(_t=630.0, military={"army_value": 7000}), ore_cells=ore))
-    assert agent._believed - before == pytest.approx(0.5 * 6000)              # capped at 3/6, under 0.6
-
-
 def test_a_new_enemy_expansion_sends_a_scout_to_look_at_their_army_and_looks_are_logged(tmp_path):
     """d1615ac6: they paid 12k for two expansions and their army fell to
     6600 against our 14850, unseen. An expansion found is a cue to look."""
@@ -5865,10 +5846,11 @@ def test_a_new_enemy_expansion_sends_a_scout_to_look_at_their_army_and_looks_are
     assert agent._look_logged == 610.0
 
 
-def test_the_army_strikes_a_remote_expansion_it_clearly_beats():
+def test_the_army_strikes_a_remote_expansion_it_clearly_beats(monkeypatch):
     """d1615ac6: raids killed an expansion's harvesters for two minutes while
     the army sat home, 14850 against a believed 18900. An expansion we beat
     locally is struck, short of the whole-army bar."""
+    monkeypatch.setattr(C, "MAIN_ARMY_STRIKES", True)        # off in the plan; the code kept
     tanks = [{"id": 30 + i, "type": "3tnk", "x": 10, "y": 10, "hp": 100} for i in range(14)]
     exp = [{"id": 85, "type": "proc", "x": 14, "y": 43, "hp": 100}]           # remote: 26+ from their main (40, 40)
     v = dataclasses.replace(_view(_t=700.0, buildings=BASE, units=tanks, visible_enemy_buildings=exp,
@@ -6000,7 +5982,8 @@ def test_the_concave_keeps_its_slots_as_the_enemy_drifts():
     assert a == b                                                              # a few degrees: the same facing
 
 
-def test_a_strike_ends_with_its_expansion_unless_the_usual_bar_says_go_on():
+def test_a_strike_ends_with_its_expansion_unless_the_usual_bar_says_go_on(monkeypatch):
+    monkeypatch.setattr(C, "MAIN_ARMY_STRIKES", True)        # off in the plan; the code kept
     from agent.redalert.commander import Commander
     tanks = [{"id": 30 + i, "type": "3tnk", "x": 14, "y": 40, "hp": 100} for i in range(14)]
     exp = [{"id": 85, "type": "proc", "x": 14, "y": 43, "hp": 100}]
@@ -6013,9 +5996,10 @@ def test_a_strike_ends_with_its_expansion_unless_the_usual_bar_says_go_on():
     assert c.decide(v(720.0, [])) is Mode.RETREAT                              # it fell: home, not on into their main
 
 
-def test_a_strike_below_the_retreat_line_keeps_marching_until_it_meets_them():
+def test_a_strike_below_the_retreat_line_keeps_marching_until_it_meets_them(monkeypatch):
     """The retreat line (0.8) counts from first contact: a strike at 0.79
     overall used to retreat 15 s in, still on its way to the expansion."""
+    monkeypatch.setattr(C, "MAIN_ARMY_STRIKES", True)        # off in the plan; the code kept
     from agent.redalert.commander import Commander
     tanks = [{"id": 30 + i, "type": "3tnk", "x": 10, "y": 10, "hp": 100} for i in range(12)]
     exp = [{"id": 85, "type": "proc", "x": 14, "y": 43, "hp": 100}]
@@ -6474,17 +6458,6 @@ def test_against_a_tank_push_we_defend_first_until_we_beat_one():
     assert c.push_beaten
 
 
-def test_against_a_tank_push_we_believe_they_put_everything_into_the_army():
-    def grown(first_seen):
-        agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
-        agent._intel.first_seen = dict(first_seen)
-        agent._believe(_view(_t=300.0, military={"army_value": 1000}), 0.0)
-        return agent._believe(_view(_t=390.0, military={"army_value": 6000}), 0.0)
-
-    normal, pushed = grown({}), grown({"weap": 162})
-    assert pushed > 1.4 * normal                                                               # 1.0 vs 0.6 of ours
-
-
 def test_a_glimpse_of_their_army_is_not_a_look():
     """1da6311e: a look that saw 1450 of a real 9750 (we believed 3370)
     cleared the blind check; a glimpse now goes on to their base front."""
@@ -6526,3 +6499,35 @@ def test_no_edging_forward_while_behind_or_against_an_unbeaten_tank_push():
     behind = _view(_t=385.0, buildings=BASE, military={"army_value": 5000, "visible_enemy_value": 7000},
                    visible_enemy_buildings=[{"id": 90, "type": "fact", "x": 40, "y": 40}])
     assert agent._probe_point(behind) is None
+
+
+def test_the_main_army_stays_home_and_leaves_their_expansions_to_the_raids():
+    """The plan (October 13): raid squads harass the remote expansions the
+    roamer finds; the main army stays near home (no expansion strike)."""
+    assert C.MAIN_ARMY_STRIKES is False
+    tanks = [{"id": 30 + i, "type": "3tnk", "x": 10, "y": 10, "hp": 100} for i in range(12)]
+    exp = [{"id": 85, "type": "proc", "x": 14, "y": 43, "hp": 100}]
+    v = dataclasses.replace(_view(_t=700.0, buildings=BASE, units=tanks, visible_enemy_buildings=exp,
+                                  military={"army_value": 13800}), enemy_army_peak=17500.0, enemy_base_scouted=True)
+    assert brain.expansion_strike(v) is not None                       # it would beat it...
+    assert brain.choose_mode(v, cheese_since=None) is Mode.BUILD         # ...but stays home
+
+
+def test_a_roamer_scouts_the_remote_fields_from_3_00_and_their_main_less_once_scouts_keep_dying():
+    corps = ScoutCorps()
+    many = [{"id": 30 + i, "type": "e1", "x": 5, "y": 5, "hp": 100, "idle": True} for i in range(14)]
+    assert "p0" not in corps.wanted(_view(_t=C.REMOTE_ROAM_FROM_SECONDS - 1))
+    assert "p0" in corps.wanted(_view(_t=C.REMOTE_ROAM_FROM_SECONDS))
+    assert not corps.wary
+    corps.update(_view(_t=200.0, units=many))
+    for k in range(C.SCOUT_WARY_LOSSES):                              # scouts killed on their side, one by one
+        role, uid = next((r, i) for r, i in corps.roles.items())
+        corps._last_cell[uid] = (38, 38)                               # by their base (spawn guess 40, 40)
+        corps.update(_view(_t=210.0 + k, units=[u for u in many if u["id"] != uid]))
+        many = [u for u in many if u["id"] != uid]
+    assert corps.wary
+    corps._last_check, corps._circling = 400.0, set()
+    corps.update(_view(_t=400.0 + C.BASE_CHECK_SECONDS + 1, units=many))
+    assert not corps._circling                                          # not after the usual 2.5 minutes...
+    corps.update(_view(_t=400.0 + C.BASE_CHECK_SECONDS_WARY + 1, units=many))
+    assert corps._circling                                              # ...after the wary 5
