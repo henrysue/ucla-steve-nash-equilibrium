@@ -35,9 +35,10 @@ from . import config as C
 from .matchlog import MatchLog
 from .lastseen import LastSeenMap
 from .memory import EnemyMemory
+from .snipe import HarvesterSnipe
 from .harvest import HarvestManager
 from .movement import Unstick
-from .modes import Mode
+from .modes import DEFENSIVE, Mode
 from .observe import dist2, enemy_ore_field, read
 
 
@@ -87,6 +88,7 @@ class RedAlertAgent:
         self._intel = intel.EnemyIntel()
         self._memory = EnemyMemory()
         self._lastseen = LastSeenMap()   # what we last saw where, for the advisor only (lastseen.py)
+        self._snipe = HarvesterSnipe()    # Rangers / light tanks that kill a harvester at their main and leave
         self._raid = RaidCorps()
         self._expansion = Expansion()
         self._garrison = Garrison()
@@ -238,9 +240,10 @@ class RedAlertAgent:
 
         if spar is None or spar.raids:     # sparring: the archetypes don't raid
             self._raid.update(view, self._mode, self._patrol.unit_id, advice,
-                              taken={*self._patrol.unit_ids, *self._garrison.unit_ids})
+                              taken={*self._patrol.unit_ids, *self._garrison.unit_ids, *self._snipe.unit_ids})
+            self._snipe.update(view, taken={*self._patrol.unit_ids, *self._garrison.unit_ids, *self._raid.unit_ids})
         self._garrison.update(view, self._mode, self._expansion,
-                              {*self._patrol.unit_ids, *self._raid.unit_ids})
+                              {*self._patrol.unit_ids, *self._raid.unit_ids, *self._snipe.unit_ids})
         self._matchlog.observe(raw, view, self._mode, context, extra={
             "scout": self._patrol.unit_id, "scouts": dict(self._patrol.roles),
             "enemy_opening": self._intel.opening(), "threat": threat,
@@ -252,6 +255,8 @@ class RedAlertAgent:
             "map_ore_cells": len(view.ore_cells), "enemy_ore_field": enemy_ore_field(view),
             "raid_target": self._raid.target(view),
             "raid_squads": self._raid.active, "raid_targets": self._raid.targets(view),
+            "snipe": {"state": self._snipe.state, "units": len(self._snipe.unit_ids), "runs": self._snipe.runs,
+                      "kills": self._snipe.kills},
             "attacked_spots": [list(c) for c in attacked[:6]], "outbox": len(self._outbox),
             "flank_via": self._flank_via,
             "expansion": self._expansion.state, "expansion_site": self._expansion.site,
@@ -299,8 +304,8 @@ class RedAlertAgent:
             scout_orders=(self._patrol.orders(view, self._hunter.targets(view, len(self._patrol.roles))
                                               if hunting else None) + self._patrol.production(view)),
             raid_ids=[*self._raid.unit_ids, *self._garrison.unit_ids, *micro_ids,
-                      *self._patrol.unit_ids],
-            raid_orders=(self._raid_orders(view)
+                      *self._patrol.unit_ids, *self._snipe.unit_ids],
+            raid_orders=(self._raid_orders(view) + self._snipe_orders(view, spar)
                          + self._garrison_orders(view) + micro_orders),
             advice=self._army_advice(advice, hunting, view),   # (the latched target: idempotent)
             flank_via=self._flank_via, expansion=self._expansion,
@@ -914,6 +919,14 @@ class RedAlertAgent:
         known = [b for b in list(view.enemy_buildings) + list(view.known_enemy_buildings) if not b.wreck]
         return brain._overwhelming(view) and (
             hunting or (brain.beaten(view) and len(known) <= C.FAN_MAX_KNOWN_BUILDINGS))
+
+    def _snipe_orders(self, view, spar) -> list[dict]:
+        """The harvester snipe's run and its training (snipe.py); its kills,
+        for the post-game read, in the match log."""
+        if spar is not None and not spar.raids:      # sparring: the archetypes don't raid
+            return []
+        push_on = scout.incoming_push(view) is not None
+        return self._snipe.orders(view, push_on) + self._snipe.production(view, self._mode in DEFENSIVE)
 
     def _decision_bars(self, view) -> dict:
         """For the advisor: each rules bar, our number against it, and the band

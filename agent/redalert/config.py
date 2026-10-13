@@ -36,7 +36,10 @@ NON_COMBAT = ("e6", "medi", "mech", "spy", "thf", "lst")
 VEHICLE_TYPES = ("1tnk", "2tnk", "3tnk", "4tnk", "jeep", "apc", "ftrk", "arty", "v2rl", "ttnk", "ctnk", "stnk")
 TURRETS = ("pbox", "hbox", "gun", "ftur", "tsla")   # ground turrets, either side: they fight in battles (strength.py),
                                    # guard attack targets, and siege units shell them (anti-air does none of it)
-BUILD_TURRETS = ("pbox", "ftur", "gun", "tsla")   # what we build: the first one offered (cheapest first)
+BUILD_TURRETS = ("pbox", "ftur", "gun", "tsla")   # what we build: the first one offered (cheapest first)...
+ANTI_TANK_TURRETS = ("gun", "tsla")   # ...against a tank push not yet beaten: these first (a pillbox and a flame tower
+                                      # are anti-infantry; Yuriko's push is medium tanks)
+TANK_PUSH_DEFENSES = 3             # ...and this many standing at home meanwhile (by her ~4:30 push)
 ALL_BUILDING_TYPES = frozenset({
     "fact", "powr", "apwr", "tent", "barr", "proc", "weap", "fix", "silo", "dome", "hpad", "afld",
     "spen", "syrd", "atek", "stek", "gap", "sam", "agun", "kenn", "iron", "pdox", "mslo",
@@ -341,10 +344,10 @@ REATTACK_ARMY_GROWTH = 1.3         # ...nor before the army regrows this much...
 RETREAT_REGROW_MAX_SECONDS = 120.0 # ...unless this long has passed
 
 # -- end of the match (tiebreak: kills - deaths, then assets) -----------------------------------
-PROTECT_LEAD_REMAINING_SECONDS = 120.0  # final 2 minutes with a lead of PROTECT_LEAD_MIN_MARGIN...
+PROTECT_LEAD_REMAINING_SECONDS = 300.0  # from 15:00 (the tiebreak: kills - losses) with a lead of PROTECT_LEAD_MIN_MARGIN...
 PROTECT_LEAD_MIN_MARGIN = 1500
 PROTECT_LEAD_LAST_SECONDS = 60.0        # ...or the final minute with any lead
-CATCH_UP_REMAINING_SECONDS = 180.0      # behind or level this late: attack regardless
+CATCH_UP_REMAINING_SECONDS = 300.0      # behind or level from 15:00: force trades (attack at parity)
 
 # -- squads: scout, raids, home guard, garrison ---------------------------------------------------
 SCOUT_INSET_CELLS = 8              # patrol ring this far inside the map edge
@@ -357,6 +360,20 @@ EARLY_PUSH_RATIO = 1.0             # ...and our odds against it no better than t
 ENEMY_ORE_RADIUS_CELLS = 20        # their ore field: ore this close to their spawn
 ENEMY_EXPANSION_WATCH_AFTER_SECONDS = 210.0
 ENEMY_EXPANSION_SCOUT_SITES = 2
+SNIPE_UNIT_TYPES = ("jeep", "1tnk")   # the harvester snipe (snipe.py): Rangers, else light tanks (none for the Soviets)
+SNIPE_UNITS = 4                    # ...a run goes with at least this many...
+SNIPE_MAX_UNITS = 6                # ...the squad keeps up to this many
+SNIPE_TRAIN_FROM_SECONDS = 300.0   # ...trained from 5:00 (not before: the money holds the first push)
+SNIPE_FROM_SECONDS = 330.0         # ...runs from 5:30...
+SNIPE_EVERY_SECONDS = 150.0        # ...while their push is in our half, or this long after the last run
+SNIPE_FIELD_CELLS = 10             # ...to their main field's ore within this of its heart, out of their turrets' reach
+SNIPE_HIT_CELLS = 9                # ...shooting a harvester in sight this close
+SNIPE_HIT_SECONDS = 25.0           # ...at most this long on target...
+SNIPE_WAIT_SECONDS = 12.0          # ...this long at the field with nothing in sight...
+SNIPE_TIMEOUT_SECONDS = 120.0      # ...this long in all...
+SNIPE_LOSS_SHARE = 0.5             # ...and home once it has lost this share of its units
+SNIPE_THREAT_CELLS = 7             # ...or their fighters and turrets this close outmatch it
+SNIPE_HOME_CELLS = 10              # back home this close to the base centre
 RAID_START_SECONDS = 150.0
 RAID_SQUAD_SIZE = 4
 RAID_SQUAD_SIZE_MACRO = 6          # against a macro-heavy enemy (the advisor's read): a bigger party...

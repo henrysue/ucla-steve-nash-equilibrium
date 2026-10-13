@@ -1061,7 +1061,11 @@ def defense_orders(view: View, under_attack: bool, expansion_site: tuple[int, in
     Kept few and cheap: the match is short, and money spent on concrete is
     money not spent on harvesters and tanks.
     """
-    defense = _available(view, C.BUILD_TURRETS)
+    # Against a tank push not yet beaten: anti-tank turrets first, and
+    # TANK_PUSH_DEFENSES of them standing (1da6311e, yuriko-vs-abu: medium
+    # tanks at 4:30; a pillbox is anti-infantry).
+    pending = view.tank_push_pending
+    defense = (_available(view, C.ANTI_TANK_TURRETS) if pending else None) or _available(view, C.BUILD_TURRETS)
     if defense is None:
         return []
     if any(view.queued_count(d) for d in C.TURRETS) or any(
@@ -1086,6 +1090,8 @@ def defense_orders(view: View, under_attack: bool, expansion_site: tuple[int, in
         cap = min(cap, 1)
     if home is not None:
         cap = max(cap, C.ACTIVE_BASE_DEFENSES)
+    if pending and view.has_building(C.WAR_FACTORY):
+        cap = max(cap, C.TANK_PUSH_DEFENSES)
     if have >= 1 and view.cash + view.ore < C.DEFENSE_ADD_FUNDS:
         return []   # broke: the last money goes to units (match 4bc1ee71 fed 6 pillboxes to an attack)
     if have >= cap or perimeter_spot(view, base, enemy, defense, near=home) is None:

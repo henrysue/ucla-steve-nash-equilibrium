@@ -1768,8 +1768,8 @@ def _lead_view(remaining, lead):
 
 
 def test_protect_lead_windows():
-    assert brain.choose_mode(_lead_view(150.0, 5000), cheese_since=None) is not Mode.PROTECT_LEAD  # 2:30 left: keep playing
-    assert brain.choose_mode(_lead_view(110.0, 1500), cheese_since=None) is Mode.PROTECT_LEAD      # 2 min, real lead
+    assert brain.choose_mode(_lead_view(330.0, 5000), cheese_since=None) is not Mode.PROTECT_LEAD  # 5:30 left: keep playing
+    assert brain.choose_mode(_lead_view(280.0, 1500), cheese_since=None) is Mode.PROTECT_LEAD      # from 15:00, a real lead
     assert brain.choose_mode(_lead_view(110.0, 800), cheese_since=None) is not Mode.PROTECT_LEAD   # 2 min, thin lead
     assert brain.choose_mode(_lead_view(50.0, 100), cheese_since=None) is Mode.PROTECT_LEAD        # last minute: any lead
     assert brain.choose_mode(_lead_view(50.0, 0), cheese_since=None) is not Mode.PROTECT_LEAD      # level: go get kills
@@ -6531,3 +6531,71 @@ def test_a_roamer_scouts_the_remote_fields_from_3_00_and_their_main_less_once_sc
     assert not corps._circling                                          # not after the usual 2.5 minutes...
     corps.update(_view(_t=400.0 + C.BASE_CHECK_SECONDS_WARY + 1, units=many))
     assert corps._circling                                              # ...after the wary 5
+
+
+def test_against_an_unbeaten_tank_push_we_build_anti_tank_turrets_three_of_them():
+    blds = BASE + [{"id": 12, "type": "weap", "x": 14, "y": 10}, {"id": 20, "type": "pbox", "x": 12, "y": 14}]
+    offered = ["pbox", "gun", "e1"]
+    calm = _view(_t=240.0, buildings=blds, available_production=offered, economy={"cash": 3000})
+    assert buildplan.defense_orders(calm, under_attack=False) == []                      # one standing: enough
+    pushed = dataclasses.replace(calm, enemy_tank_push=True, tank_push_pending=True)
+    assert buildplan.defense_orders(pushed, under_attack=False) == [{"cmd": "build", "item": "gun"}]   # anti-tank
+
+
+def test_no_expansion_while_a_tank_push_is_unbeaten():
+    import types
+    e = Expansion()
+    v = _exp_view(t=300.0, military={"army_value": 7000, "kills_cost": 3000, "deaths_cost": 3000})
+    advice = types.SimpleNamespace(expand="auto", balance="balanced")
+    e._ore_running_out = False
+    assert e._gates(v, Mode.BUILD, advice)
+    assert not e._gates(dataclasses.replace(v, tank_push_pending=True), Mode.BUILD, advice)
+    e._ore_running_out = True
+    assert e._gates(dataclasses.replace(v, tank_push_pending=True), Mode.BUILD, advice)   # home running dry
+
+
+def test_the_tiebreak_from_15_00_protects_a_lead_and_forces_trades_when_behind():
+    assert brain.choose_mode(_lead_view(290.0, 2000), cheese_since=None) is Mode.PROTECT_LEAD   # ahead from 15:00
+    behind = _view(buildings=BASE, _r=290.0, military={"army_value": 9000, "visible_enemy_value": 9000,
+                                                        "kills_cost": 10000, "deaths_cost": 12000})
+    assert brain._attack_threshold(behind) == C.CATCH_UP_ARMY_EDGE                              # behind: at parity
+    early = dataclasses.replace(behind, remaining_seconds=400.0)
+    assert brain._attack_threshold(early) != C.CATCH_UP_ARMY_EDGE
+
+
+def test_the_harvester_snipe_slips_round_their_turrets_kills_one_harvester_and_leaves():
+    from agent.redalert.snipe import HarvesterSnipe
+    sn = HarvesterSnipe()
+    jeeps = [{"id": 60 + i, "type": "jeep", "x": 12, "y": 12, "hp": 100} for i in range(4)]
+    offered = ["jeep", "1tnk", "2tnk", "e1"]
+    early = _view(_t=290.0, buildings=BASE + [{"id": 12, "type": "weap"}], available_production=offered)
+    assert sn.production(early, defending=False) == []                                 # not before 5:00
+    v = _view(_t=310.0, buildings=BASE + [{"id": 12, "type": "weap"}], available_production=offered)
+    assert sn.production(v, defending=False) == [{"cmd": "train", "item": "jeep", "count": 1}]
+    assert sn.production(v, defending=True) == []
+    ore = tuple((x, y) for x in range(36, 44) for y in range(36, 40))                    # their field (spawn 40, 40)
+    def at(t, units, enemies=(), kills=0):
+        return dataclasses.replace(_view(_t=t, buildings=BASE, units=units, visible_enemies=list(enemies),
+                                         available_production=offered, military={"kills_cost": kills}),
+                                   ore_cells=ore, bounds=(0, 0, 64, 64))
+    sn.update(at(320.0, jeeps))
+    assert sorted(sn.unit_ids) == [60, 61, 62, 63]
+    assert sn.orders(at(320.0, jeeps)) == []                                            # not before 5:30
+    o = sn.orders(at(340.0, jeeps))
+    assert sn.state == "go" and o and o[0]["cmd"] == "move" and set(o[0]["units"]) == {60, 61, 62, 63}   # slips, no fight
+    there = [dict(u, x=37, y=35) for u in jeeps]
+    harv = [{"id": 90, "type": "harv", "x": 38, "y": 37, "hp": 100}]
+    o = sn.orders(at(380.0, there, harv))
+    assert sn.state == "hit" and o == [{"cmd": "attack", "units": [60, 61, 62, 63], "target": 90}]
+    o = sn.orders(at(390.0, there, (), kills=1100))                                     # it died
+    assert sn.state == "leave" and sn.kills == 1 and o[0]["cmd"] == "move"
+    home = [dict(u, x=6, y=6) for u in jeeps]                                         # by the base centre (4, 4)
+    sn.orders(at(420.0, home))
+    assert sn.state == "gather" and sn.runs == 1
+    # Outmatched on the way: it leaves at once.
+    sn2 = HarvesterSnipe()
+    sn2.update(at(320.0, jeeps))
+    sn2.orders(at(340.0, jeeps))
+    tanks = [{"id": 95 + i, "type": "2tnk", "x": 13, "y": 13, "hp": 100} for i in range(4)]
+    sn2.orders(at(345.0, jeeps, tanks))
+    assert sn2.state == "leave"

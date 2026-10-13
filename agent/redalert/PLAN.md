@@ -339,6 +339,16 @@ An attack goes on until the retreat rule ends it. No mass/attack flip within
   groups in a semi-concave, and only to points it walks to without a detour.
   Stragglers wait to go 6 together; no flank before 10:00 unless far ahead.
   Scouts and raid squads walk in legs too.
+- **Harvester snipe** (snipe.py): from 5:00 we keep 4-6 Rangers (else light
+  tanks that aren't our main tank; none for the Soviets) out of the army.
+  From 5:30, while their push is in our half or 2:30 after the last run,
+  they slip by plain moves round their sight lines (the chokes, the front of
+  their base, their turrets: the scouts' avoid zone; failing a way round,
+  round the turrets only) to the flank of their main ore field, shoot the
+  nearest harvester by id until it dies, and go home — at once when their
+  fighters or turrets there outmatch them, after losing half, 25 s on
+  target or 2 minutes in all. For an opponent with no expansion to raid
+  (Yuriko takes none before ~6:40): a harvester is 1100 of tiebreak.
 - **Raids**: only at their remote expansions — any building of theirs 25+
   cells from their main base (not its edge; a building there means a yard,
   even if the first one seen is its turret) — that our scouts found; more squads the
@@ -356,7 +366,10 @@ An attack goes on until the retreat rule ends it. No mass/attack flip within
 - **Retreat**: a plain move to the main turret line; regroup there.
 - **Micro**: focus fire on the weakest enemy fighter within 4 cells; siege
   units shell turrets.
-- **Turrets**: the first out in front of the first war factory (beside it
+- **Turrets**: against a tank push not yet beaten, anti-tank first (the
+  Allied gun turret, a tesla coil; a pillbox and a flame tower are
+  anti-infantry) and 3 standing at home; the expansion waits until the push
+  is beaten (unless home runs dry). The first out in front of the first war factory (beside it
   on its enemy side; where its exit lane leaves no spot there, the line),
   unless a threat or the advisor names the side; the rest a line on the
   base's front edge straight toward the enemy (side by side across that
@@ -414,8 +427,10 @@ has hysteresis:
 
 ### 7. The end
 
-Protect a real lead in the last 2 minutes; level or behind in the last 3,
-attack regardless; once their base is razed — or they are simply beaten
+The tiebreak decides an unfinished game (kills - losses, then assets), so
+from 15:00: a real lead (1500+) is protected — no new attacks — and level or
+behind we force trades (attack at parity); in the last minute any lead is
+protected; once their base is razed — or they are simply beaten
 (overwhelming odds, well ahead on trades) with 10 or fewer buildings known —
 fan out and hunt every last building.
 
