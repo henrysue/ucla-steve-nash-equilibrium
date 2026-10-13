@@ -117,7 +117,8 @@ def choose_mode(
     # (The turrets are in the odds: match 654f1b2e attacked a mixed army into
     # three flame towers three times.)
     # (Its "hold" acts in one place, below, with the exceptions that override it.)
-    can_attack = ((advised(strike, threshold, max(vote, 0), floor=C.ADVISOR_ATTACK_EDGE) or (traded_up and strike >= choke))
+    can_attack = ((advised(strike, threshold, max(vote, 0), floor=C.ADVISOR_ATTACK_EDGE)
+                   or (traded_up and strike >= C.TRADED_UP_ATTACK_EDGE * choke))
                   and _has_real_army(view) and built and not cooling_down and regrown)
     # A turtle waits for the siege: SIEGE_ATTACK_MIN siege units, or an army
     # that overwhelms army and turrets together (efefdca8: two attacks into
@@ -220,10 +221,13 @@ def choose_mode(
 
 def local_fight_odds(view: View, squad_ids: frozenset = frozenset()) -> float | None:
     """The main army's units in the fight against theirs in it: their
-    fighters within ``STAGE_ENGAGE_CELLS`` of any of ours, and ours within
-    that of any of them (strength.odds). None with no fight in sight."""
+    fighters and turrets within ``STAGE_ENGAGE_CELLS`` of any of ours, and
+    ours within that of any of them (strength.odds). None with no fight in
+    sight. Their turrets count: 5a03e4d2 fought on in their base for two
+    minutes against units and 3 pillboxes, judged on the units alone."""
     r2 = C.STAGE_ENGAGE_CELLS ** 2
     foes = [a for a in view.enemy_units if a.cell is not None and not a.wreck and a.type not in C.HARVESTER]
+    foes += [b for b in view.enemy_buildings if b.type in C.TURRETS and b.cell is not None and not b.wreck]
     ours = [u for u in view.combat_units if u.cell is not None and u.id not in squad_ids]
     theirs = [a for a in foes if any(dist2(a.cell, u.cell) <= r2 for u in ours)]
     if not theirs:

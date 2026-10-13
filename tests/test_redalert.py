@@ -168,8 +168,8 @@ def test_all_in_with_a_clear_edge():
 
 
 def test_anti_passivity_escalates_late():
-    early = _view(buildings=BASE, _t=120.0, military={"army_value": 3700, "visible_enemy_value": 3000})
-    late = _view(buildings=BASE, _t=500.0, military={"army_value": 3700, "visible_enemy_value": 3000})
+    early = _view(buildings=BASE, _t=120.0, military={"army_value": 4300, "visible_enemy_value": 3000})
+    late = _view(buildings=BASE, _t=500.0, military={"army_value": 4300, "visible_enemy_value": 3000})
     parity = _view(buildings=BASE, _t=500.0, military={"army_value": 3100, "visible_enemy_value": 3000})
     assert brain.choose_mode(parity, cheese_since=None) is Mode.BUILD     # 1.03x late: no coin flip (ef66403c)
     assert brain.choose_mode(early, cheese_since=None) is Mode.BUILD
@@ -217,8 +217,10 @@ def test_build_leaves_busy_units_alone():
 
 def test_build_stages_idle_units_at_the_choke():
     idle = [{**u, "idle": True} for u in _ARMY]
-    o = executor._army_orders(_view(buildings=BASE, units=idle), Mode.BUILD)
+    o = executor._army_orders(_view(_t=C.EARLY_HOME_DEFENSE_SECONDS, buildings=BASE, units=idle), Mode.BUILD)
     assert o == [{"cmd": "attack_move", "units": [30, 31], "to": [13, 13]}]
+    early = executor._army_orders(_view(_t=200.0, buildings=BASE, units=idle), Mode.BUILD)
+    assert early and all(tuple(x["to"]) != (13, 13) for x in early)   # early: at the base's line, not forward (5a03e4d2)
 
 
 def test_units_already_staged_are_not_reordered():
@@ -421,7 +423,8 @@ def test_an_unchanged_army_order_is_not_resent_every_view():
     idle = [{"id": i, "type": "1tnk", "x": 5, "y": 5, "hp": 100, "idle": True} for i in range(30, 33)]
     walking = [dict(u, idle=False) for u in idle]
     agent = RedAlertAgent(log=lambda *_: None, clock=lambda: now[0])
-    state = lambda units: _state(_t=200.0, buildings=BASE, units=units, military={"army_value": 2000})  # noqa: E731  (massing)
+    state = lambda units: _state(_t=C.EARLY_HOME_DEFENSE_SECONDS, buildings=BASE, units=units,  # noqa: E731  (massing)
+                                 military={"army_value": 2000})
 
     def army(dec):
         return [o for o in getattr(dec, "action", {}).get("orders", []) if o["cmd"] == "attack_move"]
@@ -960,7 +963,7 @@ def test_model_hold_only_delays_an_attack_the_rules_call():
 
     def at(t):
         v = dataclasses.replace(_view(_t=t, buildings=BASE + [{"id": 12, "type": "weap"}],
-                                      military={"army_value": 3600, "visible_enemy_value": 3000}),
+                                      military={"army_value": 4400, "visible_enemy_value": 3000}),
                                 enemy_base_scouted=True)
         return c.decide(v, model_pref=Mode.BUILD)
 
@@ -1303,7 +1306,7 @@ def test_staging_is_on_our_side_and_stays_up_front():
 def test_the_advisor_does_not_pick_the_massing_point():
     adv = ra_advisor.parse_advice({**_ANSWER, "stage_at": [22, 22], "formation": "clump"}, _view(), 100.0)
     units = [{"id": 30, "type": "e1", "x": 5, "y": 5, "hp": 100, "idle": True}]
-    o = executor._army_orders(_view(buildings=BASE, units=units), Mode.BUILD, advice=adv)
+    o = executor._army_orders(_view(_t=C.EARLY_HOME_DEFENSE_SECONDS, buildings=BASE, units=units), Mode.BUILD, advice=adv)
     assert o[0]["to"] == [13, 13]                               # the rules' massing point, not the advisor's
 
 
@@ -2796,7 +2799,7 @@ def test_broke_and_trading_even_expands_again_a_minute_after_the_last():
 
 def test_broke_but_losing_trades_waits_the_normal_interval():
     e = _deployed_expansion(t=335.0)
-    for t in (340.0, 380.0, 396.0, 420.0):
+    for t in (340.0, 360.0, 380.0, 335.0 + C.EXPAND_AGAIN_AFTER_SECONDS - 5):
         e.update(_broke(t, kills=2000, deaths=6000), Mode.BUILD)
     assert e.state == "idle"
 
@@ -3768,11 +3771,11 @@ def test_the_unseen_army_fades_while_ours_stands_in_their_base_and_stops_growing
 
 
 def test_the_advisors_attack_goes_at_even_odds_not_below():
-    v = _view(_t=300.0, buildings=BASE, military={"army_value": 3000, "visible_enemy_value": 2550})
-    assert brain.choose_mode(v, cheese_since=None) is Mode.BUILD                          # 1.18: under the 1.3 bar
+    v = _view(_t=300.0, buildings=BASE, military={"army_value": 3000, "visible_enemy_value": 2100})
+    assert brain.choose_mode(v, cheese_since=None) is Mode.BUILD                          # 1.43: under the 1.6 bar
     assert brain.choose_mode(v, cheese_since=None, model_pref=Mode.ALL_IN) is Mode.ALL_IN  # within 15%: its call goes
-    far = _view(_t=300.0, buildings=BASE, military={"army_value": 3000, "visible_enemy_value": 2800})
-    assert brain.choose_mode(far, cheese_since=None, model_pref=Mode.ALL_IN) is Mode.BUILD  # 1.07: past its band
+    far = _view(_t=300.0, buildings=BASE, military={"army_value": 3000, "visible_enemy_value": 2400})
+    assert brain.choose_mode(far, cheese_since=None, model_pref=Mode.ALL_IN) is Mode.BUILD  # 1.25: past its band
     worse = _view(_t=300.0, buildings=BASE, military={"army_value": 3000, "visible_enemy_value": 3300})
     assert brain.choose_mode(worse, cheese_since=None, model_pref=Mode.ALL_IN) is Mode.BUILD
 
@@ -4564,7 +4567,7 @@ def test_the_army_fights_a_push_at_the_main_base_and_readies_for_one_at_an_expan
 
 
 def test_a_maxed_army_pushes_at_a_small_edge():
-    big = _view(_t=736.0, buildings=BASE, military={"army_value": 18500, "visible_enemy_value": 15000})
+    big = _view(_t=736.0, buildings=BASE, military={"army_value": 21500, "visible_enemy_value": 15000})
     assert brain._attack_threshold(big) == C.BIG_ARMY_EDGE
     assert brain.choose_mode(dataclasses.replace(big, enemy_army_peak=15000.0), cheese_since=None) is Mode.ALL_IN
     # At parity it holds: the defender's concave and turrets win (d1615ac6: 25150 into 24700 lost 6800 for 3950).
@@ -6175,3 +6178,23 @@ def test_the_army_judges_a_fight_at_home_against_the_whole_push_not_the_few_in_s
         assert not any(x["cmd"] == "attack_move" and tuple(x["to"]) in {(14, 6), (15, 6)} for x in o)   # held at the line
     finally:
         scout._INTERCEPT.update(at=None, facing=None, group=[], seen=-1e9)
+
+
+def test_trading_up_starts_an_attack_only_at_a_clear_edge():
+    """5a03e4d2 at 7:30: clearly up after killing their push, it went in at
+    about even and lost 8800 to their units and three pillboxes."""
+    even = _view(_t=450.0, buildings=BASE + [{"id": 12, "type": "weap"}],
+                 military={"army_value": 3300, "visible_enemy_value": 3000})                 # 1.1
+    assert brain.choose_mode(even, cheese_since=None, traded_up=True) is Mode.BUILD
+    clear = _view(_t=450.0, buildings=BASE + [{"id": 12, "type": "weap"}],
+                  military={"army_value": 4000, "visible_enemy_value": 3000})                # 1.33
+    assert brain.choose_mode(clear, cheese_since=None, traded_up=True) is Mode.ALL_IN
+
+
+def test_the_fight_in_contact_counts_their_turrets():
+    ours = [{"id": 30 + i, "type": "2tnk", "x": 30, "y": 30, "hp": 100} for i in range(4)]
+    few = [{"id": 90, "type": "e1", "x": 33, "y": 33, "hp": 100}]
+    v = _view(units=ours, visible_enemies=few)
+    towers = [{"id": 95 + i, "type": "pbox", "x": 34 + i, "y": 32, "hp": 100} for i in range(3)]
+    w = _view(units=ours, visible_enemies=few, visible_enemy_buildings=towers)
+    assert brain.local_fight_odds(w) < brain.local_fight_odds(v)

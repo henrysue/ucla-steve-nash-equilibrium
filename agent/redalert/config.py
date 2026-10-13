@@ -217,14 +217,20 @@ EXPANSION_LOOK_AFTER_SECONDS = 240.0   # a new enemy expansion found after this 
 BELIEF_LOOK_CELLS = 10             # this many of our army units (BELIEF_LOOK_UNITS) this close to their base...
 BELIEF_LOOK_UNITS = 3
 BELIEF_DECAY_SECONDS = 30.0        # ...and the unseen part of their army fades over this (it isn't there)
-ATTACK_ARMY_EDGE = 1.3             # our army / estimated enemy army (brain.enemy_estimate) needed to attack...
-ESCALATED_ARMY_EDGE = 1.15         # ...lowered after ESCALATE_AFTER_SECONDS (1.0 attacked at parity and retreated within seconds: ef66403c)...
+ATTACK_ARMY_EDGE = 1.6             # our army / estimated enemy army (brain.enemy_estimate) needed to attack their base:
+                                   # much stronger only — defend, expand, out-mass (5a03e4d2 went in at 7:30 after
+                                   # trading up, lost 8800 to their units and 3 pillboxes, and the rusher won)...
+ESCALATED_ARMY_EDGE = 1.4          # ...lowered after ESCALATE_AFTER_SECONDS (1.0 attacked at parity and retreated within seconds: ef66403c)...
 CATCH_UP_ARMY_EDGE = 1.0           # ...and to this when behind at the end
 BIG_ARMY_VALUE = 15000             # an army this big pushes at...
-BIG_ARMY_EDGE = 1.2                # ...this edge (c7a982ac: two 20k+ armies idled 10 minutes at ~1.1; but
+BIG_ARMY_EDGE = 1.4                # ...this edge (c7a982ac: two 20k+ armies idled 10 minutes at ~1.1; but
                                    # d1615ac6 attacked 25150 into 24700 at 1.05 and lost 6800 for 3950: at
                                    # parity the defender's concave, turrets and short reinforcement win)
 TRADE_WIN_MIN = 1000               # an attack that has killed this much more than it lost keeps going
+TRADED_UP_ATTACK_EDGE = 1.3        # having just traded clearly up, attack at these odds (not at parity: 5a03e4d2)
+EARLY_HOME_DEFENSE_SECONDS = 300.0  # before this the army waits at the main base's line, by its turret, not the
+                                   # forward concave (5a03e4d2: the 3:20 rush passed the concave 12 cells out and
+                                   # killed the war factory and depot on the flank)
 ESCALATE_AFTER_SECONDS = 420.0
 MIN_ATTACK_ARMY_VALUE = 1500       # never attack with less...
 PUSH_ARMY_VALUE = 3000             # ...and push only with a real army built (unless behind at the end)
@@ -458,7 +464,7 @@ EXPAND_MIN_FIGHTERS = 8            # no expansion MCV with fewer fighters (08560
 EXPAND_MCV_ARMY_VALUE = 2000       # ...or less army than this (the count includes the scouts: c4caa45e flipped at 8)
 EXPAND_MAX_EXPANSIONS = 3
 EXPAND_MAX_FAILURES = 2
-EXPAND_AGAIN_AFTER_SECONDS = 120.0          # next expansion this long after the last...
+EXPAND_AGAIN_AFTER_SECONDS = 75.0           # next expansion this long after the last (expand rapidly, out-mass)...
 EXPAND_EVEN_TRADE_BAND = 2000               # ...and with kills - losses within this, the advisor's "wait" doesn't hold it
 # The ore forecast (harvest.HarvestManager): the observation has no live ore,
 # so a field holds about ORE_VALUE_PER_CELL x its ore cells at the start (ore

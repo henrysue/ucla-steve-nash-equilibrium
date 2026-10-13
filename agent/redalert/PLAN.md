@@ -92,8 +92,8 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
   beside the first field with room whose trucks walk to its ore in 6 steps;
   with none such (the base boxed in round its fields), no refinery now
   (d2d8dc27 on Shadowfiend paid 2000 for one 10 steps from its ore).
-- **Expansions**: to the natural after the depot (from ~3:45), then every 2
-  minutes or sooner when the ore forecast runs dry; up to 3; none after 14:00.
+- **Expansions**: to the natural after the depot (from ~3:45), then every
+  75 s or sooner when the ore forecast runs dry; up to 3; none after 14:00.
   Against a passive enemy (below): from 3:00 and every minute, whatever our
   army odds or the advisor's "wait", and refineries keep coming.
   The MCV is escorted by the outpost, never the army. While it drives there
@@ -200,17 +200,21 @@ behind/outgunned. The blind check reads only what was actually seen.
 5. **RETREAT**: decided early in a fight, never in the middle of one. In
    the first 12 s from contact: odds under 0.8, or losing the trades (unless
    the fight in contact is won where it is, 1.0x+). After that the army
-   fights it out, unless that fight is hopeless (under 0.5x). Breaking off
+   fights it out, unless that fight is hopeless (under 0.5x, their turrets
+   in it counted). Breaking off
    mid-fight gave every chaser free shots: a4a78f76 lost 1500 for 300
    hitting war factories at 5:40, retreated at 5000 vs 4000 and lost 1400
    more on the way out. Marching, before contact, only under 0.5 turns it
    round. 10 s out of contact ends a fight; the next contact opens a new
    window.
 6. **ATTACK** when the odds against their army plus the turrets at the target
-   reach the bar: 1.3, 1.15 after 7:00, 1.2 with a 15000+ army (at parity the
-   defender wins: d1615ac6 lost 6800 for 3950 at 1.05), 1.0 behind
-   at the end. Or at once after the main army
-   clearly won a fight (1500+ net and 1.5x in 2 minutes) when at least even.
+   reach the bar — only when much stronger: 1.6, 1.4 after 7:00 or with a
+   15000+ army (at parity the defender wins: d1615ac6 lost 6800 for 3950 at
+   1.05), 1.0 behind at the end. Or at once after the main army clearly won
+   a fight (1500+ net and 1.5x in 2 minutes) at 1.3+. The plan is defend,
+   expand, out-mass: 5a03e4d2 out-built the rusher (5 refineries to 2 by
+   14:00) but went into its base at 7:30 after trading up, lost 8800 to its
+   units and 3 pillboxes, and lost the game to its next push.
    - **Look first**: knowing little of them (under half our army seen lately,
      and no fresh look where their army masses — the mouth of the choke on
      their side; a lap round their base doesn't count), a scout looks first
@@ -251,7 +255,10 @@ An attack goes on until the retreat rule ends it. No mass/attack flip within
     a 15-unit push by its war factory and lost everyone) — else holds the
     main base's turret line (`scout.home_line`: just behind our turret
     nearest them). A push seen in
-    our half → it gets ready at that line facing it. Otherwise the concave
+    our half → it gets ready at that line facing it. Before 5:00 it waits
+    at that line, by its turret (5a03e4d2: the 3:20 rush passed the forward
+    concave and killed the war factory and depot on the flank); not against
+    a passive enemy. Otherwise the concave
     holds the choke on their road in (a passage 7 cells or narrower, 10+ cells
     out and under 45% of the way to them): its kill point on the choke's mouth
     on our side, so the whole arc fires on them as they come through; with no

@@ -813,6 +813,13 @@ def _army_home(view: View, mode: Mode, scout_id: int | None = None, reserved: fr
         return _form(view, fighters, line, enemy_spawn_guess(view), everyone=True) if line is not None else []
     if stage_override is not None:                 # edging forward to confirm an attack: everyone goes
         return _form(view, fighters, stage_override, enemy_spawn_guess(view), everyone=True)
+    # Early, the army waits at the main base's line by its turret: a rush
+    # that passes the forward concave hits the buildings behind it
+    # (5a03e4d2 at 3:20). Not against a passive enemy (no rush comes).
+    if view.game_seconds < C.EARLY_HOME_DEFENSE_SECONDS and not view.enemy_passive:
+        line = scout.home_line(view)
+        if line is not None:
+            return _form(view, fighters, line, enemy_spawn_guess(view))
     held = scout.concave_point(view)       # at the choke's mouth when there is one
     return _form(view, fighters, held[0], held[1]) if held is not None else []
 
