@@ -327,13 +327,26 @@ def _production_orders(view: View, mode: Mode, *, sparring=None, threat: bool = 
     elif has_factory and tank and not short_harvesters and (lag or (not broke and spare >= unit_cost(tank))):
         if view.queued_count(tank) < min(C.MAX_QUEUE_DEPTH, (2 if rich or lag else 1) + (1 if turtle else 0)):
             out.append(orders.train(tank, count=1))
-    # Siege units (V2 / artillery) once defenses are known: they outrange them.
+    # Siege units (V2 / artillery): part of the mix (SIEGE_VALUE_SHARE of
+    # combat value) once the dome offers them, and once defenses are known
+    # (they outrange them).
     if (siege and not siege_first and has_factory and not short_harvesters and not broke and spare >= unit_cost(siege)
-            and len(enemy_defenses(view)) >= C.SIEGE_MIN_ENEMY_DEFENSES
+            and (len(enemy_defenses(view)) >= C.SIEGE_MIN_ENEMY_DEFENSES or siege_short(view))
             and len(view.units_of(C.SIEGE_UNITS)) + view.queued_count(siege) < C.SIEGE_MAX
             and view.queued_count(siege) == 0):
         out.append(orders.train(siege, count=1))
     return out
+
+
+def siege_short(view: View) -> bool:
+    """Siege units (queued counted) under ``SIEGE_VALUE_SHARE`` of our
+    combat value."""
+    cost = lambda item: view.unit_costs.get(item, C.DEFAULT_UNIT_COST)  # noqa: E731
+    have = sum(cost(u.type) for u in view.combat_units if u.type in C.SIEGE_UNITS)
+    have += sum(cost(s) for s in C.SIEGE_UNITS for _ in range(view.queued_count(s)))
+    total = sum(cost(u.type) for u in view.combat_units) + sum(
+        cost(s) for s in C.SIEGE_UNITS for _ in range(view.queued_count(s)))
+    return have < C.SIEGE_VALUE_SHARE * total
 
 
 def enemy_defenses(view: View) -> list:

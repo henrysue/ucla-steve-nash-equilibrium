@@ -190,10 +190,21 @@ def _build_order(view: View) -> tuple:
 def follow_up(view: View) -> tuple:
     """The opening's follow-up — without its refinery when no field has a
     spot its trucks walk from (refinery_room: the build order queued one
-    10 steps out, d2d8dc27)."""
-    if refinery_room(view):
-        return C.FOLLOW_UP
-    return tuple(s for s in C.FOLLOW_UP if s != C.REFINERY)
+    10 steps out, d2d8dc27), and without the service depot while it waits
+    (:func:`depot_waits`)."""
+    steps = C.FOLLOW_UP if refinery_room(view) else tuple(s for s in C.FOLLOW_UP if s != C.REFINERY)
+    if depot_waits(view):                    # the radar dome in its place: siege units, not main battle tanks yet
+        steps = tuple(C.RADAR_DOME if s == C.SERVICE_DEPOT else s for s in steps)
+    return steps
+
+
+def depot_waits(view: View) -> bool:
+    """No service depot before ``DEPOT_AFTER_SECONDS``: its 1200 goes into
+    the army, and the radar dome takes its place in the follow-up (V2s /
+    artillery). Against a passive enemy it comes at once (the expansions'
+    MCV needs it)."""
+    return (view.game_seconds < C.DEPOT_AFTER_SECONDS and not view.enemy_passive
+            and not view.has_building(C.SERVICE_DEPOT))
 
 
 def opening_army_first(view: View) -> bool:
@@ -466,7 +477,10 @@ def placement_cell(view: View, item: str, defense_at: tuple[int, int] | None = N
         enemy = enemy_spawn_guess(view)
         if defense_at is not None and _within_degrees(base, defense_at, enemy, C.DEFENSE_SIDE_MAX_DEGREES):
             prefer = defense_at
-        return perimeter_spot(view, base, enemy, item, prefer=prefer, strict=False, near=home)
+        # The first one guards the war factory, unless a threat or the
+        # advisor names the side.
+        guard = factory_guard_spot(view, item) if prefer is None and home is None else None
+        return guard or perimeter_spot(view, base, enemy, item, prefer=prefer, strict=False, near=home)
     ore_cell = _nearest_ore(view, base)
     ore = _unit(base, ore_cell)
     if item == C.REFINERY:
@@ -488,6 +502,12 @@ def placement_cell(view: View, item: str, defense_at: tuple[int, int] | None = N
         return grow_spot(view, flank, item, near=home)
     if item in (C.WAR_FACTORY, C.SERVICE_DEPOT):
         return grow_spot(view, flank, item, near=home)
+    if item == C.RADAR_DOME:
+        # As far from the enemy as the base reaches: it can't be sniped.
+        spots = legal_spots(view, item, home)
+        far = enemy_spawn_guess(view)
+        if spots and far is not None:
+            return max(spots, key=lambda s: (dist2(s, far), -dist2(s, base)))
     if item in (C.POWER_PLANT, C.ADV_POWER_PLANT, C.SILO, C.RADAR_DOME, C.KENNEL):
         back = (-enemy[0], -enemy[1])
         return grow_spot(view, _blend(back, ore, -1.0) if ore else back, item, near=home)
@@ -913,6 +933,36 @@ def _watch_spot(view: View, item: str, base, near=None) -> tuple[int, int] | Non
     return _pick(view, item, spots, lambda s: dist2(s, watch)) if spots else None
 
 
+def factory_guard_spot(view: View, item: str = "pbox") -> tuple[int, int] | None:
+    """Beside our main war factory on its outward side (away from the base
+    centre), while no turret stands within ``FACTORY_GUARD_CELLS`` of it.
+    None otherwise (or with no legal spot that close)."""
+    base = view.base_center
+    if base is None:
+        return None
+    r2 = C.DEFENSE_MAIN_RADIUS_CELLS ** 2
+    weaps = [b.cell for b in view.buildings if b.type == C.WAR_FACTORY and b.cell is not None and not b.wreck
+             and dist2(b.cell, base) <= r2]
+    if not weaps:
+        return None
+    weap = min(weaps, key=lambda c: dist2(c, base))
+    g2 = C.FACTORY_GUARD_CELLS ** 2
+    if any(b.type in C.TURRETS and b.cell is not None and not b.wreck and dist2(b.cell, weap) <= g2
+           for b in view.buildings):
+        return None
+    out = _unit(base, weap)
+    if out is None:
+        return None
+    w, h = _footprint(C.WAR_FACTORY)
+    centre = (weap[0] + (w - 1) / 2, weap[1] + (h - 1) / 2)
+    reach = max(w, h) / 2 + 1.5
+    target = (centre[0] + out[0] * reach, centre[1] + out[1] * reach)
+    spots = [s for s in legal_spots(view, item, None, C.TURRETS) if dist2(s, weap) <= g2]
+    if not spots:
+        return None
+    return min(spots, key=lambda s: (s[0] - target[0]) ** 2 + (s[1] - target[1]) ** 2)
+
+
 def perimeter_spot(view: View, base: tuple[int, int], toward, item: str = "pbox", near=None,
                    prefer=None, strict: bool = True) -> tuple[int, int] | None:
     """A turret slot in a line on the base's front edge, straight toward
@@ -1119,11 +1169,13 @@ def _ahead(view: View, money: float) -> bool:
 
 
 def barracks_target(view: View) -> int:
-    """1 barracks until the opening and its follow-up stand (service depot
-    and the third refinery: pros add the 2nd around 4:00-4:20, after them);
+    """1 barracks until the opening and its follow-up stand (service depot,
+    or the radar dome while the depot waits, and the third refinery: pros add the 2nd around 4:00-4:20, after them);
     then 2, and more by game time."""
     refineries = sum(1 for b in view.buildings if b.type == C.REFINERY and not b.wreck)
-    if not view.has_building(C.SERVICE_DEPOT) or refineries < C.BUILD_ORDER.count(C.REFINERY) + follow_up(view).count(C.REFINERY):
+    # The follow-up's building: the depot, or the dome while the depot waits.
+    depot = view.has_building(C.SERVICE_DEPOT) or (depot_waits(view) and view.has_building(C.RADAR_DOME))
+    if not depot or refineries < C.BUILD_ORDER.count(C.REFINERY) + follow_up(view).count(C.REFINERY):
         return 1
     want = 2
     for at, n in C.BARRACKS_SCHEDULE:

@@ -170,7 +170,16 @@ def test_turrets_stand_on_the_line_to_the_enemy(path):
     base = tuple(fx["base_center"])
     enemy = tuple(fx["enemy_spawn"])
     bearing = lambda c: math.degrees(math.atan2(c[1] - base[1], c[0] - base[0]))  # noqa: E731
-    for _ in range(5):                                                            # every turret we'd build
+    guard = buildplan.factory_guard_spot(view, "ftur")
+    if guard is not None:                                  # the first guards the war factory, on its outward side
+        weap = min((tuple(b[1:3]) for b in state["buildings"] if b[0] == "weap"),
+                   key=lambda c: (c[0] - guard[0]) ** 2 + (c[1] - guard[1]) ** 2)
+        assert _legal(view, "ftur", guard) is None and buildplan.placement_cell(view, "ftur") == guard
+        assert (guard[0] - weap[0]) ** 2 + (guard[1] - weap[1]) ** 2 <= C.FACTORY_GUARD_CELLS ** 2
+        assert (guard[0] - base[0]) ** 2 + (guard[1] - base[1]) ** 2 > (weap[0] - base[0]) ** 2 + (weap[1] - base[1]) ** 2
+        state["buildings"] = state["buildings"] + [["ftur", guard[0], guard[1]]]
+        view = _view(fx, state, path.stem)
+    for _ in range(5):                                                            # every turret we'd build on the line
         if buildplan.perimeter_spot(view, base, enemy, "ftur") is None:
             break
         spot = buildplan.placement_cell(view, "ftur")

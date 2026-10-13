@@ -77,16 +77,20 @@ then `assets_value`. Platform rules: https://api.altruagent-game.com/skill/redal
   for an army worth 2000 (1.5x the opening's ~1300) or 2:30, whichever comes
   first, so the barracks keeps training for the push at ~3:00 (2fe84e1f: the
   barracks idled 1:05-2:37 saving for it, 6 infantry met a 15-unit push at
-  3:16 and lost the war factory). Not against a passive enemy. Then the service depot (it
-  unlocks the main battle tanks) and a third refinery, unless outgunned; more
-  barracks only after those. Under a rush read everything goes into units —
+  3:16 and lost the war factory). Not against a passive enemy. Then the
+  radar dome (siege units), at the back of the base as far from the enemy as
+  it reaches so it can't be sniped, and a third refinery, unless outgunned;
+  more barracks after those. The service depot (main battle tanks, the MCV)
+  waits until 10:00 and its money goes into the army — against a passive
+  enemy it comes at once, for the expansions. Under a rush read everything goes into units —
   except a lost war factory's rebuild and the harvesters in production.
 - **Harvesters**: refineries + 2, at most 3 per refinery. **Refineries** by
   game time, spread over the fields by load (at most 3 per field), each
   beside the first field with room whose trucks walk to its ore in 6 steps;
   with none such (the base boxed in round its fields), no refinery now
   (d2d8dc27 on Shadowfiend paid 2000 for one 10 steps from its ore).
-- **Expansions**: to the natural after the depot (from ~3:45), then every 2
+- **Expansions**: to the natural after the depot (from 10:00, or ~3:45
+  against a passive enemy: the MCV needs it), then every 2
   minutes or sooner when the ore forecast runs dry; up to 3; none after 14:00.
   Against a passive enemy (below): from 3:00 and every minute, whatever our
   army odds or the advisor's "wait", and refineries keep coming.
@@ -112,7 +116,9 @@ with the second war factory at the depot and a third once two expansions
 stand: we out-build it) (the strongest offered, never
 light tanks once better ones exist), riflemen and rockets 3:1 shifting to 1:1
 as their armor grows — judged from the enemy units our scouts saw in the last
-3 minutes, not just those in sight. Siege units once enemy turrets are known; against
+3 minutes, not just those in sight. Siege units (V2s / artillery) once the
+dome offers them, at about a fifth of combat value (up to 4), and once enemy
+turrets are known; against
 a turtle about one per turret (3–6) before any attack.
 
 ### 3. Information
@@ -141,7 +147,8 @@ a turtle about one per turret (3–6) before any attack.
   their base (never across the front); posts and looks stand outside those
   places (82bdca3e: the left scout's road ran through the gap, the right one
   cut across their front, and the flank picket died five times in the gap).
-- **From 5:00**: pickets on the flanks of their exit (never the centre lane),
+- **From 5:00**: pickets on the flanks of their exit (never the centre lane;
+  one killed at its post is replaced after 60 s, at the same post),
   the lane scouts peek at their exit every 45 s, one runs round their base
   every 2.5 min, a roamer checks remote ore fields for expansions — from
   beyond each field's four extreme ore cells, since a yard can stand 12 cells
@@ -302,15 +309,19 @@ An attack goes on until the retreat rule ends it. No mass/attack flip within
   clearly win (2x) against the turrets and units there. Raids that lose
   800+ net stop new squads for 2 minutes (c1c37a10: four raids into
   pillboxes lost 7300 for 1950).
-- **Retreat**: an attack-move to the main turret line, firing at the
-  chasers; regroup there. A raid squad that is outmatched falls back to the
+- **Retreat**: an attack-move to the main turret line — 2 cells behind our
+  turret nearest the enemy, any of the main base's (within 16 cells of the
+  yard, so one out by the war factory counts) — firing at the chasers;
+  regroup there. A raid squad that is outmatched falls back to the
   army the same way.
 - **Micro**: focus fire on the weakest enemy fighter within 4 cells, or 7 in
   an attack, so units hitting a building turn onto the defenders shooting
   them; siege units shell turrets.
-- **Turrets**: a line on the base's front edge straight toward the enemy
-  (side by side across that line, within 35° of it, never behind the base);
-  when it is full, no more are built until the base grows that way.
+- **Turrets**: the first beside the war factory on its outward side (away
+  from the base centre), unless a threat or the advisor names the side; the
+  rest a line on the base's front edge straight toward the enemy (side by
+  side across that line, within 35° of it, never behind the base); when it
+  is full, no more are built until the base grows that way.
 
 ### 6a. The advisor's vote: near the bars only
 

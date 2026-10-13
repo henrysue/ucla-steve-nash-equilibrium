@@ -44,6 +44,7 @@ class ScoutCorps:
         self._last_check = float("-inf")
         self._last_cell: dict[int, tuple[int, int]] = {}
         self._lost: list[tuple[float, tuple[int, int], bool]] = []   # (time, cell, was circling)
+        self._vacated: dict[str, float] = {}          # role -> when its picket was killed at its post
         self.visit: tuple[int, int] | None = None    # a one-off look (our expansion site)
         self.look: tuple[int, int] | None = None     # where their army masses, before a blind attack
         self._peek_at: dict[str, float] = {}          # role -> when its last look at their exit ended
@@ -126,6 +127,8 @@ class ScoutCorps:
                 if cell is not None:
                     self._lost.append((view.game_seconds, cell, role in self._circling))
                     self.scouts_lost += 1
+                    if role not in self._circling:
+                        self._vacated[role] = view.game_seconds
                 self._lost = self._lost[-6:]
                 del self.roles[role]
                 self._circling.discard(role)
@@ -134,6 +137,11 @@ class ScoutCorps:
                 self._last_cell[uid] = u.cell
         for role in self.wanted(view):
             if role in self.roles:
+                continue
+            # Killed at its post: left empty SCOUT_REPLACE_SECONDS, then the
+            # next goes to the same post — not straight back into whatever
+            # killed it.
+            if view.game_seconds - self._vacated.get(role, float("-inf")) < C.SCOUT_REPLACE_SECONDS:
                 continue
             busy = taken | set(self.roles.values())
             if role not in ("left", "right"):
@@ -252,7 +260,10 @@ class ScoutCorps:
 
     def production(self, view: View) -> list[dict]:
         """Train a scout when a role is empty and nothing can be claimed."""
-        missing = len(self.wanted(view)) - len(self.roles)
+        t = view.game_seconds
+        waiting = sum(1 for r in self.wanted(view) if r not in self.roles
+                      and t - self._vacated.get(r, float("-inf")) < C.SCOUT_REPLACE_SECONDS)
+        missing = len(self.wanted(view)) - len(self.roles) - waiting
         if missing <= 0:
             return []
         kind = C.resolve(C.SCOUT_UNIT_TYPES, view.available)

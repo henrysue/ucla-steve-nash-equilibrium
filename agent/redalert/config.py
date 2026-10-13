@@ -61,7 +61,9 @@ BUILD_ORDER = (
 )
 # Then, unless outgunned (units first): the third refinery and the service
 # depot (tanks and the expansion MCV).
-FOLLOW_UP = (SERVICE_DEPOT, REFINERY)   # the depot first: it unlocks the main battle tanks (and the MCV)
+FOLLOW_UP = (SERVICE_DEPOT, REFINERY)   # the depot first: it unlocks the main battle tanks (and the MCV)...
+DEPOT_AFTER_SECONDS = 600.0        # ...but not before this: its 1200 goes into the army (a passive enemy: at once,
+                                   # for the expansions' MCV); the radar dome takes its place (siege units)
 OPENING_ARMY_VALUE = 2000          # the war factory waits for an army worth this (1.5x the opening's ~1300)...
 OPENING_ARMY_SECONDS = 150.0       # ...until this at the latest (2fe84e1f: the barracks idled 1:05-2:37 saving for
                                    # it, 6 infantry met a 15-unit push at 3:16 and lost the war factory)
@@ -108,6 +110,8 @@ DOME_AFTER_SECONDS = 420.0         # pros build the dome ~7:00-8:30
 DOME_ADD_FUNDS = 1000
 SIEGE_MIN_ENEMY_DEFENSES = 1       # siege units only once we know of enemy defenses
 SIEGE_MAX = 4
+SIEGE_VALUE_SHARE = 0.2            # with the dome up, siege units are kept at about this share of combat value (the mix:
+                                   # infantry, siege, and tanks at TANK_VALUE_SHARE once the depot offers them)
 SIEGE_TARGET_RADIUS_CELLS = 10     # siege units fire on known defenses this close first
 TURTLE_DEFENSES = 2                # this many known enemy defenses: lean on tanks over infantry
 # The turtle read (intel.EnemyIntel.turtling): this many ground turrets known,
@@ -161,7 +165,8 @@ EMPTY_CELLS = {"proc": ((0, 0), (2, 0)), "fix": ((0, 0), (2, 0), (0, 2), (2, 2))
 CENTRE_OFFSETS = {"proc": (1, 1), "fact": (1, 1)}
 
 # -- defenses and repairs ----------------------------------------------------------------------
-STANDING_DEFENSES = 1              # once the war factory is up
+STANDING_DEFENSES = 1              # once the war factory is up: beside it, on its outward side (factory_guard_spot)
+FACTORY_GUARD_CELLS = 5            # a turret this close to the war factory guards it
 MAX_DEFENSES = 3                   # only while under attack...
 DEFENSE_ADD_FUNDS = 600            # ...and each beyond the first only with this much money
 DEFENSE_LINE_OFFSETS = (0, -3, 3, -6, 6)   # turret slots: cells across the line from the base straight to the enemy
@@ -385,6 +390,7 @@ MAIN_FIGHT_RADIUS_CELLS = 9        # enemies this close to the main army: it is 
 SCOUT_FLEE_CELLS = 6               # the scout backs off from enemy fighters this close
 SCOUT_FLEE_HOLD_SECONDS = 20.0     # a picket that backed off stays back this long (not straight back to the enemy)
 SCOUT_SEEN_CELLS = 9               # a scout on a look or a peek turns back once it sees their fighters this close
+SCOUT_REPLACE_SECONDS = 60.0       # a picket killed at its post isn't replaced for this long (not fed to what killed it)
 SCOUT_BACKOFF_LOSSES = 3           # this many scouts lost...
 SCOUT_BACKOFF_WINDOW_SECONDS = 120.0   # ...this recently: no looks or peeks...
 SCOUT_BACKOFF_SECONDS = 90.0       # ...for this long after the last (5a4bc83f lost 58 scouts, the left one every ~30 s)

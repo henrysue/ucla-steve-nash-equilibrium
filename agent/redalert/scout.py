@@ -495,10 +495,13 @@ _LINE: dict = {}
 
 
 def _defensive_line(view: View, yard, threat) -> tuple[int, int] | None:
-    """2 cells behind our turret nearest ``threat`` (within the build radius
-    of ``yard``), else 2 cells in front of our building nearest it, else part
-    of the way out from the yard toward it."""
+    """2 cells behind our turret nearest ``threat`` (one of the main base's:
+    within ``DEFENSE_MAIN_RADIUS_CELLS`` of ``yard``, so a turret out by the
+    war factory counts and the line isn't pulled back to the buildings),
+    else 2 cells in front of our building nearest it, else part of the way
+    out from the yard toward it."""
     r2 = C.BUILD_RADIUS_CELLS ** 2
+    t2 = C.DEFENSE_MAIN_RADIUS_CELLS ** 2
 
     def step(frm, to, cells):
         dx, dy = to[0] - frm[0], to[1] - frm[1]
@@ -506,7 +509,8 @@ def _defensive_line(view: View, yard, threat) -> tuple[int, int] | None:
         return round(frm[0] + dx / d * cells), round(frm[1] + dy / d * cells)
 
     mine = [b for b in view.buildings if b.cell is not None and not b.wreck and dist2(b.cell, yard) <= r2]
-    towers = [b.cell for b in mine if b.type in C.TURRETS]
+    towers = [b.cell for b in view.buildings if b.type in C.TURRETS and b.cell is not None and not b.wreck
+              and dist2(b.cell, yard) <= t2]
     if towers:
         tower = min(towers, key=lambda c: dist2(c, threat))
         return step(tower, yard, 2)
