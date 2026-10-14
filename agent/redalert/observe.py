@@ -163,6 +163,7 @@ class View:
     enemy_passive: bool = False              # intel: no attack on us for PASSIVE_QUIET_SECONDS (out-expand them)
     enemy_tank_push: bool = False            # intel: an early war factory, depot or tanks: a tank timing push
     tank_push_pending: bool = False          # ...and our army hasn't beaten a push of theirs since: defend first
+    expand_hold: bool = False                # ...and the expansion waits (until 6:00 if no push came by then)
     # Our scouts finished a round of their base within SCOUT_FRESH_SECONDS.
     enemy_base_scouted: bool = False
     # Where our raid squads hold part of their army: an attack then goes for

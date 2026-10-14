@@ -177,7 +177,8 @@ class RedAlertAgent:
                                    enemy_mix=self._intel.recent_mix(view, C.ENEMY_MIX_SECONDS),
                                    enemy_passive=self._passive(view),
                                    enemy_tank_push=self._intel.tank_push(view),
-                                   tank_push_pending=self._intel.tank_push(view) and not self._commander.push_beaten)
+                                   tank_push_pending=self._intel.tank_push(view) and not self._commander.push_beaten,
+                                   expand_hold=self._expand_hold(view))
         self._patrol.update(view, taken={*self._raid.unit_ids, *self._garrison.unit_ids})
         if self._patrol.alarm(view):
             self._intel.scouts_lost(view)
@@ -958,6 +959,16 @@ class RedAlertAgent:
                 lead.close()
             self._leads = {}
             self._log(f"[redalert] squad leads off on this seat ({seat}): REDALERT_SQUAD_LEADS_SEAT={want}")
+
+    def _expand_hold(self, view) -> bool:
+        """The expansion waits on a tank push read not yet beaten — until
+        ``TANK_PUSH_EXPAND_FROM_SECONDS`` if no push of theirs has come by
+        then (f5ce0e92: her war factory at 2:38, no push, and we sat on two
+        refineries for 11 minutes at 1.5x her army); a push that came holds
+        it until it is beaten."""
+        if not self._intel.tank_push(view) or self._commander.push_beaten:
+            return False
+        return view.game_seconds < C.TANK_PUSH_EXPAND_FROM_SECONDS or self._intel.first_push_at is not None
 
     def _snipe_orders(self, view, spar) -> list[dict]:
         """The harvester snipe's run and its training (snipe.py); its kills,

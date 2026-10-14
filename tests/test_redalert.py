@@ -6568,9 +6568,9 @@ def test_no_expansion_while_a_tank_push_is_unbeaten():
     advice = types.SimpleNamespace(expand="auto", balance="balanced")
     e._ore_running_out = False
     assert e._gates(v, Mode.BUILD, advice)
-    assert not e._gates(dataclasses.replace(v, tank_push_pending=True), Mode.BUILD, advice)
+    assert not e._gates(dataclasses.replace(v, expand_hold=True), Mode.BUILD, advice)
     e._ore_running_out = True
-    assert e._gates(dataclasses.replace(v, tank_push_pending=True), Mode.BUILD, advice)   # home running dry
+    assert e._gates(dataclasses.replace(v, expand_hold=True), Mode.BUILD, advice)   # home running dry
 
 
 def test_the_tiebreak_from_15_00_protects_a_lead_and_forces_trades_when_behind():
@@ -6825,3 +6825,41 @@ def test_raids_go_for_the_expansion_farthest_from_their_start_first():
 def _cell_of_target(view, target):
     from agent.redalert.raid import _cell_of
     return _cell_of(view, target)
+
+
+def test_on_a_tank_push_read_we_expand_at_6_00_if_no_push_came():
+    """f5ce0e92: her war factory at 2:38, no push, and we sat on two
+    refineries for 11 minutes at 1.5x her army."""
+    agent = RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)
+    agent._intel.first_seen = {"weap": 158}
+    assert agent._expand_hold(_view(_t=300.0))                                       # read, before 6:00: wait
+    assert not agent._expand_hold(_view(_t=C.TANK_PUSH_EXPAND_FROM_SECONDS))          # no push by 6:00: expand
+    agent._intel.first_push_at = 290
+    assert agent._expand_hold(_view(_t=C.TANK_PUSH_EXPAND_FROM_SECONDS))              # it came: wait until beaten
+    agent._commander.push_beaten = True
+    assert not agent._expand_hold(_view(_t=C.TANK_PUSH_EXPAND_FROM_SECONDS))
+    assert not RedAlertAgent(log=lambda *_: None, clock=lambda: 0.0)._expand_hold(_view(_t=300.0))   # no read
+
+
+def test_a_timed_snipe_run_waits_while_their_army_is_at_the_field():
+    """f5ce0e92's 6:07 run met her army at home: a heavy tank lost, nothing
+    killed. During their push into our half it goes regardless."""
+    from agent.redalert.snipe import HarvesterSnipe
+    jeeps = [{"id": 60 + i, "type": "jeep", "x": 12, "y": 12, "hp": 100} for i in range(4)]
+    ore = tuple((x, y) for x in range(36, 44) for y in range(36, 40))
+    army = [{"id": 90 + i, "type": "3tnk", "x": 38, "y": 34, "hp": 100} for i in range(6)]
+
+    def at(t, enemies=()):
+        return dataclasses.replace(_view(_t=t, buildings=BASE, units=jeeps, visible_enemies=list(enemies),
+                                         available_production=["jeep", "2tnk"]), ore_cells=ore, bounds=(0, 0, 64, 64))
+
+    sn = HarvesterSnipe()
+    sn.update(at(340.0))
+    sn.orders(at(340.0, army))
+    assert sn.state == "gather"                                                       # their army there: not now
+    sn.orders(at(345.0, army), push_on=True)
+    assert sn.state == "go"                                                           # their push away: go
+    sn2 = HarvesterSnipe()
+    sn2.update(at(340.0))
+    sn2.orders(at(340.0))
+    assert sn2.state == "go"                                                          # nobody known there: go

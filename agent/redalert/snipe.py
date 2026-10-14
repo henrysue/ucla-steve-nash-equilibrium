@@ -148,6 +148,11 @@ class HarvesterSnipe:
             due = push_on or t - self._last_run_end >= C.SNIPE_EVERY_SECONDS
             if len(members) >= self._wanted(view) and t >= C.SNIPE_FROM_SECONDS and due:
                 spot = self.target_spot(view)
+                # A timed run (their push not in our half) only where their
+                # army isn't: f5ce0e92's 6:07 run met it at home, lost a heavy
+                # tank and killed nothing.
+                if spot is not None and not push_on and not self._clear_there(view, members, spot):
+                    spot = None
                 if spot is not None:
                     route = self.route(view, centre, spot)
                     if route is not None:
@@ -187,6 +192,26 @@ class HarvesterSnipe:
                 return []
             return [orders.move(ids, list(home))]
         return []
+
+    @staticmethod
+    def _clear_there(view: View, members, spot) -> bool:
+        """What we know of their fighters and turrets within ``SNIPE_ARMY_CELLS``
+        of the target field (seen now or remembered: memory keeps a unit 90 s)
+        is beaten ``SNIPE_RUN_ODDS`` by the squad."""
+        from . import strength
+
+        r2 = C.SNIPE_ARMY_CELLS ** 2
+        seen = {}
+        for a in list(view.enemy_units) + list(view.known_enemy_units):
+            if (a.cell is not None and not a.wreck and a.type not in C.HARVESTER and a.type != C.MCV
+                    and dist2(a.cell, spot) <= r2):
+                seen[a.id if a.id is not None else a.cell] = a
+        for b in list(view.enemy_buildings) + list(view.known_enemy_buildings):
+            if b.type in C.TURRETS and b.cell is not None and not b.wreck and dist2(b.cell, spot) <= r2:
+                seen[b.id if b.id is not None else b.cell] = b
+        if not seen:
+            return True
+        return strength.odds(view, [u.type for u in members], [a.type for a in seen.values()]) >= C.SNIPE_RUN_ODDS
 
     def _should_leave(self, view: View, members, t: float) -> bool:
         from . import strength

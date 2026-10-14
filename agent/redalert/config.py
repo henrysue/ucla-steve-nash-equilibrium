@@ -108,6 +108,8 @@ TANK_PUSH_DEPOT_SECONDS = 240.0    # ...or their service depot before this...
 TANK_PUSH_TANK_SECONDS = 330.0     # ...or their main battle tanks before this (Yuriko yuriko-vs-abu: war factory
                                    # 2:39, depot 3:20, tanks from 4:10, the push 4:30-5:30)
 TANK_PUSH_HOLD_SECONDS = 600.0     # the read holds until this
+TANK_PUSH_EXPAND_FROM_SECONDS = 360.0  # ...but the expansion waits only until 6:00 if no push has come by then
+                                   # (her push is 4:30-5:30; f5ce0e92 sat on 2 refineries for 11 minutes at 1.5x her army)
 LOOK_MIN_SHARE = 0.5               # a scout's look counts on sight of their army only when it sees at least this
                                    # share of what we believe (1da6311e: a glimpse of 1450 of a real 9750 cleared the
                                    # blind check and the attack went in)
@@ -384,6 +386,8 @@ SNIPE_TIMEOUT_SECONDS = 120.0      # ...this long in all...
 SNIPE_LOSS_SHARE = 0.5             # ...and home once it has lost this share of its units
 SNIPE_THREAT_CELLS = 7             # ...or their fighters and turrets this close outmatch it
 SNIPE_HOME_CELLS = 10              # back home this close to the base centre
+SNIPE_ARMY_CELLS = 18              # a timed run goes only if what we know of theirs this close to the target field
+SNIPE_RUN_ODDS = 1.5               # ...is beaten this clearly by the squad (f5ce0e92's 6:07 run met her army at home)
 SNIPE_HEAVY_UNITS = 3              # with neither Rangers nor light tanks (the Soviets): this many heavy tanks
                                    # from the army (they kill a harvester fast and survive a pillbox)
 RAID_START_SECONDS = 150.0

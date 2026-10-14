@@ -442,9 +442,10 @@ class Expansion:
         even = abs(view.kills_cost - view.deaths_cost) <= C.EXPAND_EVEN_TRADE_BAND
         passive = view.enemy_passive
         # A tank push read and not yet beaten: no MCV until it is held — the
-        # money holds the push (1da6311e; Yuriko's push at 4:30-5:30) —
-        # unless home is running dry.
-        if view.tank_push_pending and not getattr(self, "_ore_running_out", False):
+        # money holds the push (1da6311e; Yuriko's push at 4:30-5:30) — or,
+        # with no push by 6:00, until then (agent._expand_hold); unless home
+        # is running dry.
+        if view.expand_hold and not getattr(self, "_ore_running_out", False):
             return False
         # The advisor's "more_army" counts as behind on army (buildplan.more_army):
         # the natural still goes, no later MCV while the army comes first,

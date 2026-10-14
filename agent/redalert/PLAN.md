@@ -354,7 +354,9 @@ An attack goes on until the retreat rule ends it. No mass/attack flip within
 - **Harvester snipe** (snipe.py): from 5:00 we keep 4-6 Rangers (else light
   tanks that aren't our main tank) out of the army — as the Soviets, with
   neither, 3 heavy tanks from the army.
-  From 5:30, while their push is in our half or 2:30 after the last run,
+  From 5:30, while their push is in our half or 2:30 after the last run (a
+  timed run only when the squad beats 1.5x what we know of theirs near the
+  field: f5ce0e92's 6:07 run met her army at home),
   they slip by plain moves round their sight lines (the chokes, the front of
   their base, their turrets: the scouts' avoid zone; failing a way round,
   round the turrets only) to the flank of their main ore field, shoot the
@@ -397,7 +399,9 @@ An attack goes on until the retreat rule ends it. No mass/attack flip within
 - **Turrets**: against a tank push not yet beaten, one anti-tank turret (the
   Allied gun turret, a tesla coil; a pillbox and a flame tower are
   anti-infantry) and the rest into tanks (65% of the army's value); the
-  expansion waits until the push is beaten (unless home runs dry). The first out in front of the first war factory (beside it
+  expansion waits until the push is beaten — or, with no push by 6:00, until
+  then (f5ce0e92: no push came and we sat on two refineries for 11 minutes
+  at 1.5x her army) — unless home runs dry. The first out in front of the first war factory (beside it
   on its enemy side; where its exit lane leaves no spot there, the line),
   unless a threat or the advisor names the side; the rest a line on the
   base's front edge straight toward the enemy (side by side across that
