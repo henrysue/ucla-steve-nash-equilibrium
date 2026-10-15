@@ -44,10 +44,16 @@ class Analysis:
     prediction: dict  # foe -> {action, target, move, confidence, why}
     source: str  # "model" or "code"
     code_guess: dict
-    lines: list = field(default_factory=list)  # [(value, description)], best first; the first is played
+    lines: list = field(default_factory=list)  # [(value, description)], best first
+    played: int = 0  # index into lines; not 0 when the model vetoed the code's pick
+    review: dict | None = None  # the model's final call: {verdict, play_option, why}
+    offered: list | None = None  # the options shown at the final call, as the strategist saw them
+    board: dict | None = None  # every active's exact HP, boosts, status and item, and our bench HP
 
     def render(self) -> str:
         parts = [f"### {self.turn} Analysis", "", f"**State summary:** {self.state_summary or '(not supplied)'}", ""]
+        if self.board:
+            parts += [f"**Board:** `{json.dumps(self.board, separators=(',', ':'), default=str)}`", ""]
         parts.append(f"**Predicted opponent ({self.source}):**")
         for foe, guess in self.prediction.items():
             target = f" -> {guess['target']}" if guess.get("target") else ""
@@ -57,7 +63,17 @@ class Analysis:
             parts.append("- code guess: " + "; ".join(f"{foe} {g.get('action')}" for foe, g in self.code_guess.items()))
         parts += ["", "**Our best answers** (value on the damage scale):"]
         for index, (value, description) in enumerate(self.lines):
-            parts.append(f"- {value:.1f} {description}{' **<- played**' if index == 0 else ''}")
+            mark = " **<- played**" if index == self.played else " (code's pick, vetoed)" if index == 0 else ""
+            parts.append(f"- {value:.1f} {description}{mark}")
+        if self.offered:
+            parts += ["", "**Shown to the strategist:**"]
+            for option in self.offered:
+                breaks = option.get("breaks_principles")
+                note = f" [breaks: {'; '.join(breaks)}]" if isinstance(breaks, list) and breaks else ""
+                parts.append(f"- option {option.get('option')}: {option.get('line')} ({option.get('value')}){note}")
+        if self.review:
+            parts += ["", f"**Strategist's call:** {self.review.get('verdict')} option {self.review.get('play_option')}: "
+                          f"{self.review.get('why', '')}"]
         return "\n".join(parts)
 
     def as_dict(self) -> dict:
@@ -67,6 +83,10 @@ class Analysis:
             "prediction_source": self.source,
             "code_guess": self.code_guess,
             "lines": [{"value": value, "line": description} for value, description in self.lines],
+            "played": self.played,
+            "review": self.review,
+            "offered": self.offered,
+            "board": self.board,
         }
 
 
@@ -202,7 +222,7 @@ class MatchLog:
 
     def summarize(self, *, outcome: str | None = None, opponent: list | None = None,
                   archetype: str | None = None, note: str | None = None, ending: dict | None = None,
-                  style: dict | None = None) -> dict:
+                  style: dict | None = None, opponent_names: list | None = None) -> dict:
         """Emit a compact end-of-match summary for offline, no-time-pressure review.
 
         The per-turn log already holds every move and its reasoning; this adds
@@ -222,6 +242,7 @@ class MatchLog:
         summary = {
             "match": self._identity,
             "outcome": outcome,  # "win" / "loss" / None (unknown)
+            "opponent_names": list(opponent_names) if opponent_names else [],  # who we played
             "opponent_species": list(opponent) if opponent else [],
             "opponent_archetype": archetype,
             "decisions": len(self._trail),
@@ -268,7 +289,10 @@ def _trail_entry(decision: Decision) -> dict:
         result = "-"
     line_value = None
     if decision.analysis is not None:
-        line_value = decision.analysis.lines[0][0] if decision.analysis.lines else None
+        lines, played = decision.analysis.lines, decision.analysis.played
+        line_value = lines[played][0] if 0 <= played < len(lines) else None
+        if decision.analysis.review and decision.analysis.review.get("verdict") == "veto":
+            result = "VETO"
     return {
         "turn": decision.turn,
         "kind": decision.kind,
@@ -287,7 +311,8 @@ def _render_summary(summary: dict) -> str:
         "",
         f"- Outcome: **{summary['outcome'] or 'unknown'}**"
         + (f" | vs archetype: {summary['opponent_archetype']}" if summary.get("opponent_archetype") else ""),
-        f"- Opponent: {', '.join(summary['opponent_species']) or '(not recorded)'}",
+        f"- Opponent: {', '.join(summary.get('opponent_names') or []) or '(name not given)'} - "
+        f"{', '.join(summary['opponent_species']) or '(not recorded)'}",
         f"- Decisions: {summary['decisions']} | Fallbacks: {summary['fallbacks']}",
     ]
     if summary.get("note"):

@@ -17,7 +17,7 @@ def _no_match_logs_from_tests(monkeypatch):
     monkeypatch.setenv("REDALERT_LOG_DIR", "")
     # Same for public reasoning: off unless a test turns it on, and restored
     # afterwards even when the code under test (the CLI flag) sets it itself.
-    monkeypatch.setenv("VGC_PUBLIC_REASONING", "")
+    monkeypatch.setenv("VGC_PUBLIC_REASONING", "0")
     # And the draft-card catalog: tests never read or write data/card_sets.json.
     monkeypatch.setenv("VGC_CARD_SETS", "")
     # And per-opponent style memory (data/opponent_styles.json).

@@ -181,7 +181,9 @@ def verdict(guess: dict, foe: dict, ours: dict, our_switches: set[str] = frozens
     """Was this foe's predicted action what it did? hit / miss / unknown."""
     action = guess.get("action")
     moves = set(foe.get("revealed", [])) | set(foe.get("used", []))
-    protected = "protected" in foe or bool(moves & PROTECT_IDS)
+    # A move it showed this turn beats our HP-based guess (match 915ba9e1:
+    # Landorus's U-turn was logged as a correct Protect read).
+    protected = bool(moves & PROTECT_IDS) or ("protected" in foe and not moves)
     left = foe.get("left_field")
     switched = left == "switched or fainted" and not moves
     attacked = any(_damaging(m) for m in moves)
@@ -193,6 +195,11 @@ def verdict(guess: dict, foe: dict, ours: dict, our_switches: set[str] = frozens
         result = "hit" if switched else "miss" if left is None else "unknown"
     elif action == "fake_out" and moves and "fakeout" not in moves:
         result = "miss"  # it showed another move this turn (match 07a3cb1f: Iron Hands used Close Combat)
+    elif action == "fake_out" and "fakeout" not in moves:
+        # No Fake Out shown: damage on the target may be its partner's (match
+        # 666b209d: Chi-Yu's Overheat on Iron Hands credited Rillaboom's Fake Out,
+        # which had flinched Dragonite).
+        result = "miss" if (protected or switched) else "unknown"
     elif action in ("attack", "fake_out"):
         # Hurt: lost HP, fainted, or came in already hurt (it took a hit aimed
         # at the slot we switched; that counts for the target we switched out).

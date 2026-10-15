@@ -37,13 +37,19 @@ def test_the_users_teams_are_loaded():
         assert sample in names
 
 
-def test_every_plan_is_legal_in_the_champions_table():
+def test_every_plan_is_legal_in_its_formats_table():
+    """Champions plans against the Reg M-C table; the Reg I plans (built from Reg I
+    ladder data) against the Reg I table."""
     import csv
 
-    names = [r["Pokemon"] for r in csv.DictReader(open("data/vgc_reg_mc_draft_doubles.csv", encoding="utf-8-sig"))]
+    def names(path):
+        return [r["Pokemon"] for r in csv.DictReader(open(path, encoding="utf-8-sig"))]
+
+    champions, reg_i = names("data/vgc_reg_mc_draft_doubles.csv"), names("data/vgc_2025_reg_i_draft_doubles.csv")
     for plan in ar.load_plans():
+        legal = reg_i if "Reg I" in plan.get("source", "") else champions
         for member in plan["core"] + plan["members"] + plan["flex"]:
-            assert any(ar.matches(member, n, TABLE) for n in names), (plan["name"], member)
+            assert any(ar.matches(member, n, TABLE) for n in legal), (plan["name"], member)
 
 
 def test_a_form_qualifier_is_respected():
@@ -114,16 +120,13 @@ def test_the_draft_takes_the_plan_member_over_a_higher_usage_card():
     assert decision.action.action_id == "draft_pick:Iron Bundle"
 
 
-def test_the_draft_prompt_carries_target_and_their_style():
-    provider = FakeProvider({"action_id": "draft_pick:Incineroar", "reasoning_summary": "x"})
+def test_the_draft_reads_their_style_and_a_target_plan():
+    agent = _agent(FakeProvider())
     state = _draft_state(["Garchomp"], ["Whimsicott", "Incineroar"])
     state.raw["observation"]["rosters"]["them"] = [{"species": "Farigiraf"}, {"species": "Ursaluna"}]
-    _agent(provider).choose_action(state, POKEMON)
-    prompt = provider.prompt()
-    assert "trick_room" in prompt["opponent_playstyle"]
-    assert prompt["draft_target"]["name"]
-    incineroar = next(c for c in prompt["available_cards"] if c["species"] == "Incineroar")
-    assert incineroar["fit"]["versus"]["answers_their_style"]  # Fake Out on their setter
+    agent.choose_action(state, POKEMON)
+    assert agent._draft_target["name"]
+    assert "trick_room" in ar.infer_playstyle(["Farigiraf", "Ursaluna"], TABLE)
 
 
 # -- team preview (plan + lineup in one call) --------------------------------------------

@@ -34,6 +34,7 @@ class FakeProvider:
     def __init__(self, *answers, reasoning=None):
         self.answers = list(answers)
         self.calls = []
+        self.reviews = []  # unscripted final-call reviews, answered "play"
         # Both real providers expose these: a repr that cannot leak a key,
         # and the model's private reasoning for the audit log.
         self.last_reasoning = reasoning
@@ -42,6 +43,12 @@ class FakeProvider:
         return f"FakeProvider(model={self.model!r})"
 
     def complete_structured(self, messages, schema_name, schema, *, timeout, effort="medium"):
+        if schema_name == "doubles_turn_review" and not (
+            self.answers and isinstance(self.answers[0], dict) and "verdict" in self.answers[0]
+        ):
+            # The strategist's final call: unless a test scripts one, it plays the code's pick.
+            self.reviews.append({"messages": messages, "schema": schema, "timeout": timeout})
+            return {"verdict": "play", "play_option": "1", "why": "", "reasoning_summary": ""}
         self.calls.append({"messages": messages, "schema": schema, "timeout": timeout, "effort": effort})
         answer = self.answers.pop(0) if self.answers else ProviderError("no more scripted answers")
         if isinstance(answer, Exception):
@@ -218,33 +225,6 @@ DRAFT_OBSERVATION = {
 }
 
 
-def test_draft_pick_returns_the_models_choice():
-    provider = FakeProvider({"action_id": "draft_pick:c2", "reasoning_summary": "Denies their wall."})
-    decision = _agent(provider).choose_action(
-        _state(*_draft_actions("c1", "c2"), phase="draft", observation=DRAFT_OBSERVATION), POKEMON
-    )
-    assert isinstance(decision, WithReasoning)
-    assert decision.action.action_id == "draft_pick:c2"
-    # The model's note stays local; the platform only ever sees a neutral line.
-    assert decision.reasoning_summary == "Move submitted."
-
-
-def test_draft_prompt_carries_the_reference_table_and_rosters():
-    provider = FakeProvider({"action_id": "draft_pick:c1", "reasoning_summary": "Best card."})
-    _agent(provider).choose_action(
-        _state(*_draft_actions("c1", "c2"), phase="draft", observation=DRAFT_OBSERVATION), POKEMON
-    )
-    prompt = provider.prompt()
-    cards = {card["species"]: card for card in prompt["available_cards"]}
-    # Usage anchors stay out of the draft; fit with OUR roster goes in.
-    assert not {"tier", "draft_points", "usage_pct"} & set(cards["Rillaboom"]["reference"])
-    assert "partners" in cards["Rillaboom"]["fit"]
-    assert "countered_by" in cards["Rillaboom"]["reference"]
-    assert prompt["your_roster_so_far"] == ["Incineroar"]
-    # Pyukumuku is below the table's usage cutoff and simply has no entry.
-    assert "reference" not in cards["Pyukumuku"]
-
-
 def test_draft_falls_back_to_the_highest_value_card_without_a_model():
     decision = _agent().choose_action(
         _state(*_draft_actions("c2", "c1"), phase="draft", observation=DRAFT_OBSERVATION), POKEMON
@@ -253,23 +233,17 @@ def test_draft_falls_back_to_the_highest_value_card_without_a_model():
     assert decision.action.action_id == "draft_pick:c1"
 
 
-def test_draft_falls_back_when_the_model_fails():
-    provider = FakeProvider(ProviderError("boom"), ProviderError("boom again"))
-    log = []
-    decision = _agent(provider, log=log).choose_action(
-        _state(*_draft_actions("c2", "c1"), phase="draft", observation=DRAFT_OBSERVATION), POKEMON
-    )
-    assert decision.action.action_id == "draft_pick:c1"
-    assert any("FALLBACK" in line for line in log)
-
-
-def test_draft_uses_the_short_clock():
-    provider = FakeProvider({"action_id": "draft_pick:c1", "reasoning_summary": "ok"})
-    _agent(provider).choose_action(
-        _state(*_draft_actions("c1"), phase="draft", observation=DRAFT_OBSERVATION), POKEMON
-    )
-    assert provider.calls[0]["timeout"] <= 9.0
-    assert provider.calls[0]["effort"] == "low"
+def test_the_draft_picks_by_rule_without_a_model_call():
+    """The pick comes from pick_priority's rules; the model is not asked, and its
+    reason is kept for Team Preview and the battle."""
+    provider = FakeProvider({"action_id": "draft_pick:c2", "reasoning_summary": "unused"})
+    agent = _agent(provider)
+    decision = agent.choose_action(_state(*_draft_actions("c1", "c2"), phase="draft", observation=DRAFT_OBSERVATION), POKEMON)
+    assert isinstance(decision, WithReasoning)
+    assert decision.action.action_id in ("draft_pick:c1", "draft_pick:c2")
+    assert not provider.calls
+    assert decision.reasoning_summary == "Move submitted."  # private by default
+    assert agent.draft_strategy()["picks"][0].split(" - ")[1].startswith(("must pick", "partner", "strongest"))
 
 
 # -- team preview --------------------------------------------------------------------------
@@ -819,7 +793,7 @@ def test_a_logged_record_carries_the_full_decision_basis(tmp_path):
     assert record["kind"] == "doubles_turn"
     assert record["model"] == "fake-model"
     assert record["model_reasoning"] == "Landorus is in range; Protect loses tempo."
-    assert record["attempts"] == 1
+    assert record["attempts"] == 2  # the read, then the final call
     assert record["fallback_reason"] is None
     assert record["payload"]["type"] == "doubles_turn"
     assert record["public_summary"]
@@ -885,7 +859,8 @@ def test_the_log_records_how_long_the_model_took(tmp_path):
         json.loads(line)
         for line in sorted(tmp_path.glob("*.jsonl"))[0].read_text(encoding="utf-8").splitlines()
     ]
-    assert records[0]["seconds"] == 12.0
+    assert records[0]["seconds"] == 24.0  # the read and the final call, 12 s each
+    assert records[0]["attempts"] == 2
 
 
 def test_the_draft_and_preview_phases_are_audited(tmp_path):
@@ -1041,3 +1016,64 @@ def test_summarize_match_is_safe_without_a_log_dir():
 # -- opponent type profile ----------------------------------------------------
 
 
+
+
+# -- the strategist's final call: play or veto -------------------------------------
+
+
+def _review(verdict, option, why="Their read punishes the code's pick."):
+    return {"verdict": verdict, "play_option": option, "why": why, "reasoning_summary": why}
+
+
+def test_the_strategist_sees_the_code_pick_and_its_alternatives_by_name(tmp_path):
+    provider = FakeProvider(_doubles_answer(), _review("play", "1"))
+    text, records = _logged(tmp_path, provider, _state(_doubles_action(), observation=BATTLE_OBSERVATION))
+    prompt = json.loads(provider.calls[1]["messages"][1]["content"])
+    assert prompt["decision"] == "doubles_turn_review"
+    assert prompt["your_read"]["prediction"]["landorustherian"]["action"] == "attack"
+    lines = [o["line"] for o in prompt["options"]]
+    assert len(lines) >= 2 and all(line.startswith("incineroar:") for line in lines)
+    analysis = records[0]["analysis"]
+    assert analysis["played"] == 0 and analysis["review"]["verdict"] == "play"
+    assert "Strategist's call:** play option 1" in text
+
+
+def test_a_veto_plays_the_strategists_chosen_line(tmp_path):
+    provider = FakeProvider(_doubles_answer(), _review("veto", "2"))
+    agent = _agent(provider)
+    state = _state(_doubles_action(), observation=BATTLE_OBSERVATION)
+    decision = agent.choose_action(state, POKEMON)
+    prompt = json.loads(provider.calls[1]["messages"][1]["content"])
+    code_pick, vetoed_for = prompt["options"][0]["line"], prompt["options"][1]["line"]
+    assert code_pick != vetoed_for
+    slots = act.parse_doubles(state.legal_actions[0])
+    from agent.vgc.strategist import _name_payload
+    assert _name_payload(decision.action, slots) == vetoed_for
+
+
+def test_a_veto_that_names_the_code_pick_is_retried_then_the_code_pick_stands():
+    provider = FakeProvider(_doubles_answer(), _review("veto", "1"), _review("veto", "1"))
+    log = []
+    agent = _agent(provider, log=log)
+    decision = agent.choose_action(_state(_doubles_action(), observation=BATTLE_OBSERVATION), POKEMON)
+    assert decision.action["type"] == "doubles_turn"
+    assert any("a veto must name another option" in line for line in log)
+    assert any("played the code's pick" in line for line in log)
+
+
+def test_the_final_call_shares_the_turn_budget_with_the_read():
+    clock = FakeClock()
+    provider = FakeProvider(_doubles_answer())
+    original = provider.complete_structured
+
+    def slow(*args, **kwargs):
+        clock.now += 37.0
+        return original(*args, **kwargs)
+
+    provider.complete_structured = slow
+    log = []
+    agent = _agent(provider, log=log, clock=clock)
+    decision = agent.choose_action(_state(_doubles_action(), observation=BATTLE_OBSERVATION), POKEMON)
+    assert decision.action["type"] == "doubles_turn"
+    assert not provider.reviews  # 3 s of the 40 s budget left: no final call
+    assert any("out of time" in line for line in log)

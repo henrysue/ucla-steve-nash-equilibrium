@@ -241,8 +241,7 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "send each decision's one-line reasoning to the platform, where spectators (and the "
-            "opponent) can read it, instead of a neutral 'Move submitted.' "
-            "(same as VGC_PUBLIC_REASONING=1)"
+            "opponent) can read it (the default now; overrides VGC_PUBLIC_REASONING=0)"
         ),
     )
     parser.add_argument(

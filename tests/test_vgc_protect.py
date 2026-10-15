@@ -14,16 +14,17 @@ def _foes(*entries):
 COMMON = {"chienpao": ["Protect", "Sucker Punch"], "incineroar": ["Fake Out", "Knock Off", "Flare Blitz", "Parting Shot"]}.get
 
 
-def _odds(observation, first=True):
+def _odds(observation, first=True, rate=protect.FIRST_TURN):
     found = protect.odds(observation, first_turn={"chienpao": first, "incineroar": first},
-                         common_moves=lambda n: COMMON(protect._id(n)) or [])
+                         common_moves=lambda n: COMMON(protect._id(n)) or [], first_turn_rate=rate)
     return {k: v["likelihood"] for k, v in found.items()}
 
 
-def test_a_protect_user_on_turn_one_under_threat_is_likely_to_protect():
+def test_a_first_turn_protect_follows_what_this_opponent_has_shown():
     observation = _foes({"species": "Chien-Pao", "types": ["DARK", "ICE"], "hp_fraction": 1.0})
     observation["available_moves"] = [[{"id": "closecombat", "type": "FIGHTING", "base_power": 120}], []]
-    assert _odds(observation)["chienpao"] >= protect.LIKELY
+    assert _odds(observation)["chienpao"] == protect.FIRST_TURN < protect.LIKELY  # unknown opponent: 35%
+    assert _odds(observation, rate=0.8)["chienpao"] >= protect.LIKELY  # one that always Protects first
 
 
 def test_a_pokemon_without_protect_is_rarely_expected_to():

@@ -35,6 +35,8 @@ HIT_WEIGHT = 0.75
 WALL_WEIGHT = 0.75
 THREAT_WEIGHT = 0.5
 COUNTER_WEIGHT = 0.75
+FOUR_X_THREAT = 3.0  # a 4x weakness to a foe's attack counts this many 2x threats
+EXPLOITED_STACK, EXPLOITED_COVER, IDLE_WEAKNESS = 2.0, 1.5, 0.5  # shared weaknesses their attacks can / cannot hit
 MIN_COVERAGE_POWER = 60  # weaker attacks do not count as coverage in a matchup
 POWER_WEIGHT = 0.1  # 20 draft points = 2.0, one partner link
 OFFENSE_FLOOR, OFFENSE_SPAN = 90, 20  # base offense 130 = 2.0 when points are blank
@@ -78,7 +80,10 @@ def versus(species: str, opponent: list[str], table) -> tuple[float, dict]:
         if worst > 1.0:
             threatened_by.append(foe)
             threats[foe] = f"{how} {worst:g}x"
-            weight += 2.0 if worst >= 4 else 1.0
+            # 4x is a likely one-hit KO from that foe: worth far more than a
+            # neutral matchup (match 45d8b07d drafted Garchomp into Iron
+            # Bundle's Freeze-Dry because "hits all six" outweighed it).
+            weight += FOUR_X_THREAT if worst >= 4 else 1.0
     notes = table.matchup_notes([species], opponent)
     checks = sorted(name for name, answers in notes["our_pokemon_that_check_theirs"].items() if species in answers)
     checked_by = sorted(notes["their_pokemon_that_check_ours"].get(species, []))
@@ -143,18 +148,39 @@ def _role_need(roles: dict, shape: dict, picked: int) -> tuple[float, list[str]]
     return value, why
 
 
-def _coverage(species: str, mine: list[str], table) -> tuple[float, dict]:
+def _coverage(species: str, mine: list[str], table, theirs: list[str] | None = None) -> tuple[float, dict]:
+    """Shared weaknesses (a type that hits 2+ of ours) this card covers or stacks.
+
+    Once their roster is known, a weakness their real attacks can hit counts
+    far more than one they cannot (match 45d8b07d stacked Ice on Salamence and
+    Garchomp into Iron Bundle's Freeze-Dry; Fire/Rock "cover" offset it).
+    """
     shared = {}
     for attack in TYPES:
         count = sum(1 for name in mine if (t := table.species_types(name)) and effectiveness(attack, t) > 1.0)
         if count >= 2:
             shared[attack] = count
     own = table.species_types(species)
+    their_attacks = attack_types(theirs or [], table)
     covers = sorted(t for t in shared if own and effectiveness(t, own) < 1.0)
     stacks = sorted(t for t in shared if own and effectiveness(t, own) > 1.0)
-    return COVER_WEIGHT * (len(covers) - len(stacks)), {
-        "covers": [t.title() for t in covers], "stacks": [t.title() for t in stacks],
-    }
+    if not their_attacks:
+        value = COVER_WEIGHT * (len(covers) - len(stacks))
+    else:
+        value = sum(EXPLOITED_COVER if t in their_attacks else IDLE_WEAKNESS for t in covers)
+        value -= sum((EXPLOITED_STACK + (effectiveness(t, own) >= 4)) if t in their_attacks else IDLE_WEAKNESS for t in stacks)
+    detail = {"covers": [t.title() for t in covers], "stacks": [t.title() for t in stacks]}
+    if their_attacks:
+        detail["they_can_hit"] = sorted(t.title() for t in set(stacks) & their_attacks)
+    return round(value, 2), detail
+
+
+def attack_types(roster: list[str], table) -> set[str]:
+    """Every type the roster's real attacks (else STAB) can hit with."""
+    found = set()
+    for name in roster:
+        found |= {t for t, _ in _attacks(name, [x.upper() for x in table.species_types(name)], table)}
+    return found
 
 
 def score(species: str, roles: dict, mine: list[str], mine_roles: list[dict], theirs: list[str],
@@ -162,7 +188,7 @@ def score(species: str, roles: dict, mine: list[str], mine_roles: list[dict], th
     """One card's fit: a total and the reasons for it."""
     plan_bonus, plan_slot = archetypes.card_bonus(species, plan, runner_up, table, mine)
     role_value, role_why = _role_need(roles, team_shape(mine_roles), len(mine))
-    cover_value, cover_detail = _coverage(species, mine, table)
+    cover_value, cover_detail = _coverage(species, mine, table, theirs)
     type_value, type_detail = versus(species, theirs, table)
     counter_value, counter_why = archetypes.counter_bonus(species, styles, table)
     clash_value, clash_why = archetypes.field_clash(species, mine, plan, table)

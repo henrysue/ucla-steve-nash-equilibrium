@@ -2,9 +2,10 @@
 
 The code makes a first guess per foe, with its reasons:
 
-- it carries Protect and did NOT Protect last turn -> it will probably Protect
-  (a repeat only works 1 time in 3, so after a Protect it attacks);
-- on its first turn with Fake Out -> Fake Out on whichever of ours it fears most;
+- on its first turn with Fake Out -> Fake Out on whichever of ours it fears
+  most (match 286bbc2e: a fresh Sneasler's Fake Out was read as Protect);
+- its Protect odds (protect.py) are high -> it Protects; that is only on its
+  first turn out (never right after a Protect: a repeat works 1 time in 3);
 - otherwise -> it attacks whichever of ours its STAB hits hardest.
 
 The model sees that guess and the board and gives its own prediction per
@@ -38,11 +39,10 @@ class FoeExpectation:
     fake_out: dict[str, float] = field(default_factory=dict)  # our species id -> chance of that attack being Fake Out
 
 
-STYLE_PROTECT_AT = 0.45  # below this style-blended chance, the code expects an attack instead
-
-
 def code_guess(observation: dict, calc, tracker, table, protect_odds: dict[str, dict]) -> dict[str, dict]:
     """foe species id -> {"action", "target", "confidence", "why"}."""
+    from .protect import LIKELY
+
     threats = calc.threats()  # foe name -> {our name: hit}
     first_turn = tracker.opponent_first_turn()
     protected = tracker.protected_last_turn
@@ -56,37 +56,22 @@ def code_guess(observation: dict, calc, tracker, table, protect_odds: dict[str, 
             continue
         on_us = threats.get(name) or {}
         target = max(on_us, key=lambda ours: on_us[ours]["expected_pct"]) if on_us else None
-        carries = _carries_protect(entry, name, table, protect_odds.get(foe))
         moves = {_id(m) for m in table.common_moves(name)}
-        styled = (protect_odds.get(foe) or {}).get("style_p")  # set once the opponent's style is read
-        if carries and foe not in protected and styled is not None and styled < STYLE_PROTECT_AT:
+        chance = float((protect_odds.get(foe) or {}).get("likelihood") or 0.0)
+        if str(entry.get("status") or "").lower().split(".")[-1] in ("slp", "sleep"):
             guess = {"action": "attack", "target": target,
-                     "why": f"carries Protect, but this opponent holds it when it looks obvious ({styled:.0%})"}
-        elif carries and foe not in protected:
-            guess = {"action": "protect", "target": None, "why": "carries Protect and did not Protect last turn"}
+                     "why": "asleep: it acts only if it wakes (about 1 turn in 3)"}
         elif first_turn.get(foe) and "fakeout" in moves:
             guess = {"action": "fake_out", "target": target, "why": "first turn on the field with Fake Out"}
+        elif chance >= LIKELY:
+            guess = {"action": "protect", "target": None, "confidence": round(chance, 2),
+                     "why": "; ".join((protect_odds.get(foe) or {}).get("why") or []) or "likely to Protect"}
         else:
-            reason = "protected last turn, so it attacks" if foe in protected else "no Protect expected"
+            reason = "protected last turn, so it attacks" if foe in protected else f"Protect unlikely ({chance:.0%})"
             guess = {"action": "attack", "target": target, "why": f"{reason}; its STAB hits {target} hardest"}
-        guess["confidence"] = round(styled, 2) if styled is not None and guess["action"] == "protect" else CODE_CONFIDENCE
+        guess.setdefault("confidence", CODE_CONFIDENCE)
         guesses[foe] = guess
     return guesses
-
-
-def _carries_protect(entry: dict, name: str, table, odds: dict | None) -> bool:
-    revealed = entry.get("revealed_moves") or entry.get("known_moves") or entry.get("moves")
-    if isinstance(revealed, list) and revealed:
-        ids = {_id(m.get("id") or m.get("name") if isinstance(m, dict) else m) for m in revealed}
-        if ids & PROTECT_CHAIN:
-            return True
-        if len(ids) >= 4:
-            return False
-    common = {_id(m) for m in table.common_moves(name)}
-    if common:
-        return bool(common & PROTECT_CHAIN)
-    # No usage data: most VGC Pokemon carry Protect; trust protect.py's read.
-    return bool(odds and odds.get("likelihood", 0) >= 0.3)
 
 
 def expectations(prediction: dict[str, dict], ours: list[str]) -> dict[str, FoeExpectation]:
@@ -120,6 +105,72 @@ def expectations(prediction: dict[str, dict], ours: list[str]) -> dict[str, FoeE
             expectation.attacks[o] = expectation.attacks.get(o, 0.0) + rest * ATTACK_SHARE_OF_REST / max(1, len(ours))
         found[foe] = expectation
     return found
+
+
+READ_WEIGHT = 0.5  # how far the model's read moves us off the code's rule-based guess
+
+
+def blend(read: dict[str, FoeExpectation], base: dict[str, FoeExpectation],
+          weight: float = READ_WEIGHT) -> dict[str, FoeExpectation]:
+    """Principles first, reads next: our line is scored against a mix of the
+    model's read and the code's rule-based guess, so a confident-sounding read
+    cannot erase a base rate. Match 286bbc2e, turn 8: the read said a
+    first-turn Iron Valiant would attack (55%), which zeroed its 70% Protect
+    odds; both our attacks went into its Protect."""
+    found = {}
+    for foe in set(read) | set(base):
+        r, b = read.get(foe), base.get(foe)
+        if r is None or b is None:
+            found[foe] = r or b
+            continue
+        mix = lambda x, y: weight * x + (1 - weight) * y  # noqa: E731
+        found[foe] = FoeExpectation(
+            protect=mix(r.protect, b.protect),
+            switch=mix(r.switch, b.switch),
+            attacks={o: mix(r.attacks.get(o, 0.0), b.attacks.get(o, 0.0)) for o in set(r.attacks) | set(b.attacks)},
+            fake_out={o: mix(r.fake_out.get(o, 0.0), b.fake_out.get(o, 0.0)) for o in set(r.fake_out) | set(b.fake_out)},
+        )
+    return found
+
+
+def escape(expected: dict[str, FoeExpectation], in_range, can_protect: dict[str, bool], rate: float,
+           has_bench: bool) -> None:
+    """A foe in our KO range escapes at least ``rate`` of the time: by Protect
+    when it can, else by switching out (when they have a bench). The share
+    comes off its attacks. Match b0e756ca: Basculegion Protected at 15%, then
+    switched; Arcanine Protected at 16%, then switched to a Ghost - four of
+    our finishing hits wasted while the read said they would attack."""
+    for foe in in_range or ():
+        e = expected.get(_id(foe))
+        if e is None:
+            continue
+        mass = sum(e.attacks.values())
+        if can_protect.get(_id(foe)):
+            need, field = rate - e.protect, "protect"
+        elif has_bench:
+            need, field = rate - e.switch, "switch"
+        else:
+            continue
+        if need <= 0 or mass <= 0:
+            continue
+        take = min(need, mass)
+        keep = (mass - take) / mass
+        e.attacks = {o: v * keep for o, v in e.attacks.items()}
+        e.fake_out = {o: v * keep for o, v in e.fake_out.items()}
+        setattr(e, field, getattr(e, field) + take)
+
+
+def no_repeat_protect(expected: dict[str, FoeExpectation], protected: object) -> None:
+    """A foe that just Protected will not Protect again (it works 1 time in 3):
+    whatever the read said, that share becomes attacks on our actives."""
+    for foe in protected or ():
+        e = expected.get(_id(foe))
+        if e is None or e.protect <= 0:
+            continue
+        share, e.protect = e.protect, 0.0
+        targets = list(e.attacks)
+        for o in targets:
+            e.attacks[o] += share / len(targets)
 
 
 def from_model(answer: dict, foes: list[str], ours: list[str]) -> dict[str, dict]:

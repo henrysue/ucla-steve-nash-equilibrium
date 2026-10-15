@@ -13,21 +13,29 @@ from test_vgc_strategist import (
 )
 
 
-def test_by_default_the_platform_gets_a_neutral_line(monkeypatch):
+def test_by_default_the_platform_gets_the_note(monkeypatch):
     monkeypatch.delenv("VGC_PUBLIC_REASONING", raising=False)
+    decision = _agent(FakeProvider(_doubles_answer())).choose_action(
+        _state(_doubles_action(), observation=BATTLE_OBSERVATION), POKEMON
+    )
+    assert decision.reasoning_summary.startswith("Read: ")
+
+
+def test_set_to_0_the_platform_gets_a_neutral_line(monkeypatch):
+    monkeypatch.setenv("VGC_PUBLIC_REASONING", "0")
     decision = _agent(FakeProvider(_doubles_answer())).choose_action(
         _state(_doubles_action(), observation=BATTLE_OBSERVATION), POKEMON
     )
     assert decision.reasoning_summary == "Move submitted."
 
 
-def test_with_the_flag_a_draft_pick_sends_the_models_note(monkeypatch):
+def test_with_the_flag_a_draft_pick_sends_its_reason(monkeypatch):
     monkeypatch.setenv("VGC_PUBLIC_REASONING", "1")
-    provider = FakeProvider({"action_id": "draft_pick:c2", "reasoning_summary": "Denies their wall."})
-    decision = _agent(provider).choose_action(
+    decision = _agent(FakeProvider()).choose_action(
         _state(*_draft_actions("c1", "c2"), phase="draft", observation=DRAFT_OBSERVATION), POKEMON
     )
-    assert decision.reasoning_summary == "Denies their wall."
+    assert decision.reasoning_summary.split(":")[0] in ("Rillaboom", "Pyukumuku")
+    assert any(rule in decision.reasoning_summary for rule in ("must pick", "partner", "strongest"))
 
 
 def test_with_the_flag_a_battle_turn_sends_the_read_and_the_play(monkeypatch):

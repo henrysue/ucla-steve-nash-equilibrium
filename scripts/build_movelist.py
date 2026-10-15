@@ -110,6 +110,9 @@ def trim(move_id: str, move: dict) -> dict:
         "multihit": multihit,
         "flags": sorted(f for f in KEEP_FLAGS if (move.get("flags") or {}).get(f)),
         "tags": tags(move_id, move),
+        # Sheer Force boosts moves with secondary effects (and drops them).
+        "secondary": bool(move.get("secondary") or move.get("secondaries")) or move_id in ("jetpunch", "orderup"),
+        "recoil": move.get("recoil"),  # [numerator, denominator] of the damage dealt, or None
         "nonstandard": move.get("isNonstandard"),
     }
 

@@ -1,18 +1,18 @@
 """How likely each opposing active is to Protect this turn.
 
-Damage sent into a Protect is a wasted action, and so is a Fake Out. The
-estimate is deterministic and every factor is logged with it:
+Damage sent into a Protect is a wasted action, and so is a Fake Out. One
+simple number per foe, with its reason logged:
 
-- carries Protect: revealed moves win; else the table's common moves
-  (the Protect family listed, or a common set without it), else unknown;
-- first turn on the field: leads and fresh switch-ins Protect more, to
-  scout and to dodge Fake Out;
-- threatened: one of our moves this turn hits it super-effectively;
-- low HP: below half, Protect buys a turn of terrain/partner support;
-- protected last turn: a repeat succeeds only 1/3 of the time, so few try.
+- it cannot Protect (its draft card, or all four moves seen, without it): 0;
+- it protected last turn: 0 (a repeat works 1 time in 3, so nobody tries);
+- first turn on the field: the rate this opponent has shown (from 35%; match
+  e1f70879: 6 of 16 first turns across four matches were a Protect, not 70%);
+- threatened super-effectively: a little above normal;
+- otherwise: low.
 
-Numbers are priors, clamped to 0.02-0.85: certainty either way is never
-justified by what we can see.
+Match 4e60a5a2: a style layer stacked on top of these read "always Protects"
+from three first-turn Protects, held Torkoal at ~58% every turn while it
+attacked, and steered every attack away from it. Keep this one table.
 """
 
 from __future__ import annotations
@@ -24,12 +24,11 @@ from .typechart import effectiveness
 PROTECT_MOVES = frozenset({
     "protect", "detect", "spikyshield", "kingsshield", "banefulbunker", "burningbulwark", "silktrap", "obstruct",
 })
-CARRIES, LACKS, UNKNOWN = 0.30, 0.03, 0.20
-FIRST_TURN = 1.4
-THREATENED = 0.15
-LOW_HP, LOW_HP_BONUS = 0.5, 0.10
-REPEAT = 0.3
-FLOOR, CEILING = 0.02, 0.85
+FIRST_TURN = 0.35  # leads and fresh switch-ins, before we have seen this opponent's
+THREATENED = 0.35
+NORMAL = 0.25
+UNKNOWN = 0.20  # set unknown: it may not even carry Protect
+LACKS = 0.03  # its usage set has no Protect (a guess, not certain)
 LIKELY = 0.5  # at or above this, treat the Pokemon as probably protecting
 
 
@@ -74,13 +73,17 @@ def odds(
     first_turn: dict[str, bool],
     common_moves,
     card_set=None,
+    protected_last_turn=(),
+    first_turn_rate: float = FIRST_TURN,
 ) -> dict[str, dict]:
     """species id -> {"likelihood": p, "why": [...]} for each opposing active.
 
     ``first_turn`` maps species id -> on its first turn on the field;
     ``common_moves`` is species -> list of move names (the reference
     table); ``card_set`` is species -> its exact draft card or ``None``, and
-    a card's four moves are certain either way.
+    a card's four moves are certain either way. ``protected_last_turn`` holds
+    the species ids we saw (or inferred) Protect last turn; ``first_turn_rate``
+    how often this opponent has Protected on a first turn out (style.py).
     """
     attack_types = _our_attack_types(observation)
     found = {}
@@ -92,40 +95,37 @@ def odds(
         hp = _hp(entry)
         if not key or (hp is not None and hp <= 0):
             continue
-        why = []
         revealed = _moves_listed(entry)
         common = {_id(m) for m in common_moves(name) or []}
         card = card_set(name) if card_set else None
         if card:
             exact = {_id(m) for m in card.get("moves") or []}
-            p, carries = (CARRIES, "its draft card runs Protect") if exact & PROTECT_MOVES else (0.0, "its draft card has no Protect")
+            base, carries = (NORMAL, "its draft card runs Protect") if exact & PROTECT_MOVES else (0.0, "its draft card has no Protect")
         elif revealed is not None and len(revealed) >= 4 and not set(revealed) & PROTECT_MOVES:
-            p, carries = 0.0, "all four moves revealed, no Protect"
+            base, carries = 0.0, "all four moves revealed, no Protect"
         elif revealed and set(revealed) & PROTECT_MOVES:
-            p, carries = CARRIES, "Protect revealed"
+            base, carries = NORMAL, "Protect revealed"
         elif common & PROTECT_MOVES:
-            p, carries = CARRIES, "commonly runs Protect"
+            base, carries = NORMAL, "commonly runs Protect"
         elif common:
-            p, carries = LACKS, "common set has no Protect"
+            base, carries = LACKS, "common set has no Protect"
         else:
-            p, carries = UNKNOWN, "set unknown"
-        why.append(carries)
-        if p > 0:
-            if first_turn.get(key):
-                p *= FIRST_TURN
-                why.append("first turn on the field")
-            types = entry.get("types") if isinstance(entry.get("types"), list) else []
-            if types and any(effectiveness(t, types) > 1.0 for t in attack_types):
-                p += THREATENED
-                why.append("we threaten it super-effectively")
-            if hp is not None and hp < LOW_HP:
-                p += LOW_HP_BONUS
-                why.append("below half HP")
-            if _last_move(entry) in PROTECT_MOVES:
-                p *= REPEAT
-                why.append("protected last turn")
-        # A set known to lack Protect (its card, or all four moves seen) cannot use it.
-        p = min(CEILING, max(FLOOR, p)) if p > 0 else 0.0
+            base, carries = UNKNOWN, "set unknown"
+        why = [carries]
+        types = entry.get("types") if isinstance(entry.get("types"), list) else []
+        if base <= LACKS:
+            p = base
+        elif key in protected_last_turn or _last_move(entry) in PROTECT_MOVES:
+            p = 0.0
+            why.append("protected last turn: it will not try again")
+        elif first_turn.get(key):
+            p = first_turn_rate
+            why.append(f"first turn on the field (this opponent: {first_turn_rate:.0%})")
+        elif types and any(effectiveness(t, types) > 1.0 for t in attack_types):
+            p = max(base, THREATENED)
+            why.append("we threaten it super-effectively")
+        else:
+            p = base
         found[key] = {"likelihood": round(p, 2), "why": why}
     return found
 

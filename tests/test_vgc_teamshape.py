@@ -30,17 +30,37 @@ OPENING = {**BATTLE_OBSERVATION, "turn": 1}
 OFFENSE = {"incineroar": 115, "rillaboom": 125, "fluttermane": 135}.get
 
 
-def _opening_rules(action, observation=OPENING):
+# Amoonguss's draft card has no Protect; Landorus-T's does.
+CARDS = {"amoonguss": ["Spore", "Rage Powder", "Pollen Puff", "Sludge Bomb"],
+         "landorustherian": ["Earthquake", "Rock Slide", "U-turn", "Protect"]}.get
+
+
+def _opening_rules(action, observation=OPENING, exact_moves=CARDS):
     slots = act.parse_doubles(_as_legal(action))
-    return slots, MoveTracker(offense=OFFENSE).begin(slots, observation)
+    return slots, MoveTracker(offense=OFFENSE, exact_moves=exact_moves).begin(slots, observation)
 
 
-# -- opening Fake Out ------------------------------------------------------------------------
-
-
-def test_the_opening_turn_locks_a_lead_into_fake_out():
+def test_the_opening_turn_locks_a_lead_into_fake_out_on_the_foe_that_cannot_protect():
     _, rules = _opening_rules(_doubles_action())
     assert set(rules[0].blocked) == {1, 2, 3}  # everything but Fake Out (option 0)
+    assert rules[0].targets == {0: (2,)}  # Amoonguss only: Landorus-T may Protect
+
+
+def test_the_opening_turn_holds_fake_out_when_every_foe_may_protect():
+    """Match 4e60a5a2: Fake Out and Thunder Wave on turn 1 both hit a Protect."""
+    _, rules = _opening_rules(_doubles_action(), exact_moves=None)  # no draft cards: nothing is certain
+    assert 0 in rules[0].blocked and "may Protect" in rules[0].blocked[0]
+    assert not rules[0].targets
+
+
+def test_all_four_revealed_moves_without_protect_also_count_as_certain():
+    revealed = {**OPENING, "opponent_active_pokemon": [
+        {"species": "landorustherian", "types": ["GROUND", "FLYING"]},
+        {"species": "amoonguss", "types": ["GRASS", "POISON"],
+         "revealed_moves": ["spore", "ragepowder", "pollenpuff", "sludgebomb"]},
+    ]}
+    _, rules = _opening_rules(_doubles_action(), revealed, exact_moves=None)
+    assert rules[0].targets == {0: (2,)}
 
 
 def test_with_two_fake_out_leads_the_weaker_one_uses_it_and_the_partner_attacks():
@@ -58,21 +78,44 @@ def test_no_lock_after_the_opening_turn():
     assert rules[0].blocked == {}
 
 
-def test_no_lock_into_ghosts_or_a_priority_blocker():
+def test_fake_out_waits_against_ghosts_or_a_priority_blocker():
     ghosts = {**OPENING, "opponent_active_pokemon": [
         {"species": "landorustherian", "types": ["GHOST"]}, {"species": "amoonguss", "types": ["GHOST"]},
     ]}
-    assert _opening_rules(_doubles_action(), ghosts)[1][0].blocked == {}
+    assert set(_opening_rules(_doubles_action(), ghosts)[1][0].blocked) == {0}
     surge = {**OPENING, "opponent_active_pokemon": [
         {"species": "indeedeef", "types": ["PSYCHIC", "NORMAL"]}, {"species": "amoonguss", "types": ["GRASS"]},
     ]}
-    assert _opening_rules(_doubles_action(), surge)[1][0].blocked == {}
+    assert set(_opening_rules(_doubles_action(), surge)[1][0].blocked) == {0}
 
 
-def test_the_opening_turn_plays_fake_out_whatever_the_prediction():
+def test_a_fake_out_aimed_at_a_foe_that_may_protect_is_rejected():
+    from agent.vgc import rules as turn_rules_module
+
+    slots = act.parse_doubles(_as_legal(_doubles_action()))
+    tracker = MoveTracker(offense=OFFENSE, exact_moves=CARDS)
+    built = turn_rules_module.build(slots, OPENING, tracker, None, lambda line: None)
+    flutter = {"option": 0, "target": 1}
+    assert not built.legal({"slot_0": {"option": 0, "target": 1}, "slot_1": flutter})
+    assert built.legal({"slot_0": {"option": 0, "target": 2}, "slot_1": flutter})
+
+
+def test_the_opening_turn_fakes_out_a_foe_that_threatens_a_ko():
+    """Match e1f70879: Fake Out was held and Archaludon's Body Press took Chien-Pao."""
+    _, rules = _opening_rules(_doubles_action(), exact_moves=None)
+    assert 0 in rules[0].blocked  # no KO threat known: still held
+    slots = act.parse_doubles(_as_legal(_doubles_action()))
+    tracker = MoveTracker(offense=OFFENSE, ko_threats=lambda observation: {"landorustherian"})
+    rules = tracker.begin(slots, OPENING)
+    assert rules[0].targets == {0: (1,)}  # into the threat, Protect or not
+
+
+def test_the_strategist_opens_with_fake_out_into_a_ko_threat():
     provider = FakeProvider(_doubles_answer())
     decision = _agent(provider).choose_action(_state(_doubles_action(), observation=OPENING), POKEMON)
-    assert decision.action["slot_0"]["move_id"] == "fakeout"
+    agent = _agent()
+    assert decision.action["slot_0"] == {"type": "move", "move_id": "fakeout", "target": 1}
+    assert "landorustherian" in agent._ko_threats(OPENING)
 
 
 # -- role-balanced draft and bring -------------------------------------------------------------
@@ -91,14 +134,15 @@ def _draft_state(roster, offered):
 
 
 def test_a_third_pure_support_scores_below_an_attacker():
-    provider = FakeProvider({"action_id": "draft_pick:Iron Valiant", "reasoning_summary": "x"})
-    _agent(provider).choose_action(
-        _draft_state(["Incineroar", "Rillaboom", "Amoonguss"], ["Grimmsnarl", "Iron Valiant"]), POKEMON
-    )
-    cards = provider.prompt()["available_cards"]
-    assert cards[0]["species"] == "Iron Valiant"  # best fit first
-    grimmsnarl = next(c for c in cards if c["species"] == "Grimmsnarl")
-    assert any("pure support" in why for why in grimmsnarl["fit"]["roles"]["why"])
+    """Team fit still docks a third pure support (rule 3's tie-break), even though
+    a must pick like Grimmsnarl is taken on rule 1 regardless."""
+    from agent.vgc import draft, meta
+
+    table = meta.table()
+    mine = ["Incineroar", "Rillaboom", "Amoonguss"]
+    roles = [table.roles(m) for m in mine]
+    grimmsnarl = draft.score("Grimmsnarl", table.roles("Grimmsnarl"), mine, roles, [], None, None, {}, table)
+    assert any("pure support" in why for why in grimmsnarl["roles"]["why"])
 
 
 def test_the_last_picks_go_to_attackers_when_short():
@@ -161,9 +205,11 @@ def test_a_lineup_that_breaks_the_rules_is_re_asked_once_then_accepted():
 # -- synergy-driven draft ----------------------------------------------------------------------
 
 
-def test_a_first_pick_is_a_win_condition_not_a_support():
+def test_a_must_pick_is_taken_first_highest_win_rate_floor_first():
+    """Rule 1: Chien-Pao and Grimmsnarl are both must picks; Grimmsnarl's win-rate
+    floor is higher."""
     decision = _agent().choose_action(_draft_state([], ["Amoonguss", "Chien-Pao", "Grimmsnarl"]), POKEMON)
-    assert decision.action.action_id == "draft_pick:Chien-Pao"
+    assert decision.action.action_id == "draft_pick:Grimmsnarl"
 
 
 def test_a_listed_partner_is_credited():
@@ -188,23 +234,13 @@ def test_a_card_that_stacks_a_team_weakness_is_marked_down():
     assert "Rock" in covering["coverage"]["stacks"]
 
 
-def test_the_plan_is_carried_to_the_next_pick():
-    provider = FakeProvider(
-        {"action_id": "draft_pick:Chien-Pao", "team_plan": "Tailwind hyper offense around Chien-Pao.",
-         "reasoning_summary": "x"},
-        {"action_id": "draft_pick:Dragonite", "team_plan": "same", "reasoning_summary": "x"},
-    )
-    agent = _agent(provider)
-    agent.choose_action(_draft_state([], ["Chien-Pao", "Dragonite"]), POKEMON)
-    agent.choose_action(_draft_state(["Chien-Pao"], ["Dragonite", "Amoonguss"]), POKEMON)
-    assert provider.prompt(1)["your_team_plan"] == "Tailwind hyper offense around Chien-Pao."
-
-
-def test_draft_cards_hide_usage_anchors():
-    provider = FakeProvider({"action_id": "draft_pick:Chien-Pao", "reasoning_summary": "x"})
-    _agent(provider).choose_action(_draft_state([], ["Chien-Pao", "Rillaboom"]), POKEMON)
-    for card in provider.prompt()["available_cards"]:
-        assert not {"draft_points", "tier", "usage_pct"} & set(card.get("reference", {}))
+def test_the_first_picks_proven_partner_is_taken_next():
+    """Rule 2: after Dragonite, Amoonguss (55.4% together over ~4.8k games) beats
+    the stronger-on-paper Garchomp, which has no proven pairing."""
+    agent = _agent()
+    decision = agent.choose_action(_draft_state(["Dragonite"], ["Garchomp", "Amoonguss"]), POKEMON)
+    assert decision.action.action_id == "draft_pick:Amoonguss"
+    assert "partner for our first pick Dragonite" in agent.draft_strategy()["picks"][-1]
 
 
 # -- the dac4104d fixes ------------------------------------------------------------------------

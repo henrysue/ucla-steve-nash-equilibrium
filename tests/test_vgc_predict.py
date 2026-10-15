@@ -51,19 +51,32 @@ def _setup(observation, tracker=None):
 # -- step 2: the code's guess -------------------------------------------------------------------
 
 
-def test_a_pokemon_with_protect_that_did_not_protect_last_turn_is_predicted_to_protect():
+def test_only_a_first_turn_out_is_predicted_to_protect():
+    from agent.vgc import protect
+
     _, tracker, _, calc = _setup(_obs())
-    guess = predict.code_guess(_obs(), calc, tracker, TABLE, {})
-    assert guess["chienpao"]["action"] == "protect"  # Chien-Pao's common set has Protect
-    assert "did not Protect last turn" in guess["chienpao"]["why"]
+    odds = protect.odds(_obs(), first_turn=tracker.opponent_first_turn(), common_moves=TABLE.common_moves)
+    assert predict.code_guess(_obs(), calc, tracker, TABLE, odds)["chienpao"]["action"] == "attack"  # 35% to start
+    # An opponent that has Protected on most first turns: Chien-Pao's common set has Protect.
+    odds = protect.odds(_obs(), first_turn=tracker.opponent_first_turn(), common_moves=TABLE.common_moves,
+                        first_turn_rate=0.8)
+    guess = predict.code_guess(_obs(), calc, tracker, TABLE, odds)
+    assert guess["chienpao"]["action"] == "protect"
+    assert "first turn on the field" in guess["chienpao"]["why"]
     assert guess["incineroar"]["action"] != "protect"  # Incineroar's common set has no Protect
+    later = {k: {**v, "likelihood": protect.NORMAL} for k, v in odds.items()}
+    assert predict.code_guess(_obs(), calc, tracker, TABLE, later)["chienpao"]["action"] == "attack"
 
 
 def test_after_protecting_it_is_predicted_to_attack():
     observation = _obs()
     slots, tracker, _, calc = _setup(observation)
-    tracker.record({"type": "doubles_turn", "slot_0": {"type": "move", "move_id": "closecombat", "target": 1},
+    # A turn first, so Incineroar is past its Fake Out turn (a flinch would explain no damage).
+    tracker.record({"type": "doubles_turn", "slot_0": {"type": "move", "move_id": "protect"},
                     "slot_1": {"type": "move", "move_id": "protect"}})
+    tracker.begin(slots, _obs())
+    tracker.record({"type": "doubles_turn", "slot_0": {"type": "move", "move_id": "closecombat", "target": 1},
+                    "slot_1": {"type": "move", "move_id": "moonblast", "target": 2}})
     # Next decision: Chien-Pao took no damage from Close Combat, so it protected.
     tracker.begin(slots, _obs())
     assert "chienpao" in tracker.protected_last_turn
@@ -179,3 +192,13 @@ def test_the_strategist_plays_the_answer_to_the_models_prediction():
     }
     decision = _agent(FakeProvider(model_says)).choose_action(_state(ACTION, observation=_obs()), POKEMON)
     assert decision.action["slot_0"] == {"type": "move", "move_id": "closecombat", "target": 2}
+
+
+def test_no_damage_is_no_protect_when_a_fresh_fake_out_user_was_out():
+    """Match 666b209d: Dragonite was flinched by Fake Out, and "Chien-Pao took no damage" was read as a Protect."""
+    observation = _obs()
+    slots, tracker, _, _ = _setup(observation)  # Incineroar: first turn out, Fake Out in its set
+    tracker.record({"type": "doubles_turn", "slot_0": {"type": "move", "move_id": "closecombat", "target": 1},
+                    "slot_1": {"type": "move", "move_id": "moonblast", "target": 1}})
+    tracker.begin(slots, _obs())
+    assert "chienpao" not in tracker.protected_last_turn

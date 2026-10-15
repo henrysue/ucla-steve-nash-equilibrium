@@ -120,16 +120,18 @@ def test_a_replacement_after_a_faint_gets_its_fake_out():
     assert not rules[1].fresh
 
 
-def test_protect_odds_fall_then_a_third_in_a_row_is_withheld():
+def test_a_second_protect_in_a_row_is_withheld():
+    """Match fb4dcbc1 (seat 0): Tornadus protected on turns 5 and 6; the second failed."""
     tracker = MoveTracker()
     slots = _slots()
-    tracker.begin(slots, BATTLE_OBSERVATION)
+    rules = tracker.begin(slots, BATTLE_OBSERVATION)
+    assert PROTECT_INDEX not in rules[0].blocked
     tracker.record(_move_payload("protect"))
     rules = tracker.begin(slots, BATTLE_OBSERVATION)
-    assert rules[0].protect_success == 1 / 3 and PROTECT_INDEX not in rules[0].blocked
-    assert rules[0].note("protect")["success_chance"] == 0.333
-    tracker.record(_move_payload("protect"))
-    assert PROTECT_INDEX in tracker.begin(slots, BATTLE_OBSERVATION)[0].blocked
+    assert rules[0].protect_success == 1 / 3 and PROTECT_INDEX in rules[0].blocked
+    assert "protect #2 in a row" in rules[0].blocked[PROTECT_INDEX]
+    tracker.record(_move_payload("flareblitz"))
+    assert PROTECT_INDEX not in tracker.begin(slots, BATTLE_OBSERVATION)[0].blocked
 
 
 def test_any_other_move_resets_the_protect_chain():
@@ -239,8 +241,8 @@ def test_fake_out_is_not_played_on_the_second_turn(tmp_path):
     opening = {**BATTLE_OBSERVATION, "turn": 1}
     first = agent.choose_action(_state(_doubles_action(), observation=opening), POKEMON)
     second = agent.choose_action(_state(_doubles_action(), observation={**BATTLE_OBSERVATION, "turn": 2}), POKEMON)
-    assert first.action["slot_0"]["move_id"] == "fakeout"
-    assert second.action["slot_0"]["move_id"] != "fakeout"
+    assert first.action["slot_0"].get("move_id") == "fakeout"  # Landorus-T threatens a KO: worth a Fake Out
+    assert second.action["slot_0"].get("move_id") != "fakeout"  # and now Incineroar has moved
     records = [_json.loads(line) for line in next(tmp_path.glob("*.jsonl")).read_text(encoding="utf-8").splitlines()]
     assert records[1]["move_state"]["ours"]["incineroar"]["first_turn_moves_work"] is False
 
@@ -272,7 +274,6 @@ def test_battle_turns_ask_for_no_thinking_and_draft_keeps_it():
     from agent.vgc import decisions
 
     assert decisions.predict_decision([], [], {}).effort == "none"
-    assert decisions.draft_decision(["a"], []).effort == "low"
 
 
 def test_move_state_is_written_to_the_jsonl(tmp_path):

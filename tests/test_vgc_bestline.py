@@ -51,9 +51,18 @@ def test_prefers_the_super_effective_target():
 
 
 def test_finishes_a_weakened_foe():
+    """Through the principles, as the strategist ranks: a KO on a 15% Landorus beats chip on a
+    Spore Amoonguss (a win-condition target) - take the sure KO."""
+    from agent.vgc import principles
+
     action = _doubles("fluttermane", [_move("moonblast", [1, 2], FOES)], "incineroar", [_move("protect", [])])
     observation = _observation(["fluttermane", "incineroar"], ["landorustherian", "amoonguss"], hp={"landorustherian": 0.15})
-    assert _best(action, observation)["slot_0"]["target"] == 1
+    slots = act.parse_doubles(_as_legal(action))
+    turn_rules = rules.build(slots, observation, MoveTracker(offense=TABLE.offense), TABLE, lambda line: None)
+    calc = lookahead.Calculator(observation, TABLE)
+    judge = principles.Judge(slots, observation, calc, {})
+    ranked = lookahead.ranked_lines(turn_rules, observation, calc, {}, cost=lambda p: judge.judge(p)[0])
+    assert turn_rules.check(ranked[0][1])["slot_0"]["target"] == 1
 
 
 def test_prefers_damage_over_a_plain_status_move():
@@ -103,8 +112,14 @@ def test_passes_when_pass_is_the_only_option_and_never_double_switches():
     assert payload["slot_0"] == {"type": "switch", "species": "gyarados"} and payload["slot_1"] == {"type": "pass"}
 
 
-def test_opening_turn_uses_fake_out():
+def test_opening_turn_fakes_out_only_the_foe_that_cannot_protect():
     action = _doubles("incineroar", [_move("fakeout", [1, 2], FOES), _move("flareblitz", [1, 2], FOES)],
                       "fluttermane", [_move("moonblast", [1, 2], FOES)])
     observation = _observation(["incineroar", "fluttermane"], ["landorustherian", "amoonguss"], turn=1)
-    assert _best(action, observation)["slot_0"]["move_id"] == "fakeout"
+    assert _best(action, observation)["slot_0"]["move_id"] != "fakeout"  # either foe may Protect
+    cards = {"amoonguss": ["Spore", "Rage Powder", "Pollen Puff", "Sludge Bomb"]}.get
+    slots = act.parse_doubles(_as_legal(action))
+    tracker = MoveTracker(offense=TABLE.offense, exact_moves=cards)
+    turn_rules = rules.build(slots, observation, tracker, TABLE, lambda line: None)
+    answer = lookahead.best_line(turn_rules, observation, lookahead.Calculator(observation, TABLE))
+    assert turn_rules.check(answer)["slot_0"] == {"type": "move", "move_id": "fakeout", "target": 2}

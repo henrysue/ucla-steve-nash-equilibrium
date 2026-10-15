@@ -55,6 +55,17 @@ STATUS_IMMUNE_TYPES = {
     "toxic": {"POISON", "STEEL"}, "poisonpowder": {"POISON", "STEEL", "GRASS"}, "toxicthread": {"POISON", "STEEL"},
     "spore": {"GRASS"}, "sleeppowder": {"GRASS"}, "stunspore": {"GRASS", "ELECTRIC"}, "leechseed": {"GRASS"},
 }
+# Moves that give a major status: they fail on a target that already has one
+# (match e1f70879: Spore into an already-asleep Cresselia).
+STATUS_CONDITION_MOVES = frozenset({
+    "spore", "sleeppowder", "hypnosis", "sing", "lovelykiss", "darkvoid", "grasswhistle", "yawn",
+    "thunderwave", "glare", "stunspore", "willowisp", "toxic", "poisonpowder",
+})
+# A Choice item locks its holder into its first move: Protect, a status move or
+# Fake Out then repeats into failure (match 744c9e10: Choice Scarf Landorus
+# used Protect and was locked into a second, 1-in-3 Protect).
+CHOICE_ITEMS = frozenset({"choicescarf", "choiceband", "choicespecs"})
+CHOICE_TRAPS = frozenset({"fakeout", "firstimpression"})
 # Abilities that make a Pokemon immune to a type, used for our OWN partner only
 # when every ability it can have grants the immunity.
 IMMUNITY_ABILITIES = {
@@ -126,12 +137,21 @@ class Board:
         from .observed import field_state
 
         self.field = set((field_state(observation) or {}).get("field", []))
+        self.foe_entries = {
+            _id(f.get("species") or f.get("name")): f
+            for f in foes
+            if isinstance(f, dict) and (f.get("species") or f.get("name"))
+        }
 
     def grounded(self, species: str | None) -> bool:
-        """On the ground for terrain: not Flying, not Levitate, no Air Balloon."""
+        """On the ground: not Flying, not Levitate, no Air Balloon still up."""
+        from .lookahead import floats
+
         types = self.foe_types(species) or []
-        abilities = self.table.abilities(species)
-        return not ("FLYING" in types or abilities == ["Levitate"] or _id(self.table.common_item(species)) == "airballoon")
+        return not ("FLYING" in types or floats(self.foe_entry(species), self.table))
+
+    def foe_entry(self, species: str | None) -> dict:
+        return self.foe_entries.get(_id(species), {"species": species})
 
     def prankster(self, number: int) -> bool:
         mine = self.ours[number] if number < len(self.ours) else {}
@@ -145,6 +165,17 @@ class Board:
             return f"{move['name']} fails: Psychic Terrain blocks priority moves on a grounded {species}"
         if move["category"] == "STATUS" and self.prankster(number) and "DARK" in (self.foe_types(species) or []):
             return f"{move['name']} fails: Dark types ignore Prankster status moves ({species})"
+        if move_id in STATUS_CONDITION_MOVES:
+            from .lookahead import _status
+
+            status = _status(self.foe_entry(species).get("status"))
+            if status:
+                return f"{move['name']} fails: {species} already has a status ({status})"
+        if move["category"] == "STATUS" and self.table.abilities(species) == ["Good as Gold"]:
+            # Match 0af0f5a5: Encore into Gholdengo.
+            return f"{move['name']} fails: {species}'s Good as Gold blocks status moves"
+        if move["type"] == "GROUND" and _damaging(move) and effectiveness("GROUND", self.foe_types(species) or []) > 0                 and not self.grounded(species):
+            return f"{move['name']} cannot hit {species}: Air Balloon or Levitate"
         return None
 
     def _types(self, entry: dict) -> list[str]:
@@ -158,7 +189,9 @@ class Board:
         species = entry.get("species") or entry.get("name") or (slot.active if isinstance(slot.active, str) else None)
         if slot.force_switch or not species:
             return {}
-        return {"species": species, "types": self._types({**entry, "species": species})}
+        card = self.table.card_set(species) if hasattr(self.table, "card_set") else None
+        item = entry.get("item") or (card or {}).get("item") or ""
+        return {"species": species, "types": self._types({**entry, "species": species}), "item": item}
 
     def ally_of(self, number: int) -> dict:
         other = 1 - number
@@ -217,6 +250,7 @@ def option_blocks(board: Board) -> dict[int, dict[int, str]]:
     for slot in board.slots:
         mine = board.ours[slot.number] if slot.number < len(board.ours) else {}
         blocked: dict[int, str] = {}
+        choice_item = _id(mine.get("item")) if _id(mine.get("item")) in CHOICE_ITEMS else None
         plain: list[tuple[int, str, dict, list[dict]]] = []
         for index, option in enumerate(slot.options):
             if option.get("type") != "move":
@@ -224,6 +258,10 @@ def option_blocks(board: Board) -> dict[int, dict[int, str]]:
             move_id = _id(option.get("move_id"))
             move = lookup(move_id)
             if not move:
+                continue
+            if choice_item and (move["category"] == "STATUS" or move_id in CHOICE_TRAPS):
+                blocked[index] = (f"{move['name']} would lock {mine.get('species')} into it ({mine.get('item')}): "
+                                  "it repeats into failure next turn")
                 continue
             foes = _foe_targets(option)
             typed = [(e, board.foe_types(e.get("species"))) for e in foes]
@@ -376,12 +414,12 @@ def _chosen_option(board: Board, number: int, move_id: str) -> dict | None:
 
 def merge(rules, extra: dict[int, dict[int, str]], slots):
     """SlotRules with ``extra`` blocks added, never withholding every option."""
-    from .moverules import SlotRules
+    from dataclasses import replace
 
     merged = []
     for slot, rule in zip(slots, rules):
         blocked = {**rule.blocked, **extra.get(slot.number, {})}
         if len(blocked) >= len(slot.options):
             blocked = dict(rule.blocked)
-        merged.append(SlotRules(rule.species, rule.fresh, rule.protect_chain, rule.last_move, blocked))
+        merged.append(replace(rule, blocked=blocked))
     return merged

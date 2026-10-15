@@ -1,13 +1,13 @@
 """Moves whose success depends on battle history, and the tracker that remembers it.
 
 The server offers every move a Pokemon knows, including ones that are certain
-to fail this turn: Fake Out after its user has already moved, a third Protect
-in a row. Neither the model nor the template can see that history, so this
+to fail this turn: Fake Out after its user has already moved, a Protect right
+after a Protect (1/3). Neither the model nor the template can see that history, so this
 module keeps it, per match, for every Pokemon on both sides:
 
 - how many move actions ours have taken since entering (Fake Out, First
   Impression and Mat Block only work on the first one);
-- each of ours' consecutive Protect-family uses (1/3 success, then 1/9);
+- each of ours' consecutive Protect-family uses (a second in a row is withheld);
 - each of ours' last move (Blood Moon and Gigaton Hammer cannot repeat);
 - whether each opposing Pokemon is on its first turn, and so still a Fake Out
   threat.
@@ -20,7 +20,7 @@ facts behind them, which are logged with every decision.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Callable
 
 from .typechart import effectiveness
@@ -43,8 +43,9 @@ NO_REPEAT = frozenset({"bloodmoon", "gigatonhammer"})
 MEANINGFUL_HIT = 0.08  # below this, a hit and Leftovers can cancel out: no inference
 HEAL_ALLOWANCE = 0.07  # Leftovers / Black Sludge / Grassy Terrain, end of turn
 TIMED_EFFECTS = {"tailwind": 4, "reflect": 5, "lightscreen": 5, "auroraveil": 5, "trickroom": 5}
-# Withhold Protect once the chance falls to 1/9 (the third in a row).
-PROTECT_BLOCK_CHAIN = 2
+# Never Protect twice in a row with the same Pokemon: the repeat succeeds only
+# 1/3 of the time (match fb4dcbc1: Tornadus protected turns 5 and 6).
+PROTECT_BLOCK_CHAIN = 1
 # Opposing leads that stop Fake Out outright: Psychic Surge (Indeedee) blocks
 # priority on grounded targets, Armor Tail (Farigiraf) blocks it on the side.
 FAKE_OUT_BLOCKERS = frozenset({"indeedee", "indeedeef", "indeedeem", "farigiraf"})
@@ -95,6 +96,7 @@ class SlotRules:
     protect_chain: int = 0
     last_move: str | None = None
     blocked: dict[int, str] = field(default_factory=dict)  # option index -> why it fails
+    targets: dict[int, tuple[int, ...]] = field(default_factory=dict)  # option index -> the only targets allowed
 
     @property
     def protect_success(self) -> float:
@@ -117,16 +119,25 @@ class MoveTracker:
     Call ``begin`` at the start of every doubles decision and ``record``
     with the payload actually sent. ``known_moves`` maps an opposing species
     to the moves it commonly runs (the reference table), for the Fake Out
-    threat read; without it that read is simply absent.
+    threat read; without it that read is simply absent. ``exact_moves`` maps
+    an opposing species to its draft card's four moves when we have the card
+    (``None`` otherwise): only then do we KNOW it has no Protect.
+    ``ko_threats`` maps an observation to the opposing species ids that
+    threaten a KO on one of ours this turn: worth a Fake Out even if they
+    carry Protect.
     """
 
     def __init__(
         self,
         known_moves: Callable[[str], list[str]] | None = None,
         offense: Callable[[str], int | None] | None = None,
+        exact_moves: Callable[[str], list[str] | None] | None = None,
+        ko_threats: Callable[[dict], set[str]] | None = None,
     ) -> None:
         self._known_moves = known_moves
         self._offense = offense
+        self._exact_moves = exact_moves
+        self._ko_threats = ko_threats
         self._full_turns = 0
         self._ours: dict[str, OnField] = {}
         self._theirs: dict[str, OnField] = {}
@@ -140,11 +151,15 @@ class MoveTracker:
         self._foe_types: dict[str, list[str]] = {}
         self._targets: list[dict[int, str]] = [{}, {}]
         self._attacked: dict[str, set[str]] = {}  # foe id -> our attackers aimed at it
+        self._sure_hit: dict[str, bool] = {}  # foe id -> one of those attacks cannot miss
         self.protected_last_turn: dict[str, str] = {}  # foe id -> how we know
         self._effects: dict[str, int] = {}  # timed effect -> full turn (0-based) it was set
         self._foe_known: dict[str, set[str]] = {}  # foe id -> moves the server has shown
         self._expected_low: dict[str, float] = {}  # foe id -> least damage (HP fraction) our last attacks should do
         self._pending: list[tuple[str, str, int]] = []  # (effect, setter, turn) awaiting confirmation
+        # A fresh foe with Fake Out was out last decision: any of ours may have
+        # been flinched, so "it took no damage" is no evidence of a Protect.
+        self._flinch_risk = False
 
     def begin(self, slots: list, observation: dict) -> list[SlotRules]:
         """Update who is on the field and return each slot's rules."""
@@ -162,7 +177,30 @@ class MoveTracker:
         server_turn = observation.get("turn")
         if self._full_turn and self._full_turns == 0 and server_turn in (None, 0, 1):
             rules = self._lead_with_fake_out(slots, rules, observation)
+        self._flinch_risk = self._fake_out_live(observation)
         return rules
+
+    def _fake_out_live(self, observation: dict) -> bool:
+        """Some opposing active is on its first turn out and has Fake Out."""
+        for entry in observation.get("opponent_active_pokemon") or []:
+            if not isinstance(entry, dict) or _fainted(entry):
+                continue
+            name = entry.get("species") or entry.get("name")
+            species = move_id(name)
+            if self._theirs.get(species) is None or self._theirs[species].turns_seen:
+                continue
+            moves = set(_known_moves(entry))
+            for source in (self._exact_moves, self._known_moves):
+                if source is not None and name:
+                    moves |= {move_id(m) for m in source(name) or []}
+            if "fakeout" in moves:
+                return True
+        return False
+
+    def _cannot_have_protect(self, name: str) -> bool:
+        """Its draft card is known and has no Protect-family move."""
+        exact = self._exact_moves(name) if self._exact_moves and name else None
+        return bool(exact) and not {move_id(m) for m in exact} & PROTECT_CHAIN
 
     def record(self, payload: object) -> None:
         """Remember what each slot did with the payload actually sent."""
@@ -181,6 +219,7 @@ class MoveTracker:
                 self.used.append({"decision": self._decisions, "species": species, "move": move})
             if move in TIMED_EFFECTS and self._full_turn and move not in self._effects:
                 self._pending.append((move, species, self._full_turns))
+        self._sure_hit = {}
         self._attacked = self._attacked_by(payload)
         if self._full_turn:
             self._full_turns += 1
@@ -208,12 +247,21 @@ class MoveTracker:
                     found[species] = f"reported: last move {last}"
                 continue
             known = _known_moves(entry)
-            shown = (known - self._foe_known.get(species, set())) & PROTECT_CHAIN if species in self._foe_known else set()
+            new_moves = known - self._foe_known.get(species, set()) if species in self._foe_known else set()
+            shown = new_moves & PROTECT_CHAIN
             self._foe_known[species] = known
             if shown:
                 # Match ccb570bb: Archaludon's first Protect showed up in its
                 # moves while Leftovers raised its HP, and went unnoticed.
                 found[species] = f"revealed: {sorted(shown)[0]}"
+                continue
+            if new_moves - PROTECT_CHAIN:
+                # It showed another move this turn, so it acted: no Protect,
+                # whatever its HP says (match 915ba9e1: a U-turn read as Protect).
+                continue
+            if self._cannot_have_protect(entry.get("species") or entry.get("name")) or self._flinch_risk:
+                # Match 666b209d: "Chi-Yu protected" - its card has no Protect;
+                # Dragonite had been flinched by Rillaboom's Fake Out.
                 continue
             before = self._foe_hp.get(species)
             # Unchanged HP only: a rise means healing (Leftovers, Grassy Terrain)
@@ -222,6 +270,10 @@ class MoveTracker:
             # moved never hit anything (match e4546428: Urshifu fell to a faster
             # Chi-Yu, and "Chi-Yu took no damage" was misread as a Protect).
             survivors = self._attacked.get(species, set()) & set(self._ours)
+            if not self._sure_hit.get(species, True):
+                # Every hit we aimed at it can miss (Scale Shot 90%, Rock Slide):
+                # no damage may be a miss (match 41d776ed, turn 8).
+                survivors = set()
             low = self._expected_low.get(species, 0.0)
             if survivors and before is not None and low >= MEANINGFUL_HIT:
                 # Judged against the damage we expected: a Leftovers rise after
@@ -261,6 +313,8 @@ class MoveTracker:
                 types = self._foe_types.get(foe) or []
                 if not types or effectiveness(move["type"], types) > 0:
                     hit.setdefault(foe, set()).add(self._slot_species[number])
+                    sure = move["accuracy"] is None or move["accuracy"] >= 100
+                    self._sure_hit[foe] = self._sure_hit.get(foe, False) or sure
         return hit
 
     def _update_effects(self, observation: dict) -> None:
@@ -295,6 +349,14 @@ class MoveTracker:
     def expect(self, damage: dict[str, float]) -> None:
         """Foe id -> least HP fraction our just-sent attacks should take off it."""
         self._expected_low = {move_id(k): v for k, v in damage.items()}
+
+    def just_in(self) -> set[str]:
+        """Our species ids that came in after the opening turn and have not had a
+        full turn yet. Not the leads on turn 1: switching one out idles its slot
+        once, not twice (match b0e756ca flagged Incineroar's turn-1 pivot)."""
+        if self._full_turns == 0:
+            return set()
+        return {species for species, entry in self._ours.items() if entry.turns_seen == 0}
 
     def opponent_first_turn(self) -> dict[str, bool]:
         """species id -> whether that opposing active is on its first turn out."""
@@ -356,36 +418,74 @@ class MoveTracker:
 
 
     def _lead_with_fake_out(self, slots: list, rules: list[SlotRules], observation: dict) -> list[SlotRules]:
-        """Opening turn: one lead uses Fake Out, the other is free to act.
+        """Opening turn: Fake Out only into a foe we KNOW cannot Protect.
 
-        The lead with the weaker offense takes the Fake Out so the stronger
-        one attacks. Nothing is locked when Fake Out cannot land: every foe
-        is a Ghost type, or a foe's ability blocks priority.
+        Leads Protect on their first turn out, so a Fake Out into one that
+        may is likely wasted (match 4e60a5a2: Fake Out and Thunder Wave both
+        hit a Protect). A foe whose draft card, or all four revealed moves,
+        has no Protect is a safe target: the lead with the weaker offense
+        Fake Outs it and the other is free to act. No safe target (or a foe
+        whose ability blocks priority): Fake Out waits for a later turn.
+        A foe that threatens a KO on one of ours is a target too, Protect or
+        not (match e1f70879: Fake Out was held, and Archaludon's Body Press
+        took Chien-Pao on turn 1).
         """
         foes = _opponent_types(observation)
-        if any(species in FAKE_OUT_BLOCKERS for species in foes):
-            return rules
+        safe = set() if any(s in FAKE_OUT_BLOCKERS for s in foes) else \
+            self._cannot_protect(observation) | self._threatening(observation)
         users = []
         for slot, rule in zip(slots, rules):
             index = _fake_out_index(slot, rule)
-            if index is not None and _fake_out_lands(slot.options[index], foes):
-                users.append((self._offense(rule.species) or 0 if self._offense else 0, slot.number, index))
-        if not users:
-            return rules
-        _, locked, fake_out = min(users)
+            targets = _fake_out_targets(slot.options[index], foes, safe) if index is not None else ()
+            if targets:
+                users.append((self._offense(rule.species) or 0 if self._offense else 0, slot.number, index, targets))
         changed = list(rules)
+        if not users:
+            for slot, rule in zip(slots, rules):
+                index = _fake_out_index(slot, rule)
+                blocked = {**rule.blocked, index: "opening turn: every foe may Protect on its first turn out and "
+                                                  "none threatens a KO; Fake Out only into one that cannot "
+                                                  "Protect or one that threatens a KO"} if index is not None else {}
+                if index is not None and len(blocked) < len(slot.options):
+                    changed[slot.number] = replace(rule, blocked=blocked)
+            return changed
+        _, locked, fake_out, targets = min(users)
         for slot, rule in zip(slots, rules):
             blocked = dict(rule.blocked)
+            aimed = dict(rule.targets)
             if slot.number == locked:
                 reason = f"opening turn: {rule.species} leads with Fake Out"
                 blocked.update({i: reason for i in range(len(slot.options)) if i != fake_out})
+                aimed[fake_out] = targets
             else:
                 partner = _fake_out_index(slot, rule)
                 if partner is not None:
                     blocked[partner] = "opening turn: one Fake Out is enough; the partner attacks"
             if len(blocked) < len(slot.options):
-                changed[slot.number] = SlotRules(rule.species, rule.fresh, rule.protect_chain, rule.last_move, blocked)
+                changed[slot.number] = replace(rule, blocked=blocked, targets=aimed)
         return changed
+
+    def _threatening(self, observation: dict) -> set[str]:
+        """Opposing actives that threaten a KO on one of ours this turn."""
+        if self._ko_threats is None:
+            return set()
+        try:
+            return {move_id(s) for s in self._ko_threats(observation) or ()}
+        except Exception:  # noqa: BLE001 - no threat read: no extra target
+            return set()
+
+    def _cannot_protect(self, observation: dict) -> set[str]:
+        """Opposing actives certain to have no Protect: their draft card, or all four revealed moves."""
+        found = set()
+        for entry in observation.get("opponent_active_pokemon") or []:
+            if not isinstance(entry, dict) or _fainted(entry):
+                continue
+            name = entry.get("species") or entry.get("name")
+            exact = self._exact_moves(name) if self._exact_moves and name else None
+            moves = {move_id(m) for m in exact} if exact else _known_moves(entry)
+            if (exact or len(moves) >= 4) and not moves & PROTECT_CHAIN:
+                found.add(move_id(name))
+        return found
 
 
 def _fake_out_index(slot, rule: SlotRules) -> int | None:
@@ -399,18 +499,17 @@ def _fake_out_index(slot, rule: SlotRules) -> int | None:
     )
 
 
-def _fake_out_lands(option: dict, foes: dict[str, list[str]]) -> bool:
-    """True when some legal opposing target is not immune to a Normal move."""
-    entries = option.get("target_options") or [
-        {"target": t, "side": "opponent" if t > 0 else "ally"} for t in option.get("targets") or [] if isinstance(t, int)
-    ]
-    for entry in entries:
+def _fake_out_targets(option: dict, foes: dict[str, list[str]], safe: set[str]) -> tuple[int, ...]:
+    """Fake Out's legal targets among ``safe`` foes that a Normal move can hit."""
+    found = []
+    for entry in option.get("target_options") or []:
         if not isinstance(entry, dict) or entry.get("side") != "opponent":
             continue
-        types = foes.get(move_id(entry.get("species")))
-        if not types or effectiveness("NORMAL", types) > 0:
-            return True
-    return False
+        species = move_id(entry.get("species"))
+        types = foes.get(species)
+        if species in safe and (not types or effectiveness("NORMAL", types) > 0):
+            found.append(entry.get("target"))
+    return tuple(t for t in found if isinstance(t, int))
 
 
 def _opponent_types(observation: dict) -> dict[str, list[str]]:

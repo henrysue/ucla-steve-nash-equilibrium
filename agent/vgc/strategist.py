@@ -6,12 +6,20 @@
 - Team Preview: ONE model call writes the match plan and chooses the four
   and the leads, checked against the lineup rules (re-asked once if it
   breaks them). No model: the best-scoring legal four.
-- Battle turn, in three steps:
-    1. rules.py decides what is withheld and what a blunder is;
-    2. predict.py guesses each foe's action (it carries Protect and did not
-       Protect last turn -> it will probably Protect; otherwise it attacks the
-       one of ours it hurts most), and the model refines that guess;
-    3. lookahead.ranked_lines plays our best legal answer to the prediction.
+- Battle turn, in four steps:
+    1. rules.py decides what is withheld and what a blunder is (a second
+       Protect in a row from the same Pokemon is never sent);
+    2. predict.py guesses each foe's action (Protect only when protect.py's
+       one table says it is likely, i.e. its first turn out; otherwise it
+       attacks the one of ours it hurts most), and the model refines that read;
+    3. lookahead.ranked_lines ranks our legal answers - principles first,
+       reads next: the read is blended with the code's guess
+       (predict.blend), and principles.Judge prices every line that breaks
+       a decision principle (protect the plan, do your job, stay robust,
+       mind self-drops);
+    4. the model makes the final call: play the code's pick, or veto it for
+       another ranked line within VETO_MARGIN. A veto only chooses among
+       rule-checked lines.
   The code's guess and its answer are prepared first: no model, a slow
   model or a bad answer all still get a sensible move.
 
@@ -34,7 +42,7 @@ from altruagent import DecisionContext, GameState, LegalAction, WithReasoning
 from altruagent.console import print_line
 
 from . import actions as act
-from . import archetypes, cards as card_sets, decisions, draft, lookahead, meta, movelist, observed, predict, protect, rules
+from . import archetypes, cards as card_sets, decisions, draft, lookahead, meta, movelist, observed, pick_priority, predict, principles, protect, rules
 from .style import OpponentStyle
 from .moverules import MoveTracker
 from .providers import NO_CREDENTIALS, StrategistProvider
@@ -43,7 +51,6 @@ from .typechart import effectiveness
 
 # Platform clocks (GAMES.md): 15 s a draft pick, 90 s Team Preview, 55 s a
 # battle decision from a shared bank. We answer well inside each.
-DRAFT_SECONDS = 9.0
 TEAM_PREVIEW_SECONDS = 78.0
 DECISION_SECONDS = 40.0
 MIN_ATTEMPT_SECONDS = 4.0  # less time than this left: play the fallback now
@@ -53,16 +60,19 @@ FASTER_EFFORT = {"max": "high", "xhigh": "high", "high": "medium", "medium": "lo
 
 SUMMARY_LIMIT = 280
 # The platform shows reasoning_summary to spectators (and maybe the
-# opponent), so by default it carries no strategy: the model's note stays in
-# the local log. `--show-reasoning` / VGC_PUBLIC_REASONING=1 sends the real
-# one-line reasoning instead. The model's private thinking is never sent.
+# opponent). By default it carries the decision's one-line note (battle:
+# "Read: ... Play: ... <note>"); VGC_PUBLIC_REASONING=0 sends the neutral
+# PUBLIC_SUMMARY instead. The model's private thinking is never sent.
 PUBLIC_SUMMARY = "Move submitted."
 PUBLIC_REASONING_ENV = "VGC_PUBLIC_REASONING"
+PUBLIC_REASONING_OFF = ("0", "false", "no", "off")
 
 MIN_BRING_ATTACKERS = 3
 RECENT_TURNS = 3  # turns of history in each battle prompt
-DRAFT_CARDS_SHOWN = 12
-_DRAFT_HIDDEN = ("draft_points", "usage_pct", "tier")  # usage anchors kept out of the draft prompt
+# A veto may only pick a line within this much of the code's pick (damage
+# scale). Match 4e60a5a2, turn 1: a veto 121 points down sent Thunder Wave
+# into a Protect.
+VETO_MARGIN = 40.0
 
 
 class VGCDraftStrategist:
@@ -79,7 +89,7 @@ class VGCDraftStrategist:
     ) -> None:
         self._provider = provider
         self._log = log
-        self._public_reasoning = str(os.environ.get(PUBLIC_REASONING_ENV, "")).strip().lower() in ("1", "true", "yes", "on")
+        self._public_reasoning = str(os.environ.get(PUBLIC_REASONING_ENV, "")).strip().lower() not in PUBLIC_REASONING_OFF
         self._rng = rng or random.Random()  # unseeded: used for the opening team-plan choice
         self._clock = clock
         self._matchlog = MatchLog(log, log_dir)
@@ -90,7 +100,9 @@ class VGCDraftStrategist:
         self._table_checked = False
         # Late-bound so the reference table can be swapped mid-match.
         self._moves = MoveTracker(
-            known_moves=lambda s: self._meta.common_moves(s), offense=lambda s: self._meta.offense(s)
+            known_moves=lambda s: self._meta.common_moves(s), offense=lambda s: self._meta.offense(s),
+            exact_moves=lambda s: (self._meta.card_set(s) or {}).get("moves"),
+            ko_threats=self._ko_threats,
         )
         self._draft_plan = ""  # the model's one-line team plan, carried pick to pick
         self._draft_target: dict = {}
@@ -98,6 +110,11 @@ class VGCDraftStrategist:
         self._recent: collections.deque = collections.deque(maxlen=RECENT_TURNS)
         self._turn_rules: rules.TurnRules | None = None
         self._turn_odds: dict[str, dict] = {}
+        self._line_flags: list[list[str]] = []  # principle flags of the last ranked lines, in order
+        self._offered: list | None = None  # what the last final call showed the strategist
+        self._board_now: dict | None = None  # this decision's exact board, for the log
+        self._brought: list[str] = []  # species ids of the four we brought
+        self._in_range: set[str] = set()  # foes one of our attacks likely KOs this turn
         # What happened between decisions (no battle log is sent): the last
         # snapshot, the last full turn's prediction, and this decision's report.
         self._before: dict | None = None
@@ -109,10 +126,13 @@ class VGCDraftStrategist:
         # Book player or one who plays around our reads? Learned from its Protects.
         self._style = OpponentStyle()
         self._opponent_id: str | None = None
+        self._preview_opponent: list[str] = []  # their six at Team Preview
+        self._draft_reasons: list[dict] = []  # why each of our picks was made (pick_priority's rules)
         self._turn = 0
         self.model_calls = 0
         self._last_attempts, self._last_seconds, self._last_reasoning = 0, 0.0, None
         self._opponent_seen: list[str] = []
+        self._opponent_names: list[str] = []  # their display names, from the seat's assignment
         self._agent_id: str | None = None
         if provider is None:
             self._log(f"[vgc] {NO_CREDENTIALS}")
@@ -138,6 +158,7 @@ class VGCDraftStrategist:
         if not state.legal_actions:
             raise act.TemplateError("choose_action was called with no legal actions")
         self._matchlog.name_match(context.session_id, context.seat_position, context.game_type)
+        self._opponent_names = [str(n) for n in getattr(context, "opponents", ()) or () if n] or self._opponent_names
         self._last_attempts, self._last_seconds, self._last_reasoning = 0, 0.0, None
         first = state.legal_actions[0]
         if first.action_id == "submit_team":
@@ -201,28 +222,54 @@ class VGCDraftStrategist:
             return (spare, fit.get(pair[1], {}).get("total", 0.0))
 
         offered.sort(key=value, reverse=True)
-        fallback = offered[0][0]
-        if self._provider is None:
-            return self._fallback(fallback, "No model configured: took the best-fitting card.", turn=turn, phase=state.phase, kind="draft_pick")
+        # The pick: (1) a must pick, (2) a proven partner of our first pick,
+        # (3) the strongest card, nudged by team fit. No model call: fast on the
+        # 15-second clock, and the same board always gets the same pick.
+        legal = [pair for pair in offered if value(pair)[0]]  # never a second restricted / Mega
+        by_species = {}
+        for action, card_id in legal or offered:
+            species = _species(cards.get(card_id))
+            if species and species not in by_species:
+                by_species[species] = (action, card_id)
+        pick = pick_priority.choose(
+            list(by_species), mine, self._meta,
+            fit={s: fit.get(cid, {}).get("total", 0.0) for s, (_, cid) in by_species.items()},
+            cards={s: cards.get(cid) or {} for s, (_, cid) in by_species.items()},
+            theirs=theirs,
+        )
+        if pick is None:
+            return self._fallback(offered[0][0], "No card could be ranked; took the best-fitting card.", turn=turn,
+                                  phase=state.phase, kind="draft_pick")
+        chosen = by_species[pick.species][0]
+        self._draft_reasons.append({"pick": observation.get("pick_number"), "species": pick.species, "rule": pick.rule,
+                                    "reason": pick.reason})
+        self._draft_plan = self._draft_summary()
+        return self._record(chosen, f"{pick.species}: {pick.reason}", turn=turn, phase=state.phase, kind="draft_pick")
 
-        offered = offered[:DRAFT_CARDS_SHOWN]
-        decision = decisions.draft_decision(
-            [action.action_id for action, _ in offered],
-            [{**self._describe_card(action, card_id, cards), "fit": fit.get(card_id)} for action, card_id in offered],
-        ).with_prompt({
-            "your_roster_so_far": mine,
-            "opponent_roster_so_far": theirs,
-            "draft_target": self._draft_target or "(no team plan fits this board)",
-            "opponent_playstyle": styles or "(not readable yet)",
-            "your_team_plan": self._draft_plan or "(first pick: choose the win condition to build around)",
-        })
-        answer = self._ask(decision, state, context, DRAFT_SECONDS)
-        chosen = next((a for a, _ in offered if answer and a.action_id == answer.get("action_id")), None)
-        if chosen is None:
-            reason = "Out of time on the draft clock" if answer is None else "The model named a card not on the board"
-            return self._fallback(fallback, f"{reason}; took the best-fitting card.", turn=turn, phase=state.phase, kind="draft_pick")
-        self._draft_plan = str(answer.get("team_plan") or self._draft_plan).strip()[:SUMMARY_LIMIT]
-        return self._record(chosen, _summary(answer), turn=turn, phase=state.phase, kind="draft_pick")
+    def _draft_summary(self) -> str:
+        """Our draft in a few lines: must picks, partner cores, what we build toward."""
+        species = [r["species"] for r in self._draft_reasons]
+        musts = [r["species"] for r in self._draft_reasons if r["rule"] == "must pick"]
+        cores = []
+        for i, a in enumerate(species):
+            for b in species[i + 1:]:
+                record = pick_priority.complements(a, b) or pick_priority.complements(b, a)
+                if record:
+                    cores.append(f"{a} + {b} ({record[0]:.1f}% together over {record[1]:,} games)")
+        target = (self._draft_target or {}).get("name") if isinstance(self._draft_target, dict) else None
+        parts = []
+        if musts:
+            parts.append("must picks: " + ", ".join(musts))
+        if cores:
+            parts.append("proven pairs: " + "; ".join(cores))
+        if target:
+            parts.append(f"building toward: {target}")
+        return " | ".join(parts)[:SUMMARY_LIMIT * 2]
+
+    def draft_strategy(self) -> dict:
+        """What the draft was trying to do, for Team Preview and every battle turn."""
+        return {"summary": self._draft_summary() or "(no draft reasoning recorded)",
+                "picks": [f"{r['species']} - {r['rule']}: {r['reason']}" for r in self._draft_reasons]}
 
     def _check_table(self, names: list[str]) -> None:
         """Once per match, use the reference table matching the format the
@@ -245,21 +292,16 @@ class VGCDraftStrategist:
             roles[role] = True
         return roles
 
-    def _describe_card(self, action: LegalAction, card_id: str | None, cards: dict) -> dict:
-        card = dict(cards.get(card_id) or {})
-        card["action_id"] = action.action_id
-        card["roles"] = [k for k, v in self._roles(_species(card), card.get("moves")).items() if v]
-        reference = self._meta.brief(_species(card))
-        if reference:
-            card["reference"] = {k: v for k, v in reference.items() if k not in _DRAFT_HIDDEN}
-        return card
-
     # -- team preview: one call, plan + lineup -------------------------------------------
 
     def _team_preview(self, action: LegalAction, state: GameState, context: DecisionContext):
         roster = act.parse_lineup(action)
         observation = _observation(state)
         self._meet_opponent(observation, context)
+        self._preview_opponent = [
+            e.get("species") or e.get("name") for e in observation.get("opponent_roster") or []
+            if isinstance(e, dict) and (e.get("species") or e.get("name"))
+        ]
         # Both full rosters are shown here; any sets they carry are exact.
         self._cards.remember(observation.get("your_roster"))
         self._cards.remember(observation.get("opponent_roster"))
@@ -283,6 +325,7 @@ class VGCDraftStrategist:
             [self._team_entry(s, opponent, own=False) for s in opponent],
             self._lineup_rules_text(),
         ).with_prompt({
+            "our_draft_strategy": self.draft_strategy(),
             "our_draft_plan": self._draft_target or "(none recorded)",
             "their_playstyle_read": archetypes.infer_playstyle(opponent, self._meta),
         })
@@ -333,6 +376,8 @@ class VGCDraftStrategist:
             "bring a Tailwind or Trick Room setter if the roster has one",
             "do not lead two Pokémon where one's spread move (Earthquake, Surf...) hits the other",
             "at most one restricted legendary or Mega in the four",
+            "do not bring two Pokémon 4x weak, or three weak, to an attack type their team carries",
+            "do not bring two Pokémon whose shared STAB type half their team resists",
         ]
 
     def _lineup_problems(self, roster: list[str], bring: list[str], leads: list[str]) -> list[str]:
@@ -353,7 +398,49 @@ class VGCDraftStrategist:
             problems.append(clash)
         if len(self._meta.restricted_in(bring)) > 1:
             problems.append("more than one restricted legendary or Mega")
+        stacked = self._stacked_weakness(bring)
+        # Only when some four from the roster avoids it: never rule out every lineup.
+        if stacked and any(not self._stacked_weakness(list(four)) for four in itertools.combinations(roster, 4)):
+            problems.append(stacked)
+        walled = self._stacked_attack(bring)
+        if walled and any(not self._stacked_attack(list(four)) for four in itertools.combinations(roster, 4)):
+            problems.append(walled)
         return problems
+
+    def _stacked_attack(self, bring: list[str]) -> str | None:
+        """Two or more of ours share a STAB type that at least half their team
+        resists or is immune to. Match ead979d8: Dondozo and Basculegion (Water)
+        into Archaludon, Rillaboom and Amoonguss - their Water moves were
+        withheld as resisted, leaving Earthquake and Aqua Jet."""
+        theirs = [[t.upper() for t in self._meta.species_types(s)] for s in self._preview_opponent]
+        theirs = [t for t in theirs if t]
+        if not theirs:
+            return None
+        sharing: dict[str, list[str]] = {}
+        for species in bring:
+            for attack in {t.upper() for t in self._meta.species_types(species)}:
+                sharing.setdefault(attack, []).append(species)
+        for attack, users in sorted(sharing.items()):
+            if len(users) < 2:
+                continue
+            resist = sum(1 for types in theirs if effectiveness(attack, types) < 1)
+            if resist * 2 >= len(theirs):
+                return (f"{', '.join(users)} share {attack.title()} attacks, which {resist} of their "
+                        f"{len(theirs)} resist")
+        return None
+
+    def _stacked_weakness(self, bring: list[str]) -> str | None:
+        """An attack type their team carries that hits two of ours 4x, or three 2x+.
+        Match 45d8b07d brought Salamence and Garchomp (both 4x) into Iron Bundle's Freeze-Dry."""
+        their_attacks = draft.attack_types(self._preview_opponent, self._meta)
+        for attack in sorted(their_attacks):
+            hits = {s: effectiveness(attack, [t.upper() for t in self._meta.species_types(s)]) for s in bring}
+            quad = [s for s, x in hits.items() if x >= 4]
+            weak = [s for s, x in hits.items() if x > 1]
+            if len(quad) >= 2 or len(weak) >= 3:
+                names = ", ".join(f"{s} ({hits[s]:g}x)" for s in weak)
+                return f"stacks a weakness to {attack.title()}, which their team can hit: {names}"
+        return None
 
     def _lead_clash(self, leads: list[str]) -> str | None:
         """A lead whose spread move (Earthquake, Surf...) would hit the other lead."""
@@ -399,7 +486,8 @@ class VGCDraftStrategist:
             if not self._lineup_problems(roster, list(four), self._leads_for(list(four)))
         ]
         if fitting:
-            return max(fitting, key=lambda four: sum(self._meta.draft_points(s) or 0 for s in four))
+            # Keep the draft's proven pairs together, then the strongest four.
+            return max(fitting, key=lambda four: (_proven_pairs(four), sum(self._meta.draft_points(s) or 0 for s in four)))
         ranked = sorted(roster, key=lambda s: -(self._meta.draft_points(s) or 0))
         bring = [s for s in ranked if not self._meta.is_restricted(s)][:4]
         return bring + [s for s in ranked if s not in bring][: 4 - len(bring)]
@@ -409,8 +497,10 @@ class VGCDraftStrategist:
     def _doubles_turn(self, action: LegalAction, state: GameState, context: DecisionContext):
         self._turn += 1
         turn = f"Turn {self._turn}"
+        started = self._clock()  # the read and the final call share one budget
         slots = act.parse_doubles(action)
         observation = _observation(state)
+        self._board_now = _safely(lambda: _board_detail(observation, self._brought), None)
         self._remember_opponent(observation)
 
         # 1. Rules: what cannot work or would be a blunder is withheld/rejected.
@@ -419,10 +509,14 @@ class VGCDraftStrategist:
         self._observe(observation)
         if self._recent and self._moves.protected_last_turn:
             self._recent[-1]["they_protected"] = self._moves.protected_last_turn
-        self._style.resolve(self._happened)  # what last turn's Protect choices say about them
-        self._turn_odds = self._styled_odds(observation, self._protect_odds(observation))
+        self._style.resolve(self._happened, self._turn - 1)  # what last turn's Protect/switch choices say about them
+        self._turn_odds = self._protect_odds(observation)
+        self._watch_style(observation, self._turn_odds)
         calc = lookahead.Calculator(observation, self._meta)
         self._calc = calc
+        self._in_range = _safely(lambda: self._ko_range(turn_rules, observation, calc), set())
+        if any(o.get("type") == "move" for slot in slots for o in slot.options):
+            self._style.watch_ko(self._in_range)  # what they do with these is scored next turn
         ours = _active_species(observation.get("active_pokemon"))
         foes = _active_species(observation.get("opponent_active_pokemon"))
 
@@ -435,7 +529,8 @@ class VGCDraftStrategist:
             return self._play(fallback, turn, state, guess, "code", guess, "", fallback_reason=f"{reason}: played the best answer to the code's prediction." if self._provider is None else None)
 
         # 2b. The model reads the opponent; its prediction wins when it is usable.
-        decision = decisions.predict_decision(foes, ours, self._prediction_facts(observation, calc, guess))
+        facts = self._prediction_facts(observation, calc, guess)
+        decision = decisions.predict_decision(foes, ours, facts)
         asked = self._ask(decision, state, context, DECISION_SECONDS,
                           parse=lambda answer: predict.from_model(answer, foes, ours))
         if asked is None:
@@ -443,10 +538,84 @@ class VGCDraftStrategist:
                               fallback_reason="No usable model prediction in time; played the best answer to the code's prediction.")
         answer, from_model = asked
         prediction = {**guess, **from_model}  # any foe the model skipped keeps the code's guess
-        # 3. Our best legal answer to that prediction.
-        line = self._answer(turn_rules, observation, calc, prediction, ours, state)
-        return self._play(line, turn, state, prediction, "model", guess, str(answer.get("state_summary") or ""),
-                          summary=_summary(answer))
+        # 3. Our best legal answers to that prediction, ranked by code.
+        line = self._answer(turn_rules, observation, calc, prediction, ours, state, base=guess)
+        state_summary = str(answer.get("state_summary") or "")
+        # 4. The strategist makes the final call: play the code's pick or veto it.
+        played, review = self._review(line, prediction, state_summary, facts, state, context, started)
+        return self._play(line, turn, state, prediction, "model", guess, state_summary,
+                          summary=_summary(answer), played=played, review=review)
+
+    def _review(self, ranked: list, prediction: dict, state_summary: str, facts: dict,
+                state: GameState, context: DecisionContext, started: float) -> tuple[int, dict | None]:
+        """The model plays ranked[0] or vetoes it for another ranked line.
+
+        Every option already passed the hard rules, so a veto can never send
+        a blocked move (a second Protect in a row, a used-up Fake Out). Lines
+        within VETO_MARGIN of the code's pick are offered, plus - when the
+        code's pick breaks a decision principle - the best line that breaks
+        none. No answer in the time left: the code's pick stands.
+        """
+        self._offered = None
+        offered = [i for i, line in enumerate(ranked) if line[0] >= ranked[0][0] - VETO_MARGIN]
+        flags = self._line_flags if len(self._line_flags) == len(ranked) else [[] for _ in ranked]
+        if flags[0]:
+            # The code's pick breaks a principle: the best line that breaks none
+            # is offered too, however far down it ranks.
+            clean = next((i for i in range(len(ranked)) if not flags[i]), None)
+            if clean is not None and clean not in offered:
+                offered.append(clean)
+        if len(offered) < 2:
+            return 0, None  # nothing close enough to veto into
+        read = (self._last_attempts, self._last_seconds, self._last_reasoning)
+        slots = self._turn_rules.slots if self._turn_rules else []
+        options = [{"option": number, "value": ranked[i][0], "line": _name_payload(ranked[i][1], slots),
+                    "breaks_principles": flags[i] or "none"}
+                   for number, i in enumerate(offered, start=1)]
+        self._offered = options
+        decision = decisions.review_decision(options, {
+            "your_read": {"state_summary": state_summary, "prediction": prediction},
+            "our_move_history": self._moves.snapshot(self._turn_rules.per_slot)["ours"] if self._turn_rules else {},
+            **{k: facts[k] for k in ("our_actives", "their_actives", "their_threats", "our_threats", "move_order",
+                                     "their_possible_switch_ins", "game_plan", "recent_turns")},
+        })
+
+        def parse(answer: dict) -> int:
+            number = int(answer.get("play_option") or 0)
+            if answer.get("verdict") == "play":
+                chosen = 0
+            elif not 2 <= number <= len(offered):
+                raise act.InvalidAnswer(f"a veto must name another option (2-{len(offered)}), got {number}")
+            else:
+                chosen = offered[number - 1]
+            # Yuriko games, turn 7: "Draco Meteor secures the Porygon2 kill" for an
+            # option that sent Draco Meteor into Archaludon. The restated line must match.
+            said = str(answer.get("chosen_line") or "")
+            missing = _line_mismatch(said, ranked[chosen][1], slots)
+            if said and missing:
+                raise act.InvalidAnswer(
+                    f"option {offered.index(chosen) + 1} is '{_name_payload(ranked[chosen][1], slots)}', but chosen_line "
+                    f"'{said}' does not name {missing}. Re-read the options.")
+            return chosen
+
+        asked = self._ask(decision, state, context, DECISION_SECONDS - (self._clock() - started), parse=parse)
+        attempts, _, reasoning = self._last_attempts, self._last_seconds, self._last_reasoning
+        self._last_attempts = read[0] + attempts
+        self._last_seconds = self._clock() - started
+        if reasoning and read[2] and reasoning != read[2]:
+            self._last_reasoning = f"Read: {read[2]}\n\nFinal call: {reasoning}"
+        else:
+            self._last_reasoning = read[2] or reasoning
+        if asked is None:
+            self._log("[vgc] no final call from the strategist in time; played the code's pick")
+            return 0, None
+        answer, played = asked
+        review = {"verdict": "veto" if played else "play", "play_option": offered.index(played) + 1,
+                  "why": str(answer.get("why") or "")}
+        if played:
+            self._log(f"[vgc] strategist vetoed {_name_payload(ranked[0][1], slots)} for "
+                      f"{_name_payload(ranked[played][1], slots)}: {review['why']}")
+        return played, review
 
     def _observe(self, observation: dict) -> None:
         """Compare with the previous decision; check the last full turn's read."""
@@ -460,28 +629,76 @@ class VGCDraftStrategist:
             self._log(f"[vgc] last turn could not be reconstructed [{type(exc).__name__}]: {exc}")
             self._happened = None
 
-    def _answer(self, turn_rules: rules.TurnRules, observation: dict, calc, prediction: dict, ours: list[str], state: GameState):
-        """Step 3: ranked legal answers to ``prediction``; the first is played."""
+    def _answer(self, turn_rules: rules.TurnRules, observation: dict, calc, prediction: dict, ours: list[str],
+                state: GameState, *, base: dict | None = None):
+        """Step 3: ranked legal answers; the first is the code's pick.
+
+        Principles first, reads next: with ``base`` (the code's rule-based
+        guess) the model's read is blended with it (predict.blend), and every
+        line pays principles.Judge's price for breaking a decision principle.
+        """
+        self._line_flags = []
         try:
             expected = predict.expectations(prediction, ours)
-            ranked = lookahead.ranked_lines(turn_rules, observation, calc, expected)
+            if base is not None and base is not prediction:
+                expected = predict.blend(expected, predict.expectations(base, ours))
+            predict.no_repeat_protect(expected, self._moves.protected_last_turn)
+            predict.escape(expected, self._in_range,
+                           {f: (self._turn_odds.get(f) or {}).get("likelihood", 0) > 0 for f in self._in_range},
+                           self._style.ko_escape_rate, bool(self._their_bench(observation)))
+            self._style.add_switching(expected)  # this opponent switches this often
+            judge = principles.Judge(turn_rules.slots, observation, calc, expected,
+                                     preserve=(self._game_plan or {}).get("preserve") or (),
+                                     effects=self._effects_up(observation), just_in=self._moves.just_in())
+            ranked = lookahead.ranked_lines(turn_rules, observation, calc, expected, bench=self._their_bench(observation),
+                                            cost=lambda payload: judge.judge(payload)[0])
             if ranked:
-                return [(value, turn_rules.check(answer)) for value, answer in ranked]
+                lines = [(value, turn_rules.check(answer)) for value, answer in ranked]
+                self._line_flags = [judge.judge(payload)[1] for _, payload in lines]
+                return lines
         except Exception as exc:  # noqa: BLE001 - never cost the move
             self._log(f"[vgc] move selection failed [{type(exc).__name__}]: {exc}")
         return [(0.0, act.guaranteed_action(state))]
 
+    def _ko_range(self, turn_rules, observation: dict, calc) -> set[str]:
+        """Their actives one of our attacks likely KOs this turn."""
+        judge = principles.Judge(turn_rules.slots, observation, calc, {})
+        found: set[str] = set()
+        for slot in turn_rules.slots:
+            found |= judge._kos(slot)
+        return found
+
+    def _ko_threats(self, observation: dict) -> set[str]:
+        """Their actives whose best hit KOs one of ours this turn (for the opening Fake Out)."""
+        calc = lookahead.Calculator(observation, self._meta)
+        return {meta.species_id(foe) for foe, row in (calc.threats() or {}).items()
+                if any(hit.get("ko_this_turn_likely") for hit in row.values())}
+
+    def _effects_up(self, observation: dict) -> set[str]:
+        """Our side's and the field's effects now up: the server's, plus the move tracker's."""
+        shown = observed.field_state(observation) or {}
+        found = set(shown.get("ours") or []) | set(shown.get("field") or [])
+        return found | {m for m in ("tailwind", "reflect", "lightscreen", "auroraveil", "trickroom")
+                        if self._moves.effect_turns_left(m) > 0}
+
     def _play(self, ranked: list, turn: str, state: GameState, prediction: dict, source: str, guess: dict,
-              state_summary: str, *, summary: str = "", fallback_reason: str | None = None):
+              state_summary: str, *, summary: str = "", fallback_reason: str | None = None,
+              played: int = 0, review: dict | None = None):
         analysis = Analysis(
             turn=turn, state_summary=state_summary, prediction=prediction, source=source, code_guess=guess,
-            lines=[(value, _describe_payload(payload)) for value, payload in ranked],
+            lines=[(value, _describe_payload(payload) + _flag_text(self._line_flags, index))
+                   for index, (value, payload) in enumerate(ranked)], played=played, review=review,
+            offered=self._offered if source == "model" else None, board=self._board_now,
         )
-        summary = _turn_summary(prediction, ranked[0][1], summary or (fallback_reason or ""))
+        payload = ranked[played][1]
+        note = summary or (fallback_reason or "")
+        if review and review["verdict"] == "veto":
+            note = f"{note} Veto: {review['why']}".strip()
+        summary = _turn_summary(prediction, payload, note)
         slots = self._turn_rules.slots if self._turn_rules else []
         if any(o.get("type") == "move" for slot in slots for o in slot.options):
             self._last_prediction = prediction  # a full turn: check it against what happens
-        return self._record(ranked[0][1], summary, turn=turn, phase=state.phase,
+        return self._record(payload, summary, turn=turn, phase=state.phase,
                             kind="doubles_turn", analysis=analysis, fallback_reason=fallback_reason)
 
     def _prediction_facts(self, observation: dict, calc, guess: dict) -> dict:
@@ -508,12 +725,25 @@ class VGCDraftStrategist:
             "their_threats": _safely(calc.threats, {}),
             "our_threats": _safely(lambda: _our_threats(observation, calc), {}),
             "first_turn_on_field": self._moves.opponent_first_turn(),
-            "opponent_style": self._style.summary(),
-            "speeds": {n: self._meta.base_speed(n) for n in _active_species(observation.get("active_pokemon")) + theirs},
+            "opponent_switch_rate": self._style.summary()["switch_rate"],
+            "in_our_ko_range": sorted(self._in_range) or "none",
+            "ko_range_escape": self._style.summary()["ko_range_escape"],
+            "our_draft_strategy": self.draft_strategy()["summary"],
+            "their_possible_switch_ins": self._their_bench(observation),
+            "move_order": _safely(lambda: self._move_order(observation, calc), {}),
             "code_guess": guess,
             "game_plan": self._game_plan or "(none)",
             "recent_turns": list(self._recent),
         }
+
+    def _their_bench(self, observation: dict) -> list[str]:
+        """Their Pokemon that could switch in now: seen in battle (or, until all
+        four are seen, shown at Team Preview), not on the field, not fainted."""
+        active = {meta.species_id(s) for s in _active_species(observation.get("opponent_active_pokemon"))}
+        fainted = {k for k, gone in ((self._before or {}).get("their_fainted") or {}).items() if gone}
+        seen = [meta.species_id(s) for s in self._opponent_seen]
+        pool = seen + ([meta.species_id(s) for s in self._preview_opponent] if len(set(seen)) < 4 else [])
+        return [s for s in dict.fromkeys(pool) if s not in active and s not in fainted]
 
     def _meet_opponent(self, observation: dict, context: DecisionContext) -> None:
         """Once: who we play (the other agent in ``rosters``), and what we learned about them before."""
@@ -526,8 +756,10 @@ class VGCDraftStrategist:
             self._opponent_id = str(others[0])
             self._style = OpponentStyle.for_opponent(self._opponent_id)
 
-    def _styled_odds(self, observation: dict, odds: dict[str, dict]) -> dict[str, dict]:
-        """The by-the-book Protect odds re-read through this opponent's style."""
+    def _watch_style(self, observation: dict, odds: dict[str, dict]) -> None:
+        """Log how this opponent uses Protect. A record only: the odds stay
+        protect.py's one table (match 4e60a5a2: the style blend saw its
+        Protects but not its attacks, and over-predicted Protect all game)."""
         try:
             carries = {}
             for entry in observation.get("opponent_active_pokemon") or []:
@@ -536,16 +768,60 @@ class VGCDraftStrategist:
                     known = {meta.species_id(m) for m in self._meta.common_moves(name)} | set(_revealed(entry))
                     carries[meta.species_id(name)] = bool(known & predict.PROTECT_CHAIN)
             chained = {foe: True for foe in self._moves.protected_last_turn}
-            return self._style.open(odds, carries, chained, self._turn)
-        except Exception as exc:  # noqa: BLE001 - advice only; never cost the move
+            self._style.open(odds, carries, chained, self._turn)
+        except Exception as exc:  # noqa: BLE001 - a record only; never cost the move
             self._log(f"[vgc] opponent style unavailable this turn [{type(exc).__name__}]: {exc}")
-            return odds
+
+    def _move_order(self, observation: dict, calc) -> dict:
+        """Who acts first this turn: priority brackets, then effective Speed
+        (Choice Scarf, boosts, Tailwind; reversed under Trick Room)."""
+        from .observed import field_state
+
+        shown = field_state(observation) or {"ours": [], "theirs": [], "field": []}
+        trick_room = "trickroom" in shown["field"]
+        first_turn = self._moves.opponent_first_turn()
+        speeds, priority = {}, {}
+        for side, key in (("active_pokemon", "ours"), ("opponent_active_pokemon", "theirs")):
+            for entry in observation.get(side) or []:
+                if not isinstance(entry, dict) or not (entry.get("species") or entry.get("name")):
+                    continue
+                name = entry.get("species") or entry.get("name")
+                speed = calc.speed(entry)
+                if speed:
+                    speeds[name] = round(speed * (2 if "tailwind" in shown[key] else 1))
+                moves = []
+                for move_name in self._meta.common_moves(name) or []:
+                    move = movelist.lookup(move_name)
+                    if not move:
+                        continue
+                    bracket = _priority_bracket(move, name, entry, self._meta, calc)
+                    if bracket > 0:
+                        note = ""
+                        if meta.species_id(move_name) in ("fakeout", "firstimpression"):
+                            live = first_turn.get(meta.species_id(name)) if key == "theirs" else None
+                            note = " (first turn out only" + ("; live now)" if live else ")")
+                        elif meta.species_id(move_name) in ("suckerpunch", "thunderclap"):
+                            note = " (fails unless the target attacks)"
+                        moves.append(f"{move['name']} +{bracket}{note}")
+                if moves:
+                    priority[name] = moves
+        order = sorted(speeds, key=lambda n: speeds[n], reverse=not trick_room)
+        return {
+            "rule": "higher priority bracket first (+4 Protect, +3 Fake Out / Quick Guard, +2 Extreme Speed, "
+                    "+1 Sucker Punch / Aqua Jet / Prankster status), then faster first"
+                    + (" - Trick Room is up: SLOWER first within a bracket" if trick_room else ""),
+            "speed_order_within_a_bracket": order,
+            "effective_speeds": speeds,
+            "priority_moves": priority,
+        }
 
     def _protect_odds(self, observation: dict) -> dict[str, dict]:
         try:
             return protect.odds(
                 observation, first_turn=self._moves.opponent_first_turn(),
                 common_moves=self._meta.common_moves, card_set=self._meta.card_set,
+                protected_last_turn=set(self._moves.protected_last_turn),
+                first_turn_rate=self._style.first_turn_rate,
             )
         except Exception as exc:  # noqa: BLE001 - advice only; never cost the move
             self._log(f"[vgc] protect odds unavailable this turn [{type(exc).__name__}]: {exc}")
@@ -572,7 +848,8 @@ class VGCDraftStrategist:
         """End-of-match summary; the outcome comes only from the server."""
         self._style.save(self._opponent_id)
         return self._matchlog.summarize(outcome=self._outcome_from(state), opponent=self._opponent_seen, note=note,
-                                        ending=_ending(state), style={**self._style.summary(), "notes": self._style.notes,
+                                        opponent_names=self._opponent_names,
+                                        ending=_ending(state, self._before), style={**self._style.summary(), "notes": self._style.notes,
                                                                       "opponent_id": self._opponent_id})
 
     def _outcome_from(self, state: GameState | None) -> str | None:
@@ -632,6 +909,8 @@ class VGCDraftStrategist:
                 analysis: Analysis | None = None, fallback_reason: str | None = None):
         """Audit one decision, then hand it to the runtime with a neutral public line."""
         move_state = None
+        if kind == "select_lineup" and isinstance(payload, dict):
+            self._brought = [meta.species_id(s) for s in payload.get("bring") or []]
         if kind == "doubles_turn":
             self._our_switches = _switched_out(payload, self._turn_rules)
             self._our_moves = _moves_used(payload, self._turn_rules)
@@ -701,6 +980,103 @@ def _describe_payload(payload: object) -> str:
             parts.append(f"slot {number}: {choice.get('move_id')}" + (f" -> {target}" if target is not None else ""))
         elif choice.get("type") == "switch":
             parts.append(f"slot {number}: switch to {choice.get('species')}")
+    return "; ".join(parts) or "pass"
+
+
+def _board_detail(observation: dict, brought: list[str] | None = None) -> dict:
+    """Every active's exact HP, boosts, status and item, and our bench's HP, so a
+    turn can be replayed (match 41d776ed, turn 12 could not be)."""
+    def row(entry: dict) -> dict:
+        found = {"hp": round(lookahead._fraction(entry), 3)}
+        if entry.get("current_hp") is not None and entry.get("max_hp"):
+            found["hp_exact"] = f"{entry['current_hp']}/{entry['max_hp']}"
+        for key in ("boosts", "status", "item", "ability"):
+            if entry.get(key):
+                found[key] = entry[key]
+        return found
+
+    def side(entries) -> dict:
+        return {e.get("species") or e.get("name"): row(e) for e in entries or [] if isinstance(e, dict)
+                and (e.get("species") or e.get("name"))}
+
+    team = observation.get("team")
+    bench = team.values() if isinstance(team, dict) else team if isinstance(team, list) else []
+    board = {"ours": side(observation.get("active_pokemon")), "theirs": side(observation.get("opponent_active_pokemon"))}
+    names = {meta.species_id(n) for n in board["ours"]}
+    wanted = {meta.species_id(s) for s in brought or []}
+    benched = {e.get("species") or e.get("name"): round(lookahead._fraction(e), 3) for e in bench
+               if isinstance(e, dict) and (e.get("species") or e.get("name"))
+               and meta.species_id(e.get("species") or e.get("name")) not in names
+               and (not wanted or meta.species_id(e.get("species") or e.get("name")) in wanted)}
+    if benched:
+        board["our_bench_hp"] = benched
+    fields = observed.field_state(observation)
+    if fields:
+        board["field"] = fields
+    return board
+
+
+def _line_mismatch(said: str, payload: object, slots: list) -> str:
+    """What the restated line leaves out of the option's moves, targets and
+    switch-ins, slot by slot ('' when it names them all). Each slot is read
+    from the part of the line that names its Pokemon (parts split on ';'),
+    else the part in its position."""
+    parts = [part for part in str(said).split(";") if part.strip()] or [str(said)]
+    missing = []
+    for position, slot in enumerate(slots):
+        choice = (payload or {}).get(f"slot_{slot.number}") if isinstance(payload, dict) else None
+        if not isinstance(choice, dict):
+            continue
+        active = slot.active.get("species") if isinstance(slot.active, dict) else slot.active
+        mine = [part for part in parts if active and meta.species_id(active) in meta.species_id(part)]
+        text = meta.species_id(mine[0] if mine else parts[min(position, len(parts) - 1)])
+        if choice.get("type") == "switch":
+            want = [str(choice.get("species") or "")]
+        elif choice.get("type") == "move":
+            move = movelist.lookup(choice.get("move_id"))
+            want = [move["name"] if move else str(choice.get("move_id"))]
+            target = choice.get("target")
+            if isinstance(target, int) and target > 0:
+                names = {e.get("target"): e.get("species") for o in slot.options for e in o.get("target_options") or []
+                         if isinstance(e, dict) and e.get("species")}
+                if names.get(target):
+                    want.append(str(names[target]))
+        else:
+            continue
+        missing += [w for w in want if w and meta.species_id(w) not in text]
+    return ", ".join(missing)
+
+
+def _flag_text(flags: list[list[str]], index: int) -> str:
+    """' [breaks: ...]' for a ranked line's principle flags, or ''."""
+    found = flags[index] if 0 <= index < len(flags) else []
+    return f" [breaks: {'; '.join(found)}]" if found else ""
+
+
+def _name_payload(payload: object, slots: list) -> str:
+    """'Dondozo: Wave Crash -> Gholdengo; Tornadus: Protect' - species by name, for the model."""
+    if not isinstance(payload, dict):
+        return str(payload)
+    parts = []
+    for slot in slots:
+        choice = payload.get(f"slot_{slot.number}") or {}
+        active = slot.active.get("species") or slot.active.get("name") if isinstance(slot.active, dict) else slot.active
+        who = str(active or f"slot {slot.number}")
+        if choice.get("type") == "move":
+            move = movelist.lookup(choice.get("move_id"))
+            text = f"{who}: {move['name'] if move else choice.get('move_id')}"
+            if move and move["power"] and move["target"] == "allAdjacentFoes":
+                text += " (hits both foes)"
+            elif move and move["power"] and move["target"] == "allAdjacent":
+                text += " (hits both foes and our partner)"
+            target = choice.get("target")
+            names = {e.get("target"): e.get("species") for o in slot.options for e in o.get("target_options") or []
+                     if isinstance(e, dict) and e.get("species")}
+            if isinstance(target, int) and target != 0:
+                text += f" -> {names.get(target) or ('foe' if target > 0 else 'ally')} {abs(target)}"
+            parts.append(text)
+        elif choice.get("type") == "switch":
+            parts.append(f"{who}: switch to {choice.get('species')}")
     return "; ".join(parts) or "pass"
 
 
@@ -774,9 +1150,11 @@ def _switched_out(payload: Any, turn_rules) -> set[str]:
     return found
 
 
-def _ending(state: GameState | None) -> dict | None:
+def _ending(state: GameState | None, last_seen: dict | None = None) -> dict | None:
     """How the match ended: the server's final_result (a KO, a forfeit, a
-    timeout...) and the HP left on the final board, when it shows one."""
+    timeout...) and the HP left on the final board, when it shows one; else
+    the board at our last decision (match 666b209d's log ended at a 72%
+    Porygon2 with no final board)."""
     if state is None:
         return None
     found = {}
@@ -789,7 +1167,32 @@ def _ending(state: GameState | None) -> dict | None:
             found["last_board"] = {side: {m: row["hp"] for m, row in board[side].items()} for side in ("ours", "theirs")}
     except Exception:  # noqa: BLE001 - a summary detail only
         pass
+    if "last_board" not in found and isinstance(last_seen, dict) and (last_seen.get("ours") or last_seen.get("theirs")):
+        found["board_at_our_last_decision"] = {side: {m: row.get("hp") for m, row in (last_seen.get(side) or {}).items()}
+                                               for side in ("ours", "theirs")}
     return found or None
+
+
+def _priority_bracket(move: dict, species: str, entry: dict, table, calc) -> int:
+    """A move's priority for this Pokemon: Prankster status +1, Gale Wings
+    Flying at full HP +1, Grassy Glide +1 in Grassy Terrain."""
+    from .lookahead import _fraction
+
+    value = move.get("priority") or 0
+    abilities = {meta.species_id(a) for a in calc._abilities(entry)} if calc else set()
+    if abilities == {"prankster"} and move.get("category") == "STATUS":
+        value += 1
+    if abilities == {"galewings"} and move.get("type") == "FLYING" and _fraction(entry) >= 0.995:
+        value += 1
+    if meta.species_id(move.get("name")) == "grassyglide" and getattr(getattr(calc, "_field", None), "terrain", "") == "grassy":
+        value += 1
+    return value
+
+
+def _proven_pairs(four: list[str]) -> int:
+    """How many proven partner pairs (pick_priority.complements) are in this four."""
+    return sum(1 for i, a in enumerate(four) for b in four[i + 1:]
+               if pick_priority.complements(a, b) or pick_priority.complements(b, a))
 
 
 def _revealed(entry: dict) -> list[str]:

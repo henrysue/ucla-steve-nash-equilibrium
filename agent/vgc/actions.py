@@ -106,8 +106,8 @@ def build_doubles(slots: list[Slot], answer: object, rules: list[SlotRules] | No
     """
     if not isinstance(answer, dict):
         raise InvalidAnswer(f"a doubles turn answer must be an object with slot_0 and slot_1, got {answer!r}")
-    slot_0 = _build_slot(slots[0], answer.get("slot_0"), _blocked(rules, 0))
-    slot_1 = _build_slot(slots[1], answer.get("slot_1"), _blocked(rules, 1))
+    slot_0 = _build_slot(slots[0], answer.get("slot_0"), _blocked(rules, 0), _aimed(rules, 0))
+    slot_1 = _build_slot(slots[1], answer.get("slot_1"), _blocked(rules, 1), _aimed(rules, 1))
     if slot_0["type"] == slot_1["type"] == "switch" and slot_0["species"] == slot_1["species"]:
         raise InvalidAnswer(f"both slots cannot switch in the same Pokémon ({slot_0['species']})")
     if slot_0["type"] == slot_1["type"] == "pass" and not all(
@@ -121,7 +121,12 @@ def _blocked(rules: list[SlotRules] | None, number: int) -> dict[int, str]:
     return rules[number].blocked if rules else {}
 
 
-def _build_slot(slot: Slot, answer: object, blocked: dict[int, str] | None = None) -> dict:
+def _aimed(rules: list[SlotRules] | None, number: int) -> dict[int, tuple[int, ...]]:
+    return getattr(rules[number], "targets", {}) if rules else {}
+
+
+def _build_slot(slot: Slot, answer: object, blocked: dict[int, str] | None = None,
+                aimed: dict[int, tuple[int, ...]] | None = None) -> dict:
     if not isinstance(answer, dict):
         raise InvalidAnswer(f"slot_{slot.number} must be an object with 'option' and 'target'")
     index, target = answer.get("option"), answer.get("target")
@@ -154,6 +159,8 @@ def _build_slot(slot: Slot, answer: object, blocked: dict[int, str] | None = Non
             raise InvalidAnswer(
                 f"slot_{slot.number}: target {target!r} is not legal for {move_id}; choose one of {targets}"
             )
+        if aimed and index in aimed and target not in aimed[index]:
+            raise InvalidAnswer(f"slot_{slot.number}: {move_id} may only target {list(aimed[index])} this turn")
         choice["target"] = target
     return choice
 

@@ -46,7 +46,8 @@ def test_turn_one_of_8a882a3f_attacks_instead_of_protecting():
     observation = _obs(["incineroar", "talonflame"], ["archaludon", "gyarados"])
     turn_rules, calc, expected = _setup(TURN_1, observation, READ, ["incineroar", "talonflame"])
     payload = turn_rules.check(lookahead.best_line(turn_rules, observation, calc, expected))
-    assert payload["slot_0"] == {"type": "move", "move_id": "fakeout", "target": 2}
+    # Opening turn: both foes may Protect, so Fake Out waits (match 4e60a5a2); Incineroar attacks.
+    assert payload["slot_0"]["move_id"] in ("knockoff", "flareblitz")
     assert payload["slot_1"]["move_id"] != "protect"
 
 

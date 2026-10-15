@@ -55,7 +55,7 @@ def test_a_lone_talonflame_finishes_the_nearly_dead_foe_instead_of_protecting():
     assert payload["slot_0"] == {"type": "move", "move_id": "bravebird", "target": 2}
 
 
-def test_a_second_protect_in_a_row_is_valued_at_its_one_in_three_chance():
+def test_a_second_protect_in_a_row_is_never_played():
     """Turns 3-4 (seat 1): Gyarados and Ting-Lu double-Protected twice in a row."""
     foes = [{"target": 1, "side": "opponent", "species": "landorustherian"},
             {"target": 2, "side": "opponent", "species": "fluttermane"}]
@@ -71,7 +71,7 @@ def test_a_second_protect_in_a_row_is_valued_at_its_one_in_three_chance():
                     "slot_1": {"type": "move", "move_id": "protect"}})
     turn_rules, payload = _best(action, observation, prediction, tracker)
     assert turn_rules.per_slot[0].protect_success == 1 / 3
-    assert not (payload["slot_0"]["move_id"] == "protect" and payload["slot_1"]["move_id"] == "protect")
+    assert payload["slot_0"].get("move_id") != "protect" and payload["slot_1"].get("move_id") != "protect"
 
 
 def test_a_choice_locked_move_every_foe_resists_is_switched_out_of():

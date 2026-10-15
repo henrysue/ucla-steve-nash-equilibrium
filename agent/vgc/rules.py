@@ -4,7 +4,7 @@ Everything that makes a move pointless or a blunder lives behind this one
 entry point, built fresh each turn:
 
 - from the move tracker (moverules.py, per-match history): Fake Out after
-  its user has moved, a third Protect in a row, Blood Moon twice in a row,
+  its user has moved, a second Protect in a row, Blood Moon twice in a row,
   and the opening-turn Fake Out lead;
 - from the move list (movelist.py, static move data): attacks every target
   is immune to, status moves every target ignores, plain attacks another of

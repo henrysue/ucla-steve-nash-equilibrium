@@ -83,6 +83,25 @@ def _stage(n: int) -> float:
     return (2 + n) / 2 if n >= 0 else 2 / (2 - n)
 
 
+def held_item(entry: dict, table) -> str:
+    """The item it holds now: what the server shows, "" once it is gone
+    (an Air Balloon popped, a berry eaten, Knock Off), else the draft card's
+    (or the table's usual) item while still unrevealed."""
+    if "item" in entry and isinstance(entry.get("item"), str) and not entry["item"].strip():
+        return ""
+    item = entry.get("item")
+    if not item or _id(item) in ("unknownitem", "unknown"):
+        return table.common_item(entry.get("species") or entry.get("name")) or ""
+    return str(item)
+
+
+def floats(entry: dict, table) -> bool:
+    """Immune to Ground: Levitate (when it is its only ability) or an Air Balloon still up."""
+    ability = entry.get("ability")
+    abilities = [ability] if isinstance(ability, str) and ability.strip() else table.abilities(entry.get("species") or entry.get("name"))
+    return abilities == ["Levitate"] or _id(held_item(entry, table)) == "airballoon"
+
+
 def _item_power(item: str, category: str, multiplier: float) -> float:
     item = _id(item)
     if item == "choiceband" and category == "PHYSICAL":
@@ -101,18 +120,108 @@ def _base_damage(power: float, attack: float, defense: float) -> float:
 
 
 class Calculator:
-    """Damage estimates for one decision, from the observation and the table."""
+    """Damage for one decision, from the observation and the table.
+
+    When both Pokemon are known draft cards (EVs, nature, item, ability),
+    damage is Showdown's exactly (showdown.py: all 16 rolls, verified against
+    Showdown's own calculator); otherwise it is the estimate below.
+    """
 
     def __init__(self, observation: dict, table) -> None:
         self._table = table
         self._ours = _by_species(observation.get("active_pokemon"))
         self._theirs = _by_species(observation.get("opponent_active_pokemon"))
+        self._field = _engine_field(observation, self._ours + self._theirs, table)
+        self._cache: dict = {}
 
     def damage(self, attacker: dict, defender: dict, move: dict, *, spread: bool = False) -> dict | None:
         """Expected and ranged damage as % of the defender's max HP, plus
-        turns to KO from its current HP; ``None`` when data is missing."""
+        turns to KO from its current HP; ``None`` when data is missing.
+        Exact (Showdown's rolls) when both sets are known, else estimated."""
+        exact = self._exact(attacker, defender, move, spread)
+        if exact is not None:
+            return exact
+        return self._estimate(attacker, defender, move, spread=spread)
+
+    def _battler(self, entry: dict):
+        """A showdown.Battler for a known set, or ``None``."""
+        from . import showdown
+
+        card = self._card(entry)
+        name = entry.get("species") or entry.get("name")
+        if not card or not isinstance(card.get("evs"), dict) or not card.get("nature") or not showdown.species(card["species"]):
+            return None
+        ability = entry.get("ability")
+        ability = ability if isinstance(ability, str) and ability.strip() and _id(ability) not in ("unknown", "unknownability") \
+            else card.get("ability", "")
+        types = entry.get("types") if isinstance(entry.get("types"), list) and entry.get("types") else None
+        boosts = {k: v for k, v in (entry.get("boosts") or {}).items() if isinstance(v, int) and not isinstance(v, bool)}
+        return showdown.Battler(card["species"], held_item(entry, self._table), ability, card.get("nature", ""),
+                                card.get("evs") or {}, card.get("ivs") or {}, boosts=boosts,
+                                status=_status(entry.get("status")), hp_fraction=_fraction(entry), types=types)
+
+    def _partner(self, entry: dict) -> dict | None:
+        """Who stands beside this Pokemon on its side of the field."""
+        name = _id(entry.get("species") or entry.get("name"))
+        for side in (self._ours, self._theirs):
+            names = [_id(e.get("species") or e.get("name")) for e in side]
+            if name in names:
+                return next((e for e in side if _id(e.get("species") or e.get("name")) != name and _fraction(e) > 0), None)
+        return None
+
+    def _partner_field(self, attacker: dict, defender: dict):
+        """The field, plus the partners' Battery / Power Spot (attacker) and Friend Guard (defender)."""
+        from dataclasses import replace
+
+        flags = {}
+        ally = self._partner(attacker)
+        if ally:
+            names = {_id(a) for a in self._abilities(ally)}
+            flags["battery"] = names == {"battery"}
+            flags["power_spot"] = names == {"powerspot"}
+        guard = self._partner(defender)
+        if guard:
+            flags["friend_guard"] = {_id(a) for a in self._abilities(guard)} == {"friendguard"}
+        return replace(self._field, **flags) if any(flags.values()) else self._field
+
+    def _exact(self, attacker: dict, defender: dict, move: dict, spread: bool) -> dict | None:
+        from . import showdown
+
+        move_id = _id(move.get("id") or move.get("move_id") or move.get("name"))
+        if not move_id or not showdown.Move.get(move_id):
+            return None
+        key = (_entry_key(attacker), _entry_key(defender), move_id, spread)
+        if key in self._cache:
+            return self._cache[key]
+        a, d = self._battler(attacker), self._battler(defender)
+        if a is None or d is None:
+            return None
+        rolls = _expected_rolls(a, d, move_id, self._partner_field(attacker, defender), spread)
+        if not rolls:
+            result = {"expected_pct": 0.0, "range_pct": [0.0, 0.0], "rolls_pct": [0.0] * 16, "turns_to_ko": None,
+                      "ko_this_turn_likely": False, "immune": True}
+        else:
+            pct = [100 * r / d.max_hp for r in rolls]
+            mid = sum(pct) / len(pct)
+            remaining = 100 * _fraction(defender)
+            result = {
+                "expected_pct": round(mid, 1),
+                "range_pct": [round(min(pct), 1), round(max(pct), 1)],
+                "rolls_pct": [round(x, 2) for x in pct],
+                "turns_to_ko": KO_CAP if mid <= 0 else min(KO_CAP, math.ceil(remaining / mid)),
+                "ko_this_turn_likely": mid >= remaining,
+                "ko_chance": sum(x >= remaining for x in pct) / len(pct),
+                "exact": True,
+            }
+        self._cache[key] = result
+        return result
+
+    def _estimate(self, attacker: dict, defender: dict, move: dict, *, spread: bool = False) -> dict | None:
+        """The estimate for a set we do not know: 252 EVs to attack, a range of bulk."""
         category = str(move.get("category") or "").upper()
         power = move.get("base_power") or 0
+        if _id(move.get("id") or move.get("move_id") or move.get("name")) in HP_SCALING and power:
+            power = max(1, int(150 * _fraction(attacker)))  # Eruption / Water Spout: power follows HP
         move_type = str(move.get("type") or "").upper()
         a_name, d_name = attacker.get("species") or attacker.get("name"), defender.get("species") or defender.get("name")
         a_base, d_base = self.base_stats(attacker), self.base_stats(defender)
@@ -121,6 +230,8 @@ class Calculator:
         a_types = _types(attacker, self._table)
         d_types = _types(defender, self._table)
         multiplier = effectiveness(move_type, d_types) if d_types else 1.0
+        if move_type == "GROUND" and floats(defender, self._table):
+            multiplier = 0.0  # Air Balloon / Levitate (match 0af0f5a5: Earthquake into Gholdengo's balloon)
         if multiplier == 0:
             return {"expected_pct": 0.0, "range_pct": [0.0, 0.0], "turns_to_ko": None, "ko_this_turn_likely": False, "immune": True}
 
@@ -137,11 +248,11 @@ class Calculator:
         modifier *= multiplier * (0.75 if spread else 1.0)
         if category == "PHYSICAL" and _id(attacker.get("status")) in ("brn", "burn"):
             modifier *= 0.5
-        modifier *= _item_power(attacker.get("item") or self._table.common_item(a_name), category, multiplier)
+        modifier *= _item_power(held_item(attacker, self._table), category, multiplier)
         modifier *= _ruin(self._abilities(attacker), self._abilities(defender), category)
         modifier *= expected_hits(move.get("id") or move.get("move_id") or "")
 
-        d_item = _id(defender.get("item") or self._table.common_item(d_name))
+        d_item = _id(held_item(defender, self._table))
         if RESIST_BERRIES.get(d_item) == move_type and (multiplier > 1 or move_type == "NORMAL"):
             modifier *= 0.5
         stage = _stage(_boost(defender, def_key))
@@ -216,9 +327,23 @@ class Calculator:
         if not base:
             return None
         value = self._stat(entry, base, "spe") or _stat(base["spe"], 252)
-        item = entry.get("item") or self._table.common_item(entry.get("species") or entry.get("name"))
+        item = held_item(entry, self._table)
         scarf = 1.5 if _id(item) == "choicescarf" else 1.0
-        return value * _stage(_boost(entry, "spe")) * scarf
+        return value * _stage(_boost(entry, "spe")) * scarf * self._quark_speed(entry)
+
+    def _quark_speed(self, entry: dict) -> float:
+        """1.5 when Protosynthesis / Quark Drive is active (Booster Energy, sun,
+        Electric Terrain) and Speed is the stat it boosts. Yuriko's Booster
+        Energy Iron Valiant moved at ~276, not 184, and outsped Chien-Pao."""
+        from . import showdown
+
+        try:
+            battler = self._battler(entry)
+            if battler is not None and showdown.qp_active(battler, self._field) and showdown.qp_stat(battler) == "spe":
+                return 1.5
+        except Exception:  # noqa: BLE001 - a missing fact leaves Speed as it is
+            pass
+        return 1.0
 
     def ours(self, slot_number: int) -> dict:
         return self._ours[slot_number] if slot_number < len(self._ours) else {}
@@ -297,7 +422,10 @@ class Calculator:
 # Values on the damage scale (% of a target's HP), so every option compares directly.
 FAKE_OUT_VALUE = 30.0  # the flinch itself, on top of the damage it prevents
 PROTECT_PROOF_VALUE = 150.0  # scaled by the chance every foe Protects: a free setup turn
-REDIRECTION_VALUE = 25.0
+REDIRECTION_VALUE = 25.0  # at most: the damage it pulls off our partner
+# A sleeping foe wakes (and acts) about one turn in three; match e1f70879
+# predicted two sleeping foes to attack and Rage Powdered them.
+SLEEP_AWAKE = 1 / 3
 SPEED_CONTROL_VALUE = 40.0
 OTHER_STATUS_VALUE = 10.0
 SWITCH_VALUE = 1.0
@@ -315,6 +443,23 @@ DELAYED_KO_SHARE = 0.25
 # two full-HP foes; ec1752bf: two double Protects in a row. Field timers it
 # could stall out (their Tailwind, Trick Room) are not in the observation.
 STALL_SHARE = 0.25
+# Their win condition is worth more than its raw damage. Match 4e60a5a2: a
+# full-HP sun Torkoal's Eruption took 83%, 54% and 93% off ours and it never
+# took a hit: every point off an Eruption user also cuts its next Eruption,
+# and a weather setter keeps its partners' boost up until it falls.
+WIN_CONDITION_WEIGHT = 1.5
+HP_SCALING = frozenset({"eruption", "waterspout", "dragonenergy"})
+HP_SCALING_FROM = 0.5  # below half HP its Eruption is already weak
+# Match 666b209d: a Specs Chi-Yu, named their win condition in our own game
+# plan, ranked level with a Rillaboom for Close Combat.
+CHOICE_NUKES = frozenset({"choicespecs", "choiceband"})
+# Match 60beb733: Grimmsnarl's Prankster Reflect, Thunder Wave and Light
+# Screen went up while we hit Iron Hands; both screens then halved our hits.
+SCREEN_MOVES = frozenset({"reflect", "lightscreen", "auroraveil"})
+# Match ead979d8: Amoonguss's Spore took Iron Hands and Dondozo out of the game.
+SLEEP_MOVES = frozenset({"spore", "sleeppowder", "hypnosis", "lovelykiss", "sing", "darkvoid", "grasswhistle", "yawn"})
+WEATHER_SETTERS = frozenset({"drought", "drizzle", "sandstream", "snowwarning", "orichalcumpulse",
+                             "desolateland", "primordialsea"})
 CANDIDATES_PER_SLOT = 6
 RACE_CANDIDATES = 24  # legal pairs (best one-turn values first) the two-turn race re-ranks
 # Moves Protect cannot stop: they target our own side or the field.
@@ -334,7 +479,8 @@ def best_line(turn_rules, observation: dict, calc: "Calculator", expected: dict 
     return ranked[0][1] if ranked else None
 
 
-def ranked_lines(turn_rules, observation: dict, calc: "Calculator", expected: dict | None = None, *, limit: int = 5):
+def ranked_lines(turn_rules, observation: dict, calc: "Calculator", expected: dict | None = None, *, limit: int = 5,
+                 bench: list[str] | None = None, cost=None):
     """Legal joint actions, best first, scored against ``expected``.
 
     ``expected`` is foe species id -> predict.FoeExpectation. Each slot's
@@ -347,7 +493,9 @@ def ranked_lines(turn_rules, observation: dict, calc: "Calculator", expected: di
     to Protect. Pairs are tried best first and kept only if they pass
     ``turn_rules.check``. On a turn with moves, the best RACE_CANDIDATES of
     those are re-ranked by race.py's two-turn damage race, and that is the
-    value returned. Returns [(value, answer)] in the model's row format.
+    value returned. ``cost`` (payload -> value), when given, is subtracted
+    before the cut: principles.Judge's price for breaking a decision
+    principle. Returns [(value, answer)] in the model's row format.
     """
     from . import movelist
 
@@ -374,10 +522,15 @@ def ranked_lines(turn_rules, observation: dict, calc: "Calculator", expected: di
         try:
             found = sorted(
                 ((round(race.score([a["slot_0"], a["slot_1"]], turn_rules.slots, turn_rules.per_slot,
-                                   observation, calc, expected or {}), 1), a) for _, a in found),
+                                   observation, calc, context.expected, bench), 1), a) for _, a in found),
                 key=lambda item: -item[0],
             )
         except Exception:  # noqa: BLE001 - the one-turn ranking still stands
+            pass
+    if cost is not None:
+        try:
+            found = sorted(((round(v - cost(turn_rules.check(a)), 1), a) for v, a in found), key=lambda item: -item[0])
+        except Exception:  # noqa: BLE001 - the unpriced ranking still stands
             pass
     return found[:limit]
 
@@ -405,8 +558,9 @@ class _Context:
 
     def __init__(self, calc, expected: dict) -> None:
         self.calc = calc
-        self.expected = expected
+        self.expected = asleep(calc, expected)
         self.threats = _threats_by_id(calc)
+        self.win = win_conditions(calc)
 
     def foe_id(self, foe: dict) -> str:
         return _id(foe.get("species") or foe.get("name"))
@@ -493,8 +647,7 @@ def _slot_choices(slot, rule, observation: dict, ctx: _Context, movelist) -> lis
             choices.append((0.0, {"option": index, "target": None}))
         elif kind == "switch":
             if forced:
-                risk = ctx.calc.incoming(option.get("species"))
-                value = 100.0 - (risk["expected_pct"] if risk else 50.0)
+                value = replacement_value(ctx.calc, observation, option.get("species"))
             else:
                 saved = ctx.incoming(active) - ctx.incoming_on_switch(active, option.get("species"))
                 value = SWITCH_VALUE + SWITCH_SHARE * max(0.0, saved)
@@ -523,7 +676,10 @@ def _move_choices(slot, index, option, move_id, details, active, ctx: _Context, 
             value = sum(_hit_value(ctx, slot.number, foe, stats, bypasses, spread=True) for foe in ctx.calc._theirs)
             return [(value * acts, {"option": index, "target": None})]
         out = []
+        aimed = rule.targets.get(index)
         for entry in foes:
+            if aimed and entry.get("target") not in aimed:
+                continue  # the rules allow this move only into certain foes (opening Fake Out)
             foe = ctx.calc.foe(entry["species"]) if entry.get("species") else (
                 ctx.calc._theirs[entry["target"] - 1] if 0 < entry["target"] <= len(ctx.calc._theirs) else {}
             )
@@ -538,6 +694,8 @@ def _move_choices(slot, index, option, move_id, details, active, ctx: _Context, 
         # The predicted damage it blocks, times its chance of working: a
         # second Protect in a row works 1 time in 3.
         value = ctx.incoming(active) * rule.protect_success
+        if _status(active.get("status")) == "slp":
+            value *= SLEEP_AWAKE  # asleep: it Protects only if it wakes
     elif move_id in PROTECT_PROOF:
         all_protect = 1.0
         for foe in ctx.calc._theirs:
@@ -545,7 +703,10 @@ def _move_choices(slot, index, option, move_id, details, active, ctx: _Context, 
         base = SPEED_CONTROL_VALUE if move_id in ("tailwind", "trickroom") else OTHER_STATUS_VALUE
         value = PROTECT_PROOF_VALUE * all_protect + base
     elif move_id in REDIRECTION:
-        value = REDIRECTION_VALUE
+        # Worth what it pulls off our partner: nothing in a 1-vs-1, little
+        # against sleeping foes (match e1f70879 Rage Powdered both).
+        partner = next((e for e in ctx.calc._ours if e is not active and _fraction(e) > 0), None)
+        value = min(REDIRECTION_VALUE, ctx.incoming(partner)) if partner else 0.0
     elif "speed_control" in (listed.get("tags") or []):
         value = SPEED_CONTROL_VALUE
     else:
@@ -557,6 +718,25 @@ def _move_choices(slot, index, option, move_id, details, active, ctx: _Context, 
         return [(value * (1 - ctx.protects(_id(best.get("species")))), {"option": index, "target": best.get("target")})]
     targets = [t for t in option.get("targets") or [] if isinstance(t, int)]
     return [(value, {"option": index, "target": targets[0] if len(targets) == 1 else None})]
+
+
+def accuracy(move: dict) -> float:
+    """Chance a move hits: the observation's or the move list's accuracy (a
+    fraction or a percentage), 1.0 for moves that never miss. Icicle Crash and
+    Draco Meteor (90%) missed three times across Yuriko's games while valued
+    as sure hits."""
+    value = move.get("accuracy") if isinstance(move, dict) else None
+    if value is None and isinstance(move, dict):
+        from . import movelist
+
+        listed = movelist.lookup(move.get("id") or move.get("move_id") or move.get("name"))
+        value = (listed or {}).get("accuracy")
+        if value is None:
+            return 1.0
+    if value is True or not isinstance(value, (int, float)):
+        return 1.0
+    value = float(value) / 100 if value > 1 else float(value)
+    return max(0.0, min(1.0, value)) or 1.0
 
 
 def _hit_value(ctx: _Context, slot_number: int, foe: dict, move: dict, bypasses: bool, *, spread: bool) -> float:
@@ -573,7 +753,101 @@ def _hit_value(ctx: _Context, slot_number: int, foe: dict, move: dict, bypasses:
         value = remaining + KO_BONUS if hit["ko_this_turn_likely"] else min(remaining, hit["expected_pct"])
     foe_id = ctx.foe_id(foe)
     landing = 1.0 if bypasses else 1 - ctx.protects(foe_id)
-    return value * landing * (1 - 0.5 * ctx.switches(foe_id))
+    weight = WIN_CONDITION_WEIGHT if foe_id in ctx.win else 1.0
+    return value * weight * landing * accuracy(move) * (1 - 0.5 * ctx.switches(foe_id))
+
+
+def asleep(calc, expected: dict) -> dict:
+    """``expected`` with each sleeping foe's actions scaled to the chance it wakes
+    this turn (it can still switch). Never raises: unknown status is awake."""
+    from .predict import FoeExpectation
+
+    found = dict(expected)
+    for foe in getattr(calc, "_theirs", None) or []:
+        try:
+            name = _id(foe.get("species") or foe.get("name"))
+            e = found.get(name)
+            if e is None or _status(foe.get("status")) != "slp":
+                continue
+            found[name] = FoeExpectation(
+                protect=e.protect * SLEEP_AWAKE, switch=e.switch,
+                attacks={o: v * SLEEP_AWAKE for o, v in e.attacks.items()},
+                fake_out={o: v * SLEEP_AWAKE for o, v in e.fake_out.items()},
+            )
+        except Exception:  # noqa: BLE001
+            continue
+    return found
+
+
+REPLACEMENT_SECOND_HIT = 0.5  # share of the second foe's best hit also aimed at the newcomer
+
+
+def replacement_value(calc, observation: dict, species: object) -> float:
+    """A Pokemon sent in after a faint: its HP left after their best hits, minus
+    KO_BONUS if a faster foe likely KOs it before it moves. From its CURRENT
+    HP (Multiscale and Focus Sash only hold at full), against every foe, not
+    only the read's targets. Match 60beb733: an 82% Dragonite came in to a
+    faster Flutter Mane's Moonblast and fell without acting."""
+    from .race import _bench_hp
+
+    hp = _bench_hp(observation, species)
+    entry = {"species": species, "hp_fraction": hp}
+    mine = calc.speed(entry) or 0.0
+    trick_room = "trickroom" in ((observed_field(observation) or {}).get("field") or [])
+    hits, first = [], 0.0
+    for foe in getattr(calc, "_theirs", []):
+        if _fraction(foe) <= 0:
+            continue
+        hit = calc.best_hit(foe, entry)
+        if not hit:
+            continue
+        hits.append(hit["expected_pct"])
+        theirs = calc.speed(foe) or 0.0
+        faster = theirs < mine if trick_room else theirs > mine
+        if faster and hit.get("ko_this_turn_likely"):
+            first = 1.0
+    hits.sort(reverse=True)
+    taken = (hits[0] if hits else 50.0) + REPLACEMENT_SECOND_HIT * (hits[1] if len(hits) > 1 else 0.0)
+    return 100.0 * hp - taken - KO_BONUS * first
+
+
+def observed_field(observation: dict):
+    from .observed import field_state
+
+    return field_state(observation)
+
+
+def win_conditions(calc) -> dict[str, str]:
+    """foe id -> why it is their win condition: an Eruption / Water Spout /
+    Dragon Energy user at half HP or more (each hit cuts that move's power),
+    a Pokemon certain to set weather, a Choice Specs / Band attacker (its
+    draft card or a revealed item), a Prankster screen setter, or a sleep user. Never raises: a missing fact is no flag."""
+    found = {}
+    table = getattr(calc, "_table", None)
+    for foe in getattr(calc, "_theirs", None) or []:
+        try:
+            name = foe.get("species") or foe.get("name")
+            if not name or _fraction(foe) <= 0:
+                continue
+            moves = {_id(m) for m in (table.common_moves(name) if table is not None else []) or []}
+            moves |= {_id(m.get("id") or m.get("name") if isinstance(m, dict) else m)
+                      for m in foe.get("revealed_moves") or foe.get("moves") or [] if m}
+            scaling = sorted(moves & HP_SCALING)
+            abilities = {_id(a) for a in calc._abilities(foe) or []}
+            if scaling and _fraction(foe) >= HP_SCALING_FROM:
+                found[_id(name)] = f"{name}'s {scaling[0]} loses power with every point of HP we take off"
+            elif abilities and abilities <= WEATHER_SETTERS:
+                found[_id(name)] = f"{name} sets the weather its team plays around"
+            elif table is not None and _id(held_item(foe, table)) in CHOICE_NUKES:
+                # held_item: a shown "unknown_item" falls back to the draft card's
+                found[_id(name)] = f"{name} holds a Choice Specs / Band: it nukes every turn it stays in"
+            elif abilities == {"prankster"} and moves & SCREEN_MOVES:
+                found[_id(name)] = f"{name} sets Prankster screens that halve our hits"
+            elif moves & SLEEP_MOVES:
+                found[_id(name)] = f"{name} puts ours to sleep ({sorted(moves & SLEEP_MOVES)[0]})"
+        except Exception:  # noqa: BLE001 - a priority hint, never a lost move
+            continue
+    return found
 
 
 def _threats_by_id(calc) -> dict:
@@ -593,6 +867,69 @@ def _ruin(attacker_abilities: list[str], defender_abilities: list[str], category
         factor *= 1 / 0.75 if "Sword of Ruin" in attacker_abilities else 1.0
         factor *= 0.75 if "Tablets of Ruin" in defender_abilities else 1.0
     return factor
+
+
+def _status(value: object) -> str:
+    """brn / par / psn / tox / slp / frz from however the server names it."""
+    text = _id(str(value or "").split(".")[-1])
+    for code, names in (("brn", ("brn", "burn")), ("par", ("par", "paralysis")), ("tox", ("tox", "toxic")),
+                        ("psn", ("psn", "poison")), ("slp", ("slp", "sleep")), ("frz", ("frz", "freeze"))):
+        if text in names:
+            return code
+    return ""
+
+
+def _entry_key(entry: dict) -> tuple:
+    boosts = tuple(sorted((k, v) for k, v in (entry.get("boosts") or {}).items() if isinstance(v, int) and v))
+    types = tuple(entry.get("types") or ())
+    return (_id(entry.get("species") or entry.get("name")), str(entry.get("item")), str(entry.get("ability")),
+            boosts, str(entry.get("status")), round(_fraction(entry), 3), types)
+
+
+# Hits of a 2-5 hit move: 2 and 3 at 35% each, 4 and 5 at 15%; Loaded Dice 4-5; Skill Link 5.
+_HIT_ODDS = {(2, 5): [(2, 0.35), (3, 0.35), (4, 0.15), (5, 0.15)]}
+
+
+def _expected_rolls(attacker, defender, move_id: str, fld, spread: bool) -> list[float]:
+    """The 16 rolls; for a 2-5 hit move, averaged over how many hits it makes."""
+    from . import showdown
+
+    move = showdown.Move.get(move_id)
+    hits = move.multihit if move else None
+    if isinstance(hits, list) and tuple(hits) in _HIT_ODDS and not attacker.has("skilllink"):
+        odds = [(4, 0.5), (5, 0.5)] if attacker.holds("loadeddice") else _HIT_ODDS[tuple(hits)]
+        total = [0.0] * 16
+        for n, p in odds:
+            rolls = showdown.damage_rolls(attacker, defender, move_id, fld, hits=n, spread=spread)
+            if not rolls:
+                return []
+            total = [t + p * r for t, r in zip(total, rolls)]
+        return total
+    return showdown.damage_rolls(attacker, defender, move_id, fld, spread=spread)
+
+
+_WEATHER = {"sunnyday": "sun", "desolateland": "sun", "raindance": "rain", "primordialsea": "rain",
+            "sandstorm": "sand", "snow": "snow", "snowscape": "snow", "hail": "snow"}
+_TERRAIN = {"electricterrain": "electric", "grassyterrain": "grassy", "psychicterrain": "psychic", "mistyterrain": "misty"}
+_RUIN = {"swordofruin", "beadsofruin", "tabletsofruin", "vesselofruin"}
+
+
+def _engine_field(observation: dict, actives: list[dict], table):
+    """Weather, terrain, gravity and Ruin abilities on the field. Screens and
+    Helping Hand are left out: the race applies those itself."""
+    from . import showdown
+    from .observed import field_state
+
+    shown = set((field_state(observation) or {}).get("field", []))
+    weather = next((w for k, w in _WEATHER.items() if k in shown), "")
+    terrain = next((t for k, t in _TERRAIN.items() if k in shown), "")
+    ruin = set()
+    for entry in actives:
+        ability = entry.get("ability") if isinstance(entry.get("ability"), str) else ""
+        names = [ability] if ability.strip() else table.abilities(entry.get("species") or entry.get("name"))
+        if len(names) == 1 and _id(names[0]) in _RUIN:
+            ruin.add(_id(names[0]))
+    return showdown.Field(weather=weather, terrain=terrain, gravity="gravity" in shown, ruin=frozenset(ruin))
 
 
 def _by_species(actives: object) -> list[dict]:

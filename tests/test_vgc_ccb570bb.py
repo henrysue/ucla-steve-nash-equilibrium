@@ -38,10 +38,15 @@ def _cc(calc, defender):
                        {"id": "closecombat", "base_power": move["power"], "type": move["type"], "category": move["category"]})
 
 
-def test_eviolite_makes_porygon2_bulky():
-    """Close Combat read as 129% on Porygon2 without Eviolite."""
-    calc = lookahead.Calculator({"active_pokemon": [], "opponent_active_pokemon": []}, _table())
-    assert _cc(calc, "porygon2")["expected_pct"] < 100
+def test_eviolite_makes_porygon2_bulkier():
+    """Eviolite (x1.5 both defences) was ignored. Showdown's exact numbers: Great
+    Tusk's boosted Close Combat still KOs it (~112%), but by far less than without."""
+    table = _table()
+    calc = lookahead.Calculator({"active_pokemon": [], "opponent_active_pokemon": []}, table)
+    with_eviolite = _cc(calc, "porygon2")["expected_pct"]
+    without = calc.damage({"species": "greattusk"}, {"species": "porygon2", "item": "Leftovers"},
+                          {"id": "closecombat", "base_power": 120, "type": "FIGHTING", "category": "PHYSICAL"})["expected_pct"]
+    assert with_eviolite < 0.72 * without
 
 
 def test_focus_sash_keeps_an_untouched_holder_alive_through_one_hit():
@@ -52,7 +57,8 @@ def test_focus_sash_keeps_an_untouched_holder_alive_through_one_hit():
     garchomp = race._mon("us", {"species": "garchomp", "hp_fraction": 1.0}, calc._table)
     archaludon = race._mon("them", {"species": "archaludon", "hp_fraction": 1.0}, calc._table)
     sim.ours, sim.theirs = [garchomp], [archaludon]
-    draco = {"id": "dracometeor", "base_power": 130, "type": "DRAGON", "category": "SPECIAL", "spread": False}
+    # A sure hit: this is about Focus Sash, not accuracy (Draco Meteor is 90%).
+    draco = {"id": "dracometeor", "base_power": 130, "type": "DRAGON", "category": "SPECIAL", "spread": False, "accuracy": 1.0}
     sim._hit("attack", archaludon, draco, [(garchomp, 1.0)])
     assert garchomp.alive == 1.0 and 0 < garchomp.hp <= 1.0 and garchomp.sash == 0.0
 
@@ -60,8 +66,10 @@ def test_focus_sash_keeps_an_untouched_holder_alive_through_one_hit():
 FOES_1 = [{"target": 1, "side": "opponent", "species": "greattusk"}, {"target": 2, "side": "opponent", "species": "archaludon"}]
 
 
-def test_turn_one_sets_trick_room_instead_of_double_switching_into_the_hits():
-    """Played: both leads switched out; Garchomp came in at 22%, Flutter Mane at 35%."""
+def test_turn_one_does_not_switch_both_leads_into_the_hits():
+    """Played: both leads switched out; Garchomp came in at 22%, Flutter Mane at 35%.
+    Exact damage: Close Combat KOs Porygon2 (Trick Room would come too late), so one
+    switch into the Close Combat is fine; Sylveon should attack, not switch too."""
     table = _table()
     action = _doubles("porygon2", [_move("trickroom", []), _move("icebeam", [1, 2], FOES_1), _move("recover", []),
                                    {"type": "switch", "species": "garchomp"}, {"type": "switch", "species": "fluttermane"}],
@@ -77,7 +85,7 @@ def test_turn_one_sets_trick_room_instead_of_double_switching_into_the_hits():
     expected = predict.expectations({"greattusk": {"action": "attack", "target": "porygon2", "confidence": 0.55},
                                      "archaludon": {"action": "protect", "confidence": 0.5}}, ["porygon2", "sylveon"])
     payload = turn_rules.check(lookahead.best_line(turn_rules, observation, lookahead.Calculator(observation, table), expected))
-    assert payload["slot_0"] == {"type": "move", "move_id": "trickroom"}
+    assert not (payload["slot_0"]["type"] == "switch" and payload["slot_1"]["type"] == "switch")
     assert payload["slot_1"]["type"] == "move"
 
 

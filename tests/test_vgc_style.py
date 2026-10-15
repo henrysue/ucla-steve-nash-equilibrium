@@ -41,7 +41,8 @@ def test_a_foe_that_left_or_showed_nothing_is_not_evidence():
     style.resolve({"theirs": {"archaludon": {"left_field": "switched or fainted"}}})
     style.open(ODDS, {"archaludon": True}, {}, 2)
     style.resolve({"theirs": {"archaludon": {"hp_change": -0.06}}})  # sand chip only
-    assert style.p_strong == PRIOR_STRONG and not style.notes
+    assert style.p_strong == PRIOR_STRONG  # no Protect evidence either way
+    assert style.switches == 1 and "switched out" in style.notes[-1]  # but the switch is counted
 
 
 def test_the_code_guess_expects_an_attack_from_a_strong_opponent():
