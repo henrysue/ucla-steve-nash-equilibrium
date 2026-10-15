@@ -4,8 +4,8 @@
 spans more than one game. ``create_agent()`` here returns a thin wrapper that,
 on the first ``choose_action`` of a match, looks at ``context.game_type`` and
 builds the specialist for that game — the Red Alert agent for ``red_alert``,
-the VGC Draft strategist for everything else — then delegates every call to it
-for the rest of the match.
+the Werewolf agent for ``werewolf``, the VGC Draft strategist for everything
+else — then delegates every call to it for the rest of the match.
 
 Why lazy (not eager in ``create_agent``): the runtime calls ``create_agent()``
 once per match with no arguments; the game type only arrives later, on the
@@ -17,7 +17,8 @@ the first call it defaults to the VGC strategist (whose existing behaviour is to
 play Pokémon and to say plainly when it is handed a game it does not play), so
 the dispatcher can never be the thing that forfeits a match. ``on_action_result``
 is forwarded only to a specialist that defines it (the Red Alert agent does; the
-VGC strategist does not).
+VGC strategist does not). ``choose_message`` (Werewolf's discussion window) is
+forwarded the same way; a specialist without one ends every discussion.
 
 Run it with:
 
@@ -29,9 +30,10 @@ from __future__ import annotations
 
 from typing import Any
 
-# Game types that go to the Red Alert specialist. Everything else is handled by
-# the VGC strategist (which itself refuses games it does not play).
+# Game types that go to the Red Alert and Werewolf specialists. Everything else
+# is handled by the VGC strategist (which itself refuses games it does not play).
 _RED_ALERT = frozenset({"red_alert"})
+_WEREWOLF = frozenset({"werewolf"})
 
 
 def create_agent() -> GameDispatcher:
@@ -47,6 +49,13 @@ class GameDispatcher:
 
     def choose_action(self, state: Any, context: Any):
         return self._resolve(context).choose_action(state, context)
+
+    def choose_message(self, state: Any, context: Any):
+        handler = getattr(self._resolve(context), "choose_message", None)
+        if callable(handler):
+            return handler(state, context)
+        from altruagent import TERMINATE_MESSAGING
+        return TERMINATE_MESSAGING
 
     def on_action_result(self, result: Any, context: Any) -> None:
         delegate = self._resolve(context)
@@ -82,5 +91,8 @@ def _build(game_type: str) -> Any:
     if game_type in _RED_ALERT:
         from agent.redalert.agent import create_agent as make_redalert
         return make_redalert()
+    if game_type in _WEREWOLF:
+        from agent.werewolf import create_agent as make_werewolf
+        return make_werewolf()
     from agent.vgc import create_strategist
     return create_strategist()

@@ -294,7 +294,7 @@ class WithReasoning:
 
 
 Decision = Union[int, str, LegalAction, dict, _Resign, _Wait, WithReasoning]
-MessageDecision = Union[SendMessage, _TerminateMessaging]
+MessageDecision = Union[SendMessage, _TerminateMessaging, _Wait]
 
 
 class ChoosesAction(Protocol):
@@ -591,12 +591,14 @@ def _validate_decision(decision: Any, legal_actions: list[LegalAction]) -> Union
 
 
 def _validate_message_decision(decision: Any) -> MessageDecision:
-    if decision is TERMINATE_MESSAGING:
+    # WAIT: nothing to say yet, but stay in the discussion (don't terminate)
+    # and ask again on the next message or phase change.
+    if decision is TERMINATE_MESSAGING or decision is WAIT:
         return decision
     if not isinstance(decision, SendMessage):
         raise DecisionError(
-            "choose_message must return an altruagent.SendMessage(...) or "
-            f"altruagent.TERMINATE_MESSAGING — got {decision!r} "
+            "choose_message must return an altruagent.SendMessage(...), "
+            f"altruagent.WAIT or altruagent.TERMINATE_MESSAGING — got {decision!r} "
             f"({type(decision).__name__})."
         )
     return decision
@@ -884,6 +886,12 @@ def run_game(
             decision = _validate_message_decision(
                 _invoke_message_decision(message_decision_fn, state, context)
             )
+            if decision is WAIT:
+                # Keep listening without sending anything: the window stays
+                # open for us until its time limit (the server terminates for
+                # us then) or until we chat or terminate on a later call.
+                state = wait(state, _last_message_seq(state))
+                continue
             try:
                 if decision is TERMINATE_MESSAGING:
                     result = game.send_message(message_type="terminate")

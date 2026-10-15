@@ -695,6 +695,37 @@ def test_custom_choose_message_can_terminate_explicitly():
     assert game.send_message_calls[0]["message_type"] == "terminate"
 
 
+def test_choose_message_can_wait_without_sending_anything():
+    # WAIT keeps the agent in the discussion (no terminate) and asks again on
+    # the next update, so a late claim can still be answered.
+    from altruagent.runner import WAIT
+
+    class Agent:
+        def __init__(self):
+            self.calls = 0
+
+        def choose_action(self, state, context):
+            return state.legal_actions[0]
+
+        def choose_message(self, state, context):
+            self.calls += 1
+            return WAIT if self.calls == 1 else TERMINATE_MESSAGING
+
+    agent = Agent()
+    game = (
+        FakeMCPGameSession()
+        .queue_state(messaging_state(state_version=2), messaging_state(state_version=3), terminal_state())
+        .queue_send_message({"accepted": True, "phase": "moving"})
+        .queue_result(result_dict())
+    )
+    result = run_game(game, CONTEXT, agent, sleep=no_sleep)
+
+    assert result.is_terminal is True
+    assert agent.calls == 2
+    assert game.wait_calls[0]["since_version"] == 2 and game.wait_calls[0]["since_phase"] == "messaging"
+    assert [c["message_type"] for c in game.send_message_calls] == ["terminate"]
+
+
 def test_choose_message_resolved_off_original_object_not_bound_method():
     # Regression guard: choose_message must be looked up on the object
     # create_agent() returned, not on the bound choose_action method (bound
