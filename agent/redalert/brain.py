@@ -445,12 +445,41 @@ def _overwhelming_known(view: View) -> bool:
 
 
 def last_stand(view: View) -> bool:
-    """Behind on kills - losses in the last ``LAST_STAND_REMAINING_SECONDS``,
-    with an army to attack with: all in, whatever the odds."""
+    """Behind on kills - losses with :func:`last_stand_seconds` or less left,
+    and an army to attack with: all in, whatever the odds."""
     return (view.remaining_seconds is not None
-            and view.remaining_seconds <= C.LAST_STAND_REMAINING_SECONDS
             and view.kills_cost - view.deaths_cost < 0
-            and view.army_value >= C.MIN_ATTACK_ARMY_VALUE)
+            and view.army_value >= C.MIN_ATTACK_ARMY_VALUE
+            and view.remaining_seconds <= last_stand_seconds(view))
+
+
+_MARCH: dict = {}   # (map, start, target) -> the walk's length in cells (a walk is costly; the map doesn't change)
+
+
+def last_stand_seconds(view: View) -> float:
+    """How long before the end the last stand starts, scaled to the map: the
+    march from the massing point to their base (its walk, times
+    ``LAST_STAND_DETOUR`` for the flanks, at ``LAST_STAND_CELLS_PER_SECOND``)
+    plus ``LAST_STAND_FIGHT_SECONDS`` to fight — a push at 18:00 spent most
+    of the time left walking (Shadowfiend's flank roads are 75-80 cells).
+    Between ``LAST_STAND_MIN_SECONDS`` and ``LAST_STAND_MAX_SECONDS``;
+    ``LAST_STAND_DEFAULT_SECONDS`` with no road known."""
+    from .executor import route_goal
+
+    start = scout.choke_cell(view) or view.base_center
+    target = route_goal(view)
+    if start is None or target is None:
+        return C.LAST_STAND_DEFAULT_SECONDS
+    key = (id(view.blocked_cells), tuple(start), tuple(target))
+    if key not in _MARCH:
+        if len(_MARCH) > 64:
+            _MARCH.clear()
+        _MARCH[key] = len(terrain.walk_path(view, tuple(start), tuple(target)))
+    cells = _MARCH[key]
+    if not cells:
+        return C.LAST_STAND_DEFAULT_SECONDS
+    march = cells * C.LAST_STAND_DETOUR / C.LAST_STAND_CELLS_PER_SECOND
+    return max(C.LAST_STAND_MIN_SECONDS, min(C.LAST_STAND_MAX_SECONDS, march + C.LAST_STAND_FIGHT_SECONDS))
 
 
 def _catching_up(view: View) -> bool:

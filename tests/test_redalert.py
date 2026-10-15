@@ -6863,3 +6863,12 @@ def test_a_timed_snipe_run_waits_while_their_army_is_at_the_field():
     sn2.update(at(340.0))
     sn2.orders(at(340.0))
     assert sn2.state == "go"                                                          # nobody known there: go
+
+
+def test_the_last_stand_window_covers_the_march_and_a_fight():
+    v = _view(buildings=BASE, _r=160.0, military={"army_value": 9000, "visible_enemy_value": 20000,
+                                                  "kills_cost": 20000, "deaths_cost": 25000})
+    window = brain.last_stand_seconds(v)
+    assert window >= C.LAST_STAND_FIGHT_SECONDS + 1                              # the march on top of the fight
+    assert brain.last_stand(dataclasses.replace(v, remaining_seconds=window - 1))
+    assert not brain.last_stand(dataclasses.replace(v, remaining_seconds=window + 1))

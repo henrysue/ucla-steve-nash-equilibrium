@@ -428,3 +428,19 @@ def test_the_last_stand_flanks_route_round_the_terrain_on_real_maps(path):
         assert len(a) + len(b) <= C.LAST_STAND_MAX_DETOUR * len(direct) + 1, via    # no long way round
         roads.append(set(a) | set(b))
     assert len(roads) == 2 and len(roads[0] & roads[1]) < 0.6 * min(len(roads[0]), len(roads[1]))   # two roads
+
+
+def test_the_last_stand_starts_earlier_on_bigger_maps():
+    """The march to their base plus 2 minutes to fight: ~16:45 on
+    Shadowfiend's long roads, ~17:05-17:15 on Sidestep and Trapped."""
+    from agent.redalert import brain
+
+    window = {}
+    for path in FIXTURES:
+        fx = _load(path)
+        window[path.stem] = brain.last_stand_seconds(_view(fx, fx["states"][1], path.stem))
+    assert all(C.LAST_STAND_MIN_SECONDS < w <= C.LAST_STAND_MAX_SECONDS for w in window.values())
+    shadow = min(w for k, w in window.items() if k.startswith("shadowfiend"))
+    small = max(w for k, w in window.items() if not k.startswith("shadowfiend"))
+    assert shadow > small                                                       # the long roads start sooner
+    assert all(w >= 150 for w in window.values())                                # never as late as 18:00

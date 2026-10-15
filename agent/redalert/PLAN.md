@@ -462,8 +462,10 @@ has hysteresis:
 The tiebreak decides an unfinished game (kills - losses, then assets), so
 from 15:00: a real lead (1500+) is protected — no new attacks — and level or
 behind we force trades (attack at parity); in the last minute any lead is
-protected; behind in the last 2 minutes, the last stand: all in whatever the
-odds (no confirmation, no dwell, no retreat), the army in two halves by both
+protected; behind with the march to their base plus 2 minutes to fight left
+(the walk from the massing point x1.4 for the flanks at ~1 cell a second:
+~16:45 on Shadowfiend, ~17:05-17:15 on Sidestep and Trapped; between 2 and 5
+minutes), the last stand: all in whatever the odds (no confirmation, no dwell, no retreat), the army in two halves by both
 flanks onto their base — sitting is a sure loss (91da02f3 and 748f8d89: the
 losing seat sat out the end 14700 and 4050 behind); once their base is razed — or they are simply beaten
 (overwhelming odds, well ahead on trades) with 10 or fewer buildings known —
