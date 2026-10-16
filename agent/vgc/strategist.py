@@ -19,7 +19,9 @@
        mind self-drops);
     4. the model makes the final call: play the code's pick, or veto it for
        another ranked line within VETO_MARGIN. A veto only chooses among
-       rule-checked lines.
+       rule-checked lines, and is sent only once the model locks it in on a
+       second, thinking look (the code's pick beside it, the value gap, and
+       the code's checks of its reason against its own read).
   The code's guess and its answer are prepared first: no model, a slow
   model or a bad answer all still get a sensible move.
 
@@ -76,6 +78,10 @@ VETO_MARGIN = 40.0
 # The best line that breaks no principle is offered beyond the margin, but not
 # this far down: match 4b317ad0 vetoed a 154-point-worse line and lost Iron Valiant.
 CLEAN_LINE_MARGIN = 2 * VETO_MARGIN
+# A veto is sent only once the strategist locks it in on a second, thinking
+# look (match a938ac5c, turn 1: a "sure KO" veto read Follow Me, which would
+# have pulled that very attack). Less time than this left: the code's pick.
+MIN_LOCK_IN_SECONDS = 8.0
 
 
 class VGCDraftStrategist:
@@ -621,9 +627,51 @@ class VGCDraftStrategist:
         review = {"verdict": "veto" if played else "play", "play_option": offered.index(played) + 1,
                   "why": str(answer.get("why") or "")}
         if played:
+            locked, lock_why = self._lock_in(ranked, played, flags, review["why"], prediction, decision,
+                                             state, context, started)
+            review["lock_in"] = {"locked": locked, "why": lock_why}
+            if not locked:
+                self._log(f"[vgc] strategist withdrew its veto for {_name_payload(ranked[played][1], slots)}: {lock_why}")
+                return 0, {**review, "verdict": "play", "play_option": 1, "withdrawn": offered.index(played) + 1}
+        if played:
             self._log(f"[vgc] strategist vetoed {_name_payload(ranked[0][1], slots)} for "
                       f"{_name_payload(ranked[played][1], slots)}: {review['why']}")
         return played, review
+
+    def _lock_in(self, ranked: list, played: int, flags: list, why: str, prediction: dict,
+                 review: decisions.Decision, state: GameState, context: DecisionContext,
+                 started: float) -> tuple[bool, str]:
+        """The second, thinking look a veto must pass before it is sent: the
+        code's pick beside the veto, the value gap, and the code's checks of
+        the strategist's reason against its own read. No confirmation in
+        time, or a withdrawal: the code's pick stands."""
+        left = DECISION_SECONDS - (self._clock() - started)
+        if left < MIN_LOCK_IN_SECONDS:
+            return False, f"no time to lock in the veto ({left:.0f}s left)"
+        slots = self._turn_rules.slots if self._turn_rules else []
+        veto = {
+            "code_pick": _name_payload(ranked[0][1], slots),
+            "your_line": _name_payload(ranked[played][1], slots),
+            "value_gap": round(ranked[0][0] - ranked[played][0], 1),
+            "code_pick_breaks": flags[0] or "none",
+            "your_line_breaks": flags[played] or "none",
+            "your_reason": why,
+            "checks": _veto_checks(ranked[played][1], prediction, slots) or ["none found"],
+        }
+        facts = {k: v for k, v in review.prompt.items() if k not in ("instructions", "options", "decision")}
+        reasoning, attempts = self._last_reasoning, self._last_attempts
+        asked = self._ask(decisions.veto_lock_in_decision(veto, facts), state, context, left,
+                          parse=lambda answer: bool(answer.get("lock_in")))
+        self._last_attempts += attempts
+        self._last_seconds = self._clock() - started
+        if self._last_reasoning and reasoning and self._last_reasoning != reasoning:
+            self._last_reasoning = f"{reasoning}\n\nLock-in: {self._last_reasoning}"
+        else:
+            self._last_reasoning = reasoning
+        if asked is None:
+            return False, "no lock-in answer in time"
+        answer, locked = asked
+        return locked, str(answer.get("why") or "")
 
     def _observe(self, observation: dict) -> None:
         """Compare with the previous decision; check the last full turn's read."""
@@ -1030,6 +1078,36 @@ def _board_detail(observation: dict, brought: list[str] | None = None) -> dict:
     if fields:
         board["field"] = fields
     return board
+
+
+def _veto_checks(payload: object, prediction: dict, slots: list) -> list[str]:
+    """What the strategist's own read says about the line it vetoed for: a
+    redirection read pulls its single-target attacks, a Protect read wastes them."""
+    found = []
+    if not isinstance(payload, dict):
+        return found
+    for slot in slots:
+        choice = payload.get(f"slot_{slot.number}") or {}
+        move = movelist.lookup(choice.get("move_id")) if choice.get("type") == "move" else None
+        target = choice.get("target")
+        if not move or move["target"] != "normal" or not isinstance(target, int) or target <= 0:
+            continue
+        names = {e.get("target"): e.get("species") for o in slot.options for e in o.get("target_options") or []
+                 if isinstance(e, dict) and e.get("species")}
+        aimed = meta.species_id(names.get(target) or "")
+        active = slot.active.get("species") if isinstance(slot.active, dict) else slot.active
+        who = f"{active}'s {move['name']}"
+        for foe, guess in (prediction or {}).items():
+            if not isinstance(guess, dict):
+                continue
+            foe_id, confidence = meta.species_id(foe), float(guess.get("confidence") or 0)
+            if (guess.get("action") == "support" and meta.species_id(guess.get("move") or "") in predict.REDIRECTION
+                    and foe_id != aimed and move["power"]):
+                found.append(f"Your read: {foe} uses {guess.get('move')} ({confidence:.0%}). {who} at {names.get(target)} "
+                             f"is pulled into {foe} instead, so it does not do what your reason says.")
+            if guess.get("action") == "protect" and foe_id == aimed:
+                found.append(f"Your read: {foe} Protects ({confidence:.0%}). {who} into it is wasted.")
+    return found
 
 
 def _line_mismatch(said: str, payload: object, slots: list) -> str:

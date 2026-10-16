@@ -72,8 +72,13 @@ class Analysis:
                 note = f" [breaks: {'; '.join(breaks)}]" if isinstance(breaks, list) and breaks else ""
                 parts.append(f"- option {option.get('option')}: {option.get('line')} ({option.get('value')}){note}")
         if self.review:
-            parts += ["", f"**Strategist's call:** {self.review.get('verdict')} option {self.review.get('play_option')}: "
-                          f"{self.review.get('why', '')}"]
+            withdrawn = self.review.get("withdrawn")
+            call = (f"veto option {withdrawn}, withdrawn at lock-in: played option 1" if withdrawn
+                    else f"{self.review.get('verdict')} option {self.review.get('play_option')}")
+            parts += ["", f"**Strategist's call:** {call}: {self.review.get('why', '')}"]
+            lock = self.review.get("lock_in")
+            if isinstance(lock, dict):
+                parts.append(f"**Lock-in:** {'locked in' if lock.get('locked') else 'withdrawn'}: {lock.get('why', '')}")
         return "\n".join(parts)
 
     def as_dict(self) -> dict:

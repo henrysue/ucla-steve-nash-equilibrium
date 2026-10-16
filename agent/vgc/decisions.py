@@ -264,6 +264,39 @@ def review_decision(options: list[dict], facts: dict) -> Decision:
     )
 
 
+def veto_lock_in_decision(veto: dict, facts: dict) -> Decision:
+    """Step 4b: a veto is locked in only after a second, deliberate look.
+
+    ``veto`` holds the code's pick, the vetoed-for line, the value gap, what
+    each breaks, the strategist's own reason, and the code's checks of that
+    reason against the strategist's own read. Withdrawing plays the code's pick.
+    """
+    return Decision(
+        kind="doubles_turn_veto_lock_in",
+        prompt={
+            "instructions": (
+                "You are about to VETO the code's pick. Before it is sent, lock it in: think it through "
+                "and confirm only if you are sure. Check, in order: (1) What does the code's pick do this "
+                "turn, and what does your line do differently? (2) Does your reason still hold under YOUR "
+                "OWN read? Read every line of checks: each is a fact the code found that may contradict "
+                "your reason (a redirection read pulls single-target attacks, a Protect read wastes an attack, "
+                "a spread move breaks a Focus Sash before a second hit). (3) The code's pick is worth "
+                "value_gap more on the damage scale, already priced for every principle: a veto needs a "
+                "principle the code's pick breaks and yours keeps, or a concrete fact the numbers miss. "
+                "Name it. If any check contradicts your reason, or you cannot name that fact, set lock_in "
+                "false: the code's pick is played. lock_in true sends your line."
+            ),
+            "veto": veto,
+            **facts,
+        },
+        schema=object_schema({
+            "lock_in": {"type": "boolean"},
+            "why": {"type": "string"},
+        }),
+        effort="low",  # this one thinks
+    )
+
+
 # -- schema helpers -----------------------------------------------------------
 
 

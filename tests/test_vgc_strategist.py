@@ -35,6 +35,7 @@ class FakeProvider:
         self.answers = list(answers)
         self.calls = []
         self.reviews = []  # unscripted final-call reviews, answered "play"
+        self.lock_ins = []  # unscripted veto lock-ins, answered "lock in"
         # Both real providers expose these: a repr that cannot leak a key,
         # and the model's private reasoning for the audit log.
         self.last_reasoning = reasoning
@@ -49,6 +50,12 @@ class FakeProvider:
             # The strategist's final call: unless a test scripts one, it plays the code's pick.
             self.reviews.append({"messages": messages, "schema": schema, "timeout": timeout})
             return {"verdict": "play", "play_option": "1", "why": "", "reasoning_summary": ""}
+        if schema_name == "doubles_turn_veto_lock_in" and not (
+            self.answers and isinstance(self.answers[0], dict) and "lock_in" in self.answers[0]
+        ):
+            # A veto's lock-in: unless a test scripts one, the strategist confirms it.
+            self.lock_ins.append({"messages": messages, "schema": schema, "timeout": timeout, "effort": effort})
+            return {"lock_in": True, "why": "confirmed", "reasoning_summary": ""}
         self.calls.append({"messages": messages, "schema": schema, "timeout": timeout, "effort": effort})
         answer = self.answers.pop(0) if self.answers else ProviderError("no more scripted answers")
         if isinstance(answer, Exception):
