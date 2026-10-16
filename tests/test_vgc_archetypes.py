@@ -33,8 +33,9 @@ def test_the_users_teams_are_loaded():
     names = [p["name"] for p in ar.load_plans()]
     assert names[0] == "Charizard Y sun"
     for sample in ("Worlds Floette hyper offense", "Tailwind + Icy Wind speed control",
-                   "Incineroar cycling core", "Milotic stat-drop punish", "Psychic Terrain Trick Room"):
+                   "Incineroar cycling core", "Milotic stat-drop punish"):
         assert sample in names
+    assert not any("trick room" in n.lower() for n in names)  # we do not play Trick Room
 
 
 def test_every_plan_is_legal_in_its_formats_table():

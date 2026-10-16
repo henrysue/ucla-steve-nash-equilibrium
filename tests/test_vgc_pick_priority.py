@@ -46,15 +46,17 @@ def test_strength_favours_bulk_typing_and_abilities():
 
 
 def test_the_rules_apply_in_order():
-    # 1. A must pick beats a partner of our first pick.
-    pick = pp.choose(["Amoonguss", "Grimmsnarl"], ["Dragonite"], TABLE)
-    assert (pick.species, pick.rule) == ("Grimmsnarl", "must pick")
-    # 2. With no must pick, the first pick's proven partner.
+    """Must picks are easy to play and strong, with few weaknesses (not ladder win rate alone)."""
+    # 1. A must pick: Iron Hands is; Grimmsnarl (52.8% on the ladder, but a support) is not.
+    pick = pp.choose(["Grimmsnarl", "Iron Hands"], [], TABLE)
+    assert (pick.species, pick.rule) == ("Iron Hands", "must pick")
+    assert pp.choose(["Torkoal", "Dragonite"], [], TABLE).species == "Dragonite"
+    # 2. A partner of our first pick must itself be easy: Amoonguss (a support) is passed over.
     pick = pp.choose(["Garchomp", "Amoonguss"], ["Dragonite"], TABLE)
-    assert (pick.species, pick.rule) == ("Amoonguss", "partner")
-    # 3. Otherwise the strongest card.
-    pick = pp.choose(["Torkoal", "Dragonite"], [], TABLE)
-    assert (pick.species, pick.rule) == ("Dragonite", "strongest")
+    assert (pick.species, pick.rule) == ("Garchomp", "strongest")
+    # 3. Otherwise the strongest easy card.
+    pick = pp.choose(["Grimmsnarl", "Chien-Pao", "Amoonguss"], [], TABLE)
+    assert (pick.species, pick.rule) == ("Chien-Pao", "strongest")
 
 
 def test_the_priority_table_lists_must_picks_first_with_partners():

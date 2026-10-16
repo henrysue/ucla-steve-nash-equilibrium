@@ -41,6 +41,10 @@ DOOMED_SHARE = 0.5
 # than its damage (match 744c9e10: Baxcalibur's Ice Shard took a 27% Rillaboom
 # that the sim had it Icicle Spear after our faster Chien-Pao KO'd it).
 PRIORITY_KO_BONUS = 25.0
+# When both of ours are in their combined KO range, Protecting one invites the
+# KO on the other: this share of the hits aimed at the protector moves to its
+# partner (match 1fe90ea3: Iron Valiant Protected, they KO'd Iron Hands).
+FOCUS_SHIFT = 0.5
 FOLLOW_UP_TURNS = 2
 # What WE gain in each later turn counts this much of the turn before: it is
 # less certain (the foe may Protect, switch, crit), so a KO now beats the same
@@ -106,6 +110,8 @@ class Mon:
     attacking: float = 1.0  # chance its action this turn is a damaging move (for Sucker Punch)
     pivot_to: "Mon | None" = None  # who comes in if it pivots out (U-turn, Parting Shot...)
     weight: float = 1.0  # what its HP is worth to the race: more for their win condition
+    turn_hp: float | None = None  # its HP when this turn began
+    turn_hits: list = field(default_factory=list)  # (chance, damage %) of the hits it took this turn
 
     @property
     def name(self) -> str:
@@ -362,9 +368,14 @@ class _Sim:
             best = self.best_attack(foe)
             return [best] if best else []
         found = []
+        if getattr(e, "redirect", 0.0) > 0:
+            # Rage Powder / Follow Me to cover a partner in our KO range (match 37a1ee8a:
+            # Amoonguss pulled the Surging Strikes meant for a 36% Arcanine).
+            found.append(("status", foe, {"id": "ragepowder", "priority": 2, "weight": e.redirect}, [], 2))
         spread_chance, spread_move = 0.0, None
+        shifted = self._focus_shifts(e)  # id(mon) -> change in the chance it is attacked (never mutates e)
         for target in self.ours:
-            chance = e.attacks.get(target.aimed_as, 0.0)
+            chance = max(0.0, e.attacks.get(target.aimed_as, 0.0) + shifted.get(id(target), 0.0))
             if chance <= 0:
                 continue
             fake = min(chance, e.fake_out.get(target.aimed_as, 0.0))
@@ -384,6 +395,31 @@ class _Sim:
             weight = min(1.0, spread_chance)
             found.append(("attack", foe, spread_move, [(t, weight) for t in self.ours], self.priority(foe, spread_move)))
         return found
+
+    def _focus_shifts(self, e) -> dict[int, float]:
+        """id(mon) -> change in its attack chance: a share moved off a Protecting
+        Pokemon onto its partner, when both of ours are in their combined KO range."""
+        moved: dict[int, float] = {}
+        live = [m for m in self.ours if m.alive > 0 and m.presence > 0]
+        if len(live) != 2 or not all(self._in_combined_ko(m) for m in live):
+            return moved
+        for mon, partner in (live, live[::-1]):
+            share = e.attacks.get(mon.aimed_as, 0.0) * mon.protecting * FOCUS_SHIFT
+            if share > 0 and partner.protecting < 0.5:
+                moved[id(mon)] = moved.get(id(mon), 0.0) - share
+                moved[id(partner)] = moved.get(id(partner), 0.0) + share
+        return moved
+
+    def _in_combined_ko(self, mon: Mon) -> bool:
+        """Their actives' best hits on ``mon`` add up to its HP."""
+        total = 0.0
+        for foe in self.theirs:
+            if foe.alive <= 0:
+                continue
+            move = self._best_move(foe, [mon])
+            hit = self._damage(foe, mon, move) if move else None
+            total += hit["expected_pct"] if hit else 0.0
+        return total >= mon.hp
 
     def best_attack(self, mon: Mon):
         """Turn 2: its best attack against the other side as it stands."""
@@ -459,6 +495,8 @@ class _Sim:
         return base * (1 + self.board.tailwind[mon.side]) * mon.speed_mult * (1 - 0.5 * mon.paralyzed)
 
     def resolve(self, actions: list) -> None:
+        for mon in self.ours + self.theirs + self.bench:
+            mon.turn_hp, mon.turn_hits = mon.hp, []
         reverse = self.board.trick_room > 0.5
         # Higher priority first, then faster (slower under Trick Room). A speed tie is a
         # coin flip in Showdown; we assume we lose it (they move first), the safe side.
@@ -466,7 +504,7 @@ class _Sim:
                                                0 if a[1].side == "them" else 1))
         for kind, user, move, targets, priority in order:
             if kind == "status":
-                self._status(user, move["id"], targets)
+                self._status(user, move["id"], targets, move.get("weight", 1.0))
             else:
                 self._hit(kind, user, move, targets, priority)
             if _id(move.get("id") or move.get("name")) in PIVOTS:
@@ -564,7 +602,8 @@ class _Sim:
             return
         factor = 1 + 0.5 * boost
         expected = hit["expected_pct"] * factor
-        ko = _ko(hit, mon.hp, factor)
+        ko = self._focus_ko(mon, hit, factor)
+        mon.turn_hits.append((chance, expected, ko))
         if mon.sash and lookahead_hits(move) == 1:
             # Focus Sash: an untouched holder survives at 1 HP.
             expected = mon.sash * min(expected, mon.hp - 1) + (1 - mon.sash) * expected
@@ -583,6 +622,31 @@ class _Sim:
             mon.flinch += (1 - mon.flinch) * chance
         elif kind == "attack_slow":
             mon.speed_mult *= 1 - chance / 3
+
+    @staticmethod
+    def _focus_ko(mon: Mon, hit: dict, factor: float) -> float:
+        """Chance this hit KOs, given it survived the hits it already took this turn.
+
+        By scenario, not from the average HP: two 60% hits that each land 60%
+        of the time KO a full-HP target 36% of the time, where hitting the
+        average (64% left) says never. Match 37a1ee8a: Ace Trainer Claude
+        focused one of ours at a time."""
+        start = mon.turn_hp if mon.turn_hp is not None else mon.hp
+        if not mon.turn_hits or start is None:
+            return _ko(hit, mon.hp, factor)
+        landed = 1.0
+        for chance, _, _ in mon.turn_hits:
+            landed *= 1 - chance
+        landed = 1 - landed  # some earlier hit landed
+        if landed <= 0:
+            return _ko(hit, start, factor)
+        damage = sum(c * d for c, d, _ in mon.turn_hits) / landed  # what an earlier hit did, when one did
+        first_ko = min(1.0, sum(c * k for c, _, k in mon.turn_hits) / landed)  # ...and how often it KO'd
+        survived = landed * (1 - first_ko)
+        after = max(0.0, start - damage)
+        numerator = survived * _ko(hit, after, factor) + (1 - landed) * _ko(hit, start, factor)
+        alive = survived + (1 - landed)
+        return numerator / alive if alive > 0 else 1.0
 
     def _self_damage(self, user: Mon, target: Mon, move: dict, dealt: float, chance: float) -> None:
         """Recoil, Rocky Helmet and Life Orb: HP the attacker pays for the hit."""
@@ -735,8 +799,8 @@ class _Sim:
 
         return target.presence * target.alive * accuracy(move) * (min(target.hp, hit["expected_pct"]) + KO_BONUS * _ko(hit, target.hp))
 
-    def _status(self, user: Mon, move_id: str, targets: list) -> None:
-        chance = user.acts()
+    def _status(self, user: Mon, move_id: str, targets: list, weight: float = 1.0) -> None:
+        chance = user.acts() * weight
         if chance <= 0:
             return
         side = user.side

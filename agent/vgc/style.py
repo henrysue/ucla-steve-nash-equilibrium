@@ -43,6 +43,10 @@ MAX_NOTES = 12
 # else switch)? Ace Trainer Claude escaped every time (match b0e756ca: four
 # finishing hits wasted); earlier opponents mostly attacked. Learned per match.
 KO_ESCAPE_PRIOR, KO_ESCAPE_WEIGHT = 0.3, 3.0
+# Do their two attackers double-target one of ours? Seen from our HP: one took
+# a hit and the other none, with both foes acting. Match 37a1ee8a: focused one
+# at a time. Learned per match.
+FOCUS_PRIOR, FOCUS_WEIGHT, FOCUS_HIT = 0.5, 3.0, 0.05
 
 
 def _path() -> Path | None:
@@ -65,6 +69,8 @@ class OpponentStyle:
         self._pending: dict[str, dict] = {}
         self.switches = 0  # times one of theirs left the field by choice
         self.ko_spots = 0  # foes we had in KO range whose next move we saw
+        self.focus_turns = 0  # turns both foes attacked and we saw where
+        self.focused = 0  # ...of which they hit only one of ours
         self.ko_escapes = 0  # ...of which it Protected or switched out
         self._ko_pending: set[str] = set()
         self.first_turns = 0  # first turns out we saw resolved (Protect available)
@@ -219,9 +225,32 @@ class OpponentStyle:
                               f" -> escape rate {self.ko_escape_rate:.0%}")
             self.notes = self.notes[-MAX_NOTES:]
 
+    @property
+    def focus_rate(self) -> float:
+        """Chance their attackers double-target one of ours on a turn they both attack."""
+        return (self.focused + FOCUS_PRIOR * FOCUS_WEIGHT) / (self.focus_turns + FOCUS_WEIGHT)
+
+    def _score_focus(self, report: dict | None, turn: int) -> None:
+        theirs = (report or {}).get("theirs") or {}
+        ours = (report or {}).get("ours") or {}
+        acting = [row for row in theirs.values() if not row.get("entered") and not row.get("left_field")
+                  and _protected(row) is not True]
+        stayed = {m: row for m, row in ours.items() if not row.get("entered") and row.get("left_field") != "switched"}
+        if len(acting) < 2 or len(stayed) < 2:
+            return
+        hurt = [m for m, row in stayed.items() if row.get("left_field") == "fainted" or (row.get("hp_change") or 0) < -FOCUS_HIT]
+        if not hurt:
+            return
+        self.focus_turns += 1
+        self.focused += len(hurt) == 1
+        if len(hurt) == 1:
+            self.notes.append(f"T{turn} both foes acted and only {hurt[0]} was hit: focus fire -> rate {self.focus_rate:.0%}")
+            self.notes = self.notes[-MAX_NOTES:]
+
     def resolve(self, report: dict | None, turn: int = 0) -> None:
         """Score last turn's opportunities against what each foe did."""
         self._score_ko_escapes(report, turn)
+        self._score_focus(report, turn)
         if report:
             self._count_switches(report, turn)
         if not report or not self._pending:
@@ -265,6 +294,7 @@ class OpponentStyle:
                 "switch_rate": f"{self.switch_rate:.0%} ({self.switches} switch(es) in {self.stays} foe-turns)",
                 "ko_range_escape": f"{self.ko_escape_rate:.0%} ({self.ko_escapes} of {self.ko_spots} in our KO range "
                                    f"Protected or switched)",
+                "focus_fire": f"{self.focus_rate:.0%} ({self.focused} of {self.focus_turns} turns they hit only one of ours)",
                 "chained_protect_tries": self.chained_tries, "advice": advice, "notes": self.notes[-6:]}
 
 

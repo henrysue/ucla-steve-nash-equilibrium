@@ -167,6 +167,10 @@ class MoveTracker:
         self._full_turn = any(option.get("type") == "move" for slot in slots for option in slot.options)
         self._slot_species = [_slot_species(slot, observation) for slot in slots]
         self._update_effects(observation)
+        from .observed import field_state
+
+        self._their_trick_room = "trickroom" in ((field_state(observation) or {}).get("field") or []) \
+            and self.effect_turns_left("trickroom") == 0
         self._ours = _carry(self._ours, [s for s in self._slot_species if s])
         self._theirs = _carry(self._theirs, _opponent_species(observation))
         self._read_opponent_protects(observation)
@@ -405,6 +409,9 @@ class MoveTracker:
                 blocked[index] = f"{move} fails: {species} has already moved since it came in"
             elif move in PROTECT_CHAIN and entry.protect_chain >= PROTECT_BLOCK_CHAIN:
                 blocked[index] = f"{move} would be {species}'s protect #{entry.protect_chain + 1} in a row (1/{3 ** entry.protect_chain} chance)"
+            elif move == "trickroom" and not getattr(self, "_their_trick_room", False):
+                # We do not play Trick Room; it is only used to END theirs.
+                blocked[index] = "trickroom: we do not play Trick Room (only to end theirs)"
             elif move in NO_REPEAT and entry.last_move == move:
                 blocked[index] = f"{move} cannot be used two turns in a row"
             elif (left := self.effect_turns_left(move)) > 0:

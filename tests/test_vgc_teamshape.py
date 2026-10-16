@@ -205,11 +205,10 @@ def test_a_lineup_that_breaks_the_rules_is_re_asked_once_then_accepted():
 # -- synergy-driven draft ----------------------------------------------------------------------
 
 
-def test_a_must_pick_is_taken_first_highest_win_rate_floor_first():
-    """Rule 1: Chien-Pao and Grimmsnarl are both must picks; Grimmsnarl's win-rate
-    floor is higher."""
+def test_an_easy_attacker_is_taken_over_a_high_win_rate_support():
+    """Grimmsnarl (52.8% on the ladder) is a support with one attack: an easy attacker comes first."""
     decision = _agent().choose_action(_draft_state([], ["Amoonguss", "Chien-Pao", "Grimmsnarl"]), POKEMON)
-    assert decision.action.action_id == "draft_pick:Grimmsnarl"
+    assert decision.action.action_id == "draft_pick:Chien-Pao"
 
 
 def test_a_listed_partner_is_credited():
@@ -234,13 +233,12 @@ def test_a_card_that_stacks_a_team_weakness_is_marked_down():
     assert "Rock" in covering["coverage"]["stacks"]
 
 
-def test_the_first_picks_proven_partner_is_taken_next():
-    """Rule 2: after Dragonite, Amoonguss (55.4% together over ~4.8k games) beats
-    the stronger-on-paper Garchomp, which has no proven pairing."""
+def test_a_partner_must_be_easy_to_play():
+    """Rule 2 only takes an easy partner: after Dragonite, Amoonguss (55.4% together, but a
+    support) is passed over for Garchomp."""
     agent = _agent()
     decision = agent.choose_action(_draft_state(["Dragonite"], ["Garchomp", "Amoonguss"]), POKEMON)
-    assert decision.action.action_id == "draft_pick:Amoonguss"
-    assert "partner for our first pick Dragonite" in agent.draft_strategy()["picks"][-1]
+    assert decision.action.action_id == "draft_pick:Garchomp"
 
 
 # -- the dac4104d fixes ------------------------------------------------------------------------

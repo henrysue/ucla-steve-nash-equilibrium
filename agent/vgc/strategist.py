@@ -73,6 +73,9 @@ RECENT_TURNS = 3  # turns of history in each battle prompt
 # scale). Match 4e60a5a2, turn 1: a veto 121 points down sent Thunder Wave
 # into a Protect.
 VETO_MARGIN = 40.0
+# The best line that breaks no principle is offered beyond the margin, but not
+# this far down: match 4b317ad0 vetoed a 154-point-worse line and lost Iron Valiant.
+CLEAN_LINE_MARGIN = 2 * VETO_MARGIN
 
 
 class VGCDraftStrategist:
@@ -373,7 +376,7 @@ class VGCDraftStrategist:
         return [
             f"bring at least {MIN_BRING_ATTACKERS} attackers when the roster has them",
             "if you bring a Fake Out user, lead with one",
-            "bring a Tailwind or Trick Room setter if the roster has one",
+            "bring a Tailwind setter if the roster has a strong one; we never play Trick Room",
             "do not lead two Pokémon where one's spread move (Earthquake, Surf...) hits the other",
             "at most one restricted legendary or Mega in the four",
             "do not bring two Pokémon 4x weak, or three weak, to an attack type their team carries",
@@ -392,7 +395,7 @@ class VGCDraftStrategist:
             problems.append(f"no Fake Out lead ({', '.join(fake_out)} brought)")
         setters = [s for s in roster if self._sets_speed(s)]
         if setters and not any(s in setters for s in bring):
-            problems.append(f"no Tailwind/Trick Room setter ({', '.join(setters)} left home)")
+            problems.append(f"no Tailwind setter ({', '.join(setters)} left home)")
         clash = self._lead_clash(leads)
         if clash:
             problems.append(clash)
@@ -461,14 +464,18 @@ class VGCDraftStrategist:
         return None
 
     def _sets_speed(self, species: str) -> bool:
-        """Can set Tailwind or Trick Room: the drafted card's moves, else usage
-        data, else (no data at all) what it can learn."""
+        """A Tailwind setter worth bringing: the drafted card's moves, else usage
+        data, else (no data at all) what it can learn - and easy enough to play
+        (a weak setter is never forced over a stronger Pokemon; match f14f1652
+        forced in a 44.6% Hatterene). We never play Trick Room."""
+        if pick_priority.easy_strength(species, self._meta, self._meta.card_set(species))[0] < 0:
+            return False
         card = self._meta.card_set(species)
         moves = card["moves"] if card else None
         if moves:
-            return bool({meta.species_id(m) for m in moves} & {"tailwind", "trickroom"})
+            return "tailwind" in {meta.species_id(m) for m in moves}
         known = self._meta.common_moves(species) or self._meta.field(species, "role")
-        return bool({"tailwind", "trick_room"} & archetypes.tags(species, self._meta, learnable=not known))
+        return "tailwind" in archetypes.tags(species, self._meta, learnable=not known)
 
     def _leads_for(self, bring: list[str]) -> list[str]:
         """No-model leads: a Fake Out user beside the strongest attacker."""
@@ -521,7 +528,8 @@ class VGCDraftStrategist:
         foes = _active_species(observation.get("opponent_active_pokemon"))
 
         # 2. The code's guess at the opponent; the move it implies is the fallback.
-        guess = _safely(lambda: predict.code_guess(observation, calc, self._moves, self._meta, self._turn_odds), {})
+        guess = _safely(lambda: predict.code_guess(observation, calc, self._moves, self._meta, self._turn_odds,
+                                                   in_range=self._in_range), {})
         fallback = self._answer(turn_rules, observation, calc, guess, ours, state)
 
         if self._provider is None or not any(o["type"] == "move" for slot in slots for o in slot.options):
@@ -561,9 +569,9 @@ class VGCDraftStrategist:
         flags = self._line_flags if len(self._line_flags) == len(ranked) else [[] for _ in ranked]
         if flags[0]:
             # The code's pick breaks a principle: the best line that breaks none
-            # is offered too, however far down it ranks.
+            # is offered too, if it is within CLEAN_LINE_MARGIN.
             clean = next((i for i in range(len(ranked)) if not flags[i]), None)
-            if clean is not None and clean not in offered:
+            if clean is not None and clean not in offered and ranked[clean][0] >= ranked[0][0] - CLEAN_LINE_MARGIN:
                 offered.append(clean)
         if len(offered) < 2:
             return 0, None  # nothing close enough to veto into
@@ -646,6 +654,10 @@ class VGCDraftStrategist:
             predict.escape(expected, self._in_range,
                            {f: (self._turn_odds.get(f) or {}).get("likelihood", 0) > 0 for f in self._in_range},
                            self._style.ko_escape_rate, bool(self._their_bench(observation)))
+            target, _ = _safely(lambda: predict.focus_target(calc.threats() or {}, {
+                meta.species_id(e.get("species") or e.get("name")): predict._hp_of(e)
+                for e in observation.get("active_pokemon") or [] if isinstance(e, dict)}), (None, ""))
+            predict.focus(expected, target, self._style.focus_rate)  # who they double-target
             self._style.add_switching(expected)  # this opponent switches this often
             judge = principles.Judge(turn_rules.slots, observation, calc, expected,
                                      preserve=(self._game_plan or {}).get("preserve") or (),
@@ -727,6 +739,10 @@ class VGCDraftStrategist:
             "first_turn_on_field": self._moves.opponent_first_turn(),
             "opponent_switch_rate": self._style.summary()["switch_rate"],
             "in_our_ko_range": sorted(self._in_range) or "none",
+            "their_focus_target": _safely(lambda: predict.focus_target(calc.threats() or {}, {
+                meta.species_id(e.get("species") or e.get("name")): predict._hp_of(e)
+                for e in observation.get("active_pokemon") or [] if isinstance(e, dict)})[1], "") or "none",
+            "focus_fire": self._style.summary()["focus_fire"],
             "ko_range_escape": self._style.summary()["ko_range_escape"],
             "our_draft_strategy": self.draft_strategy()["summary"],
             "their_possible_switch_ins": self._their_bench(observation),
@@ -1053,6 +1069,13 @@ def _flag_text(flags: list[list[str]], index: int) -> str:
     return f" [breaks: {'; '.join(found)}]" if found else ""
 
 
+PIVOT_MOVES = frozenset({"uturn", "voltswitch", "flipturn", "partingshot", "teleport", "chillyreception", "shedtail"})
+
+
+def _id_of(name: object) -> str:
+    return meta.species_id(name)
+
+
 def _name_payload(payload: object, slots: list) -> str:
     """'Dondozo: Wave Crash -> Gholdengo; Tornadus: Protect' - species by name, for the model."""
     if not isinstance(payload, dict):
@@ -1065,6 +1088,8 @@ def _name_payload(payload: object, slots: list) -> str:
         if choice.get("type") == "move":
             move = movelist.lookup(choice.get("move_id"))
             text = f"{who}: {move['name'] if move else choice.get('move_id')}"
+            if move and _id_of(move["name"]) in PIVOT_MOVES and not any(o.get("type") == "switch" for o in slot.options):
+                text += " (no one to switch in: it stays)"  # match 4b317ad0: a Parting Shot read as an escape
             if move and move["power"] and move["target"] == "allAdjacentFoes":
                 text += " (hits both foes)"
             elif move and move["power"] and move["target"] == "allAdjacent":
@@ -1076,7 +1101,7 @@ def _name_payload(payload: object, slots: list) -> str:
                 text += f" -> {names.get(target) or ('foe' if target > 0 else 'ally')} {abs(target)}"
             parts.append(text)
         elif choice.get("type") == "switch":
-            parts.append(f"{who}: switch to {choice.get('species')}")
+            parts.append(f"{who}: switch to {choice.get('species')} (it takes the hits aimed here)")
     return "; ".join(parts) or "pass"
 
 

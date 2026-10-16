@@ -147,12 +147,15 @@ def _lineup_state(observation=None):
                                                                     ["Pelipper", "Archaludon", "Landorus-Therian", "Rillaboom", "Klefki", "Tornadus"]]})
 
 
-def test_leaving_every_speed_control_user_home_is_a_rule_break():
+def test_a_weak_tailwind_setter_is_never_forced_into_the_four():
+    """Match f14f1652: the setter rule forced a 44.6% Hatterene over Great Tusk. Only a
+    setter that is easy to play counts now, and only Tailwind (we do not play Trick Room)."""
+    from agent.vgc import pick_priority
+
     agent = _agent()
+    assert pick_priority.easy_strength("Talonflame", agent._meta)[0] < 0
     problems = agent._lineup_problems(SEAT1_ROSTER, ["gyarados", "ironhands", "tinglu", "fluttermane"], ["gyarados", "ironhands"])
-    assert any("no Tailwind/Trick Room setter" in p for p in problems)  # Flutter Mane's Icy Wind is not enough
-    ok = agent._lineup_problems(SEAT1_ROSTER, ["talonflame", "ironhands", "gyarados", "fluttermane"], ["talonflame", "ironhands"])
-    assert not any("Tailwind/Trick Room" in p for p in ok)
+    assert not any("Tailwind setter" in p for p in problems)
 
 
 def test_switch_options_show_the_cost_of_coming_in():

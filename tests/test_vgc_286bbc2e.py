@@ -84,7 +84,10 @@ def _move_row(move_id, target):
 # -- principle 1: protect the plan ---------------------------------------------------------
 
 
-def test_turn_5_never_switches_the_trick_room_setter_into_close_combat():
+def test_turn_5_switching_farigiraf_in_to_cover_incineroar_is_not_throwing_away_the_plan():
+    """Farigiraf takes Close Combat neutrally where Incineroar takes it 2x: the switch covers
+    a teammate, so 'protect the plan' no longer flags it (match 4b317ad0's turn-1 lesson). It
+    still costs tempo - Incineroar had a KO on Sneasler lined up."""
     observation = _obs(["incineroar", "archaludon"], ["sneasler", "cresselia"], hp={"incineroar": 0.79, "sneasler": 0.6},
                        turn=5, boosts={"archaludon": {"spa": -2}})
     read = {"sneasler": {"action": "attack", "target": "incineroar", "confidence": 0.6},
@@ -92,8 +95,8 @@ def test_turn_5_never_switches_the_trick_room_setter_into_close_combat():
     judge, lines, _ = _turn(TURN_5, observation, read, {})
     switch = {"type": "doubles_turn", "slot_0": {"type": "switch", "species": "farigiraf"}, "slot_1": _move_row("bodypress", 1)}
     cost, flags = judge.judge(switch)
-    assert cost > 0 and "farigiraf" in flags[0]
-    assert all(line["slot_0"].get("species") != "farigiraf" for line in lines)
+    assert not any("game plan preserves" in f for f in flags)
+    assert cost > 0 and any("healthy incineroar" in f for f in flags)
 
 
 # -- principle 2: do your job --------------------------------------------------------------

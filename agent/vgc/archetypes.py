@@ -33,6 +33,7 @@ STYLES = (
 FIELD_STYLES = ("sun", "rain", "sand", "snow", "electric_terrain")
 
 PLAN_BONUS = {"core": 6.0, "member": 3.0, "flex": 1.5}
+SKIPPED_PLANS = ("trick room", "screens")  # plans the simple game plan never drafts toward
 CORE_FIRST = 2.0  # extra for a core piece while we hold none: lose it and the plan is gone
 RUNNER_UP_BONUS = {"core": 1.5, "member": 1.0, "flex": 0.0}
 COMMITTED_AT = 2  # members held before the plan is ours
@@ -89,7 +90,10 @@ def load_plans(path: str = str(DEFAULT_PLANS)) -> tuple[dict, ...]:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return ()
-    return tuple(p for p in data.get("plans", []) if isinstance(p, dict) and p.get("name") and p.get("members"))
+    # Our game plan is simple (match f14f1652): no Trick Room plans, and no screens
+    # plan built around a support (match 1fe90ea3 drafted and led Grimmsnarl again).
+    return tuple(p for p in data.get("plans", []) if isinstance(p, dict) and p.get("name") and p.get("members")
+                 and not any(word in str(p.get("name")).lower() for word in SKIPPED_PLANS))
 
 
 def family(name: str, table) -> str:

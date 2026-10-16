@@ -43,6 +43,14 @@ from . import movelist
 
 PRESERVE_SHARE = 1.0  # a plan Pokemon switched into a hit: that damage counts again
 PRESERVE_FROM = 25.0  # predicted damage (% HP) on the switch-in before it counts
+COVER_SHARE = 0.75  # a switch-in taking at most this share of what the one leaving would take covers it
+# Saving a low teammate by switching a healthy one into a big hit: match 1fe90ea3
+# switched Iron Hands into a 2x Earthquake (-59%) to save a 37% Grimmsnarl that
+# had set Reflect and had no Protect. Let it go; bring the attacker in after the faint.
+RESCUE_HP = 0.4  # the one leaving is below this
+RESCUE_HEALTHY = 0.6  # the one coming in is above this
+RESCUE_TAKEN = 35.0  # ...and would take at least this much (% HP)
+RESCUE_COST = 25.0
 MISSED_KO = 25.0  # leaving alive a foe we likely KO this turn
 MISSED_KO_PROTECT = 0.5  # ...unless it is at least this likely to Protect
 TEMPO_COST = 30.0  # switching a healthy Pokemon out of a KO it has on the board
@@ -55,7 +63,7 @@ WEAKENED_AT = -2
 ROLE_SKIPPED = 15.0  # a support not doing the one thing it was brought for
 DOUBLE_INTO_PROTECT = 25.0  # x the foe's Protect chance, for both attacks into it
 DOUBLE_FROM = 0.3  # Protect chance from which doubling into a foe is flagged
-SPEED_CONTROL = frozenset({"trickroom", "tailwind"})
+SPEED_CONTROL = frozenset({"tailwind"})  # we do not play Trick Room
 SCREEN_MOVES = frozenset({"reflect", "lightscreen", "auroraveil"})
 # Moves that lower the user's attacking stat: id -> (stat, stages).
 SELF_DROPS = {
@@ -90,8 +98,8 @@ class Judge:
     def judge(self, payload: dict) -> tuple[float, list[str]]:
         """(value to subtract, flags) for one checked payload."""
         cost, flags = 0.0, []
-        for check in (self._plan_switches, self._tempo_switches, self._unused_roles, self._doubled_into_protect,
-                      self._self_drops, self._missed_kos):
+        for check in (self._plan_switches, self._tempo_switches, self._rescue_switches, self._unused_roles,
+                      self._doubled_into_protect, self._self_drops, self._missed_kos):
             try:
                 more_cost, more = check(payload)
             except Exception:  # noqa: BLE001 - a principle we cannot check is not reported
@@ -113,9 +121,31 @@ class Judge:
             if not why:
                 continue
             taken = self._damage_on_switch_in(slot, incoming)
+            leaving = _active(slot)
+            staying = self._damage_on(self._entry(leaving), leaving) if leaving else 0.0
+            if taken <= COVER_SHARE * staying:
+                continue  # it covers a teammate that would take far more (match 4b317ad0: Iron Valiant)
             if taken >= PRESERVE_FROM:
                 cost += PRESERVE_SHARE * taken
                 flags.append(f"switches {incoming} ({why}) into ~{taken:.0f}% predicted damage")
+        return cost, flags
+
+    def _rescue_switches(self, payload: dict) -> tuple[float, list[str]]:
+        cost, flags = 0.0, []
+        for slot in self.slots:
+            choice = payload.get(f"slot_{slot.number}") or {}
+            leaving = _active(slot)
+            if choice.get("type") != "switch" or not leaving:
+                continue
+            low = _fraction(self._entry(leaving))
+            incoming = _id(choice.get("species"))
+            if low >= RESCUE_HP or _bench_fraction(self.observation, incoming) < RESCUE_HEALTHY:
+                continue
+            taken = self._damage_on_switch_in(slot, incoming)
+            if taken >= RESCUE_TAKEN and taken >= 100 * low:
+                cost += RESCUE_COST
+                flags.append(f"switches a healthy {incoming} into ~{taken:.0f}% to save a {leaving} at {low:.0%}: "
+                             f"let it go and bring {incoming} in after the faint")
         return cost, flags
 
     def _tempo_switches(self, payload: dict) -> tuple[float, list[str]]:
@@ -179,7 +209,9 @@ class Judge:
         killable = set()
         for slot in self.slots:
             killable |= self._kos(slot)
-        killable = {f for f in killable if (self.expected.get(f).protect if self.expected.get(f) else 0.0) < MISSED_KO_PROTECT}
+        # A foe likely to escape (Protect or switch) is no sure KO (match f14f1652:
+        # three Wild Charges into a Flutter Mane that kept Protecting).
+        killable = {f for f in killable if _escape(self.expected.get(f)) < MISSED_KO_PROTECT}
         if not killable:
             return 0.0, []
         theirs = getattr(self.calc, "_theirs", [])
@@ -221,8 +253,6 @@ class Judge:
             entry = self._entry(active)
             if screen and self._has_ability(entry, "prankster") and not self.effects & SCREEN_MOVES and used not in SCREEN_MOVES:
                 flags.append(f"{active} skips its job: Prankster {screen} goes up before their attacks")
-            if "trickroom" in moves and "trickroom" not in self.effects and used != "trickroom" and self._we_are_slower():
-                flags.append(f"{active} skips its job: Trick Room would make our slower side move first")
         return ROLE_SKIPPED * len(flags), flags
 
     def _doubled_into_protect(self, payload: dict) -> tuple[float, list[str]]:
@@ -348,6 +378,10 @@ def _attacking_stat(move_id: object) -> str | None:
 def _stage_of(entry: dict, stat: str | None) -> int:
     stage = (entry.get("boosts") or {}).get(stat) if stat else 0
     return stage if isinstance(stage, int) and not isinstance(stage, bool) else 0
+
+
+def _escape(e) -> float:
+    return (e.protect + e.switch) if e is not None else 0.0
 
 
 def _asleep(entry: dict) -> bool:

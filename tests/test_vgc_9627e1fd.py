@@ -134,4 +134,6 @@ def test_finishing_a_healing_foe_gains_on_hitting_the_other_one():
         without = gap()
     finally:
         race._Sim.end_of_turn = original
-    assert with_residuals > without > 0
+    # The claim: residual healing is what makes the KO line pull ahead. (Without residuals the
+    # gap can dip below 0 now that a Protecting Gyarados shifts some focus onto Iron Hands.)
+    assert with_residuals > without and with_residuals > 0

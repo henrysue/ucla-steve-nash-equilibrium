@@ -63,7 +63,7 @@ def test_the_prediction_prompt_carries_both_sides_threats_and_the_code_guess():
     _agent(provider).choose_action(_state(_doubles_action(), observation=BATTLE_OBSERVATION), POKEMON)
     prompt = provider.prompt()
     assert prompt["their_threats"] and prompt["our_threats"]
-    assert prompt["code_guess"]["amoonguss"]["action"] in ("protect", "attack", "fake_out")
+    assert prompt["code_guess"]["amoonguss"]["action"] in ("protect", "attack", "fake_out", "support")  # support: Rage Powder
 
 
 def test_the_game_plan_reaches_every_turn_and_history_accumulates():
