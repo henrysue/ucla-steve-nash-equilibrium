@@ -354,6 +354,24 @@ class WerewolfAgent:
                     "for a reason that was argued in today's discussion. A seer claim that came only after the claimant "
                     "was accused, too late for anyone to test it, is a wolf tell, not a reason to switch."
                 )
+        if kind in ("vote", "investigate") and ledger.role != WOLF:
+            for seat in ledger.living_others():
+                clears = ledger.vote_clears(seat)
+                if clears and seat not in ledger.investigations:
+                    extra.append(
+                        f"Vote record: Player{seat} {' and '.join(clears)}. Wolves rarely do that, so Player{seat} is "
+                        "probably a villager. Votes beat chat: "
+                        + ("check someone the record has not cleared." if kind == "investigate" else
+                           f"to vote Player{seat}, why_not_code must name something in the record that outweighs it.")
+                    )
+        if kind == "investigate":
+            for group in ledger.same_agent_groups():
+                if any(ledger.players[s].alive for s in group):
+                    seats = ", ".join(f"Player{s}" for s in group)
+                    extra.append(
+                        f"{seats} are the same bot: matching wording between them, or a twin of a dead wolf, is no "
+                        "reason to check one. Check on votes and claims."
+                    )
         if kind == "kill":
             extra += kill_briefing(ledger, self.memory, [a.action_id for a in legal], self._village_view())
         prompt = (

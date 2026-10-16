@@ -54,7 +54,10 @@ VILLAGER (GOOD TEAM) STRATEGY
 - After a wolf is revealed, hunt its partner: who agreed with or voted WITH the wolf (especially the day it went out), who it
   defended, and who it never attacked. A dead wolf's fake 'wolf' check on someone is evidence they are innocent.
 - A seer revealed on death told the truth: every check they announced is a fact. Use it to deduce.
-- Seats with the same agent name are the same bot: identical wording between them is not coordination."""
+- Votes beat chat: a player who voted for a revealed wolf, or whom a revealed wolf voted for, is probably a villager.
+  Don't vote them out over one chat moment; a villager doubting a seer claim is normal.
+- Seats with the same agent name are the same bot: identical wording between them is not coordination,
+  and a dead wolf's twin seat is no more likely a wolf."""
 
 SEER_STRATEGY = """\
 SEER STRATEGY (you are the village's strongest asset)
@@ -63,7 +66,9 @@ SEER STRATEGY (you are the village's strongest asset)
   day 2 at the latest (the game is short; dying unclaimed wastes every check).
 - If you find a wolf, hint that they are suspicious, but don't reveal your role until you can lynch them. 
 - If you find a villager, you can reveal your role to protect them from a lynch, but be careful: wolves can claim seer and accuse you.
-- Claim at once if you are accused or someone else claims seer (they are a wolf).
+- Claim at once if someone says they will vote you, the table piles on you, or someone else claims seer (they
+  are a wolf). One passing mention of you is not an accusation.
+- Spend checks on players the vote record has not cleared.
 - When you claim, give every check and result and ask the players you cleared to back you.
 """ + "\n" + VILLAGER_STRATEGY
 

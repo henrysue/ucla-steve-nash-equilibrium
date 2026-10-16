@@ -65,7 +65,9 @@ _CHECK_CLAIMS = (
         re.IGNORECASE,
     ),
     re.compile(
-        r"(?:checked|investigated|looked at|inspected)\s+P(?:layer)?\s?(\d)\b[^.;!?]{0,40}?\b(wolf|werewolf|villager|clean|town|innocent)",
+        # No other player named in between: "I checked Player3, so a Player3 vote is a wolf move" is not a wolf check.
+        r"(?:checked|investigated|looked at|inspected)\s+P(?:layer)?\s?(\d)\b(?:(?!\bP(?:layer)?\s?\d)[^.;!?]){0,40}?"
+        r"\b(wolf|werewolf|villager|clean|town|innocent)",
         re.IGNORECASE,
     ),
 )
@@ -83,6 +85,8 @@ _NEGATED_ACCUSE = re.compile(
     re.IGNORECASE,
 )
 _SENTENCE = re.compile(r"[^.;!?]+[.;!?]?")
+# "I agree with Player4, vote Player2" accuses Player2 only.
+_VOTE_TARGET = re.compile(r"\bvot(?:e|ing)\s+(?:for\s+|out\s+)?P(?:layer)?\s?(\d)\b", re.IGNORECASE)
 _STATED_VOTE = re.compile(
     r"\bI(?:'?m| am|'?ll| will)?\s+(?:still\s+|now\s+|be\s+)?vot(?:e|ing)\s+(?:for\s+)?P(?:layer)?\s?(\d)\b",
     re.IGNORECASE,
@@ -223,18 +227,27 @@ class Ledger:
 
         checked: set[int] = set()
         if record.claimed_role == SEER:
+            ours = sender == self.me and self.role == SEER
             for pattern in _CHECK_CLAIMS:
                 for seat, result in pattern.findall(text):
                     seat = int(seat)
-                    if seat != sender and seat in self.players:
-                        record.claimed_checks[seat] = (_canon_result(result), statement.day)
-                        checked.add(seat)
+                    if seat == sender or seat not in self.players or self.players[seat].revealed_role:
+                        continue  # "Player2 was a wolf" about a revealed seat is the record, not a check
+                    if ours:  # we only announce true checks: the result is our check, not our wording
+                        if seat not in self.investigations:
+                            continue
+                        result = self.investigations[seat]
+                    record.claimed_checks[seat] = (_canon_result(result), statement.day)
+                    checked.add(seat)
 
         for sentence in _SENTENCE.findall(text):
             targets = {int(s) for s in _PLAYER.findall(sentence)} - {sender} - checked
             targets &= set(self.players)
             if not targets:
                 continue
+            voted = {int(s) for s in _VOTE_TARGET.findall(sentence)} & targets
+            if voted and not _NEGATED_ACCUSE.search(sentence):
+                targets = voted  # the others named are context ("agree with PlayerN"), not accused
             if _NEGATED_ACCUSE.search(sentence) or (_DEFEND_WORDS.search(sentence) and not _ACCUSE_WORDS.search(sentence)):
                 bucket = record.defended
             elif _ACCUSE_WORDS.search(sentence):
@@ -354,6 +367,19 @@ class Ledger:
                 if target in self.players and target != seat:
                     stated = target
         return stated
+
+    def vote_clears(self, seat: int) -> list[str]:
+        """Votes that point to ``seat`` being a villager: they voted for a
+        revealed wolf, or a revealed wolf voted for them."""
+        found = [
+            f"voted for wolf Player{target} on D{day}"
+            for day, target in sorted(self.players[seat].votes.items())
+            if target is not None and self.players[target].revealed_role == WOLF
+        ]
+        for other, r in self.players.items():
+            if other != seat and r.revealed_role == WOLF:
+                found += [f"wolf Player{other} voted for them on D{day}" for day, t in sorted(r.votes.items()) if t == seat]
+        return found
 
     def heat_today(self, seat: int, day: int | None = None) -> int:
         """How many distinct living players accused ``seat`` in chat today."""

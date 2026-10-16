@@ -508,19 +508,28 @@ def choose_investigation(ledger: Ledger, legal: list[str]) -> int | None:
     )
 
 
+def in_danger(ledger: Ledger) -> bool:
+    """Someone said they will vote us, or two or more players accuse us today:
+    claim now rather than be voted out unclaimed. One loose accusation is not danger."""
+    me = ledger.me
+    if any(ledger.stated_vote(s) == me for s in ledger.living_others()):
+        return True
+    return len(ledger.accusers_of(me)) >= 2
+
+
 def seer_plan(ledger: Ledger, memory: Memory) -> DayPlan:
     me, day = ledger.me, ledger.day
     found = [s for s, r in ledger.investigations.items() if r == WOLF and ledger.players[s].alive]
     clean = [s for s, r in ledger.investigations.items() if r == VILLAGER]
     fakes = [c for c in ledger.seer_claimants() if c != me]
-    accused = ledger.accusers_of(me)
+    danger = in_danger(ledger)
     notes = [
         "You are the SEER, the village's strongest asset. Your checks are true.",
         "Never call for everyone to claim roles; that hands the wolves a target list.",
     ]
     lines: list[Talk] = []
     claimed = ledger.players[me].claimed_role == SEER
-    claim = claimed or found or fakes or accused or day >= FAKE_CLAIM_DAY
+    claim = claimed or found or fakes or danger or day >= FAKE_CLAIM_DAY
     if not claim:
         notes.append("Hide your role today: talk like a thoughtful villager and steer gently away from your clean checks.")
         return DayPlan("seer_hidden", notes, lines, 3)
